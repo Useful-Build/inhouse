@@ -179,7 +179,7 @@ describe('Settings: Always allowed', () => {
     fake.permissions.mockResolvedValue([permission(), permission({ id: 'pg_DDDDDDDDDDDDDDDDDDDDDD', holder: { kind: 'member', memberId: 'm_Dana' }, title: 'Post in a channel', can: { remove: false } })])
     fake.removePermission.mockResolvedValue([permission({ id: 'pg_DDDDDDDDDDDDDDDDDDDDDD', holder: { kind: 'member', memberId: 'm_Dana' }, title: 'Post in a channel', can: { remove: false } })])
     await show(createElement(Permissions))
-    expect(host.textContent).toContain('Shopify · Store A · Up to 50 a day')
+    expect(host.textContent).toContain('Shopify · Store A · Up to 50 orders a day, 1 at a time')
     expect(host.textContent).toContain('For Dana Kim')
     expect(buttons()).toEqual(['Remove: Add tags to orders'])
     await press('Remove: Add tags to orders', host)

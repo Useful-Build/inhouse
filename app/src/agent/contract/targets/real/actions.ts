@@ -19,7 +19,7 @@ import { SHOPIFY_READ } from '../../../../../e2e/support/test-build/shopify-read
 
 /** The N18 methods the real client serves over HTTP. `onActionUpdated` needs a run (a container), so no case reads it here. */
 export const ACTIONS_SERVED = [
-  'actions', 'action', 'answerAction', 'undoAction', 'resolveAction', 'permissions', 'removePermission', 'questions', 'answerQuestion',
+  'actions', 'action', 'answerAction', 'undoAction', 'resolveAction', 'withdrawAction', 'actionItems', 'permissions', 'removePermission', 'questions', 'answerQuestion',
 ] as const satisfies readonly (keyof AgentClient)[]
 
 const OPERATION = 'shopify.order.tag_add'
@@ -36,6 +36,12 @@ const need = (name: string): string => {
 export interface ActionWorld {
   /** One action waiting on the Admin's answer, with a tag no other case used; answers its id. */
   seedAction(adminId: string): Promise<string>
+  /**
+   * Stage 1 M3-U: a batch of 12 items waiting on the Admin's answer, in a chat of their own; answers its id. With no
+   * permission (the reset removes them), the chat's first 5 calls wait as single cards and each call after them joins
+   * its one collecting batch (N22).
+   */
+  seedBatch(s: Signer, adminId: string): Promise<string>
   /** The next send of an approved action ends as "Needs a check" (true, after the hub's 15 s limit), or goes out (false). */
   failNextSend(on: boolean): Promise<void>
   /** No permission of the Admin's left (each removed at its rev), and sends go out again. */
@@ -70,6 +76,21 @@ export function actionWorld(brandOrigin: string): ActionWorld {
       const { result } = await hook({ op: 'action', as: { memberId: adminId }, operation: OPERATION, args: { orderIds: [ORDER], tags: [tag] } })
       if (result?.outcome !== 'waiting' || typeof result.action?.id !== 'string') throw new Error(`The real contract target couldn't put an action waiting: ${JSON.stringify(result)}`)
       return result.action.id as string
+    },
+    async seedBatch(s, adminId) {
+      await (account ??= readAccount().catch((e: unknown) => { account = null; throw e }))
+      await hook({ op: 'ceiling', operation: OPERATION, enabled: true, perDayMax: 50, bulkThreshold: 5, batchMax: 500 })
+      const chatId = `contract-batch-${Date.now().toString(36)}-${++n}`
+      const made = await s.api('admin', 'POST', '/api/chats', { id: chatId, title: 'Contract batch' })
+      if (made.status !== 200 && made.status !== 201) throw new Error(`The real contract target couldn't make a chat for a batch: ${made.status}`)
+      const tag = `contract-batch-${Date.now().toString(36)}-${n}`
+      let batchId = ''
+      for (let k = 1; k <= 17; k++) {
+        const { result } = await hook({ op: 'action', as: { memberId: adminId, chatId }, operation: OPERATION, args: { orderIds: [ORDER], tags: [`${tag}-${k}`] } })
+        if (result?.outcome !== (k <= 5 ? 'waiting' : 'collected')) throw new Error(`The real contract target couldn't collect a batch (call ${k}): ${JSON.stringify(result)}`)
+        if (k > 5) batchId ||= result.action.id as string
+      }
+      return batchId
     },
     async failNextSend(on) { await fault(on ? 'timeout' : 'succeed') },
     async reset(s) {

@@ -1325,6 +1325,62 @@
           "detail": "Sent to Chats"
         }
       ]
+    },
+    "vip-tags": {
+      "title": "Tag everyone who spent over $500 this year as VIP.",
+      "durationSeconds": 9.4,
+      "cost": { "minor": 3, "currency": "USD" },
+      "tokens": "12.4k",
+      "steps": [
+        {
+          "label": "Inhouse agent",
+          "kind": "root",
+          "startSeconds": 0,
+          "endSeconds": 9.4,
+          "depth": 0,
+          "detail": "Question in Chats"
+        },
+        {
+          "label": "Shopify · customers over $500 this year",
+          "kind": "tool",
+          "startSeconds": 0.2,
+          "endSeconds": 1.6,
+          "depth": 1,
+          "detail": "Output: 450 customers"
+        },
+        {
+          "label": "Shopify · tag 450 orders VIP",
+          "kind": "tool",
+          "startSeconds": 1.7,
+          "endSeconds": 3.1,
+          "depth": 1,
+          "detail": "One card with 450 changes"
+        },
+        {
+          "label": "Waits for your OK",
+          "kind": "approval",
+          "startSeconds": 3.1,
+          "endSeconds": 3.2,
+          "depth": 1,
+          "detail": "Nothing goes out until someone approves it"
+        },
+        {
+          "label": "Wrote the answer",
+          "kind": "model",
+          "startSeconds": 3.2,
+          "endSeconds": 9.2,
+          "depth": 1,
+          "detail": "Sonnet 5.5"
+        },
+        {
+          "label": "Answer",
+          "kind": "answer",
+          "startSeconds": 9.2,
+          "endSeconds": 9.4,
+          "depth": 1,
+          "detail": "Sent to Chats"
+        }
+      ]
     }
   }
 }

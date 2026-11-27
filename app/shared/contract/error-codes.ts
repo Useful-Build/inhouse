@@ -31,6 +31,8 @@ export const REASON = {
   // P8a D: Export everything's check refused the Inhouse team once its grant ended.
   grantRequired: 'grant_required',
 } as const satisfies Record<string, ErrorReason>
+/** Stage 1 M3 (N22): a batch answer whose totals no longer match the stored items (its own export, as NOTIFY_REASON's). */
+export const TOTALS_CHANGED = 'totals_changed' satisfies ErrorReason
 /**
  * P5 (p5-w4): the notice channel list's refusals. Kept apart from REASON because a bundler keeps a used object literal
  * whole: keys added to REASON would ride in Today's first load (some 0.1 KB gzipped), while this export is read only by

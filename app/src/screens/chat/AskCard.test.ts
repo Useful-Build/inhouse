@@ -119,7 +119,7 @@ describe('answering', () => {
     fake.answerAction.mockResolvedValue(card({ rev: 2, state: 'approved', sendAt: instant(NOW + 10_000), can: { ...NONE, undo: true } }))
     await show({ actionId: AC, initial: card() })
     await press('Allow once')
-    expect(fake.answerAction).toHaveBeenCalledWith(AC, 1, 'once')
+    expect(fake.answerAction).toHaveBeenCalledWith(AC, 1, 'once', undefined)
     expect(fake.toasts).toEqual(['Allowed once. It goes out in a few seconds.'])
     // The sidebar's badge reads again after an answer.
     expect(badge.reads).toBeGreaterThan(0)
@@ -141,7 +141,7 @@ describe('answering', () => {
     await show({ actionId: AC, initial: card({ rev: 4, state: 'needs_check', result: 'It isn’t clear whether this went out.', can: { ...NONE, resolve: true } }) })
     expect(buttons()).toEqual(['It went out', "It didn't go out"])
     await press("It didn't go out")
-    expect(fake.resolveAction).toHaveBeenCalledWith(AC, 4, 'failed')
+    expect(fake.resolveAction).toHaveBeenCalledWith(AC, 4, 'failed', undefined)
     expect(text()).toContain('It didn’t go out.')
   })
   test('a conflict shows the card as it is now and says so; a refusal says why and keeps the card', async () => {

@@ -262,6 +262,7 @@ function realTarget(origin: string): ContractTarget {
     async seedWaitingMemory(texts) { return seedWaitingMemory(s, (await ready()).admin, texts) },
     async seedAction() { return actionsWorld.seedAction((await ready()).admin) },
     async failNextSend(on) { await actionsWorld.failNextSend(on) },
+    async seedBatch() { return actionsWorld.seedBatch(s, (await ready()).admin) },
     async failSaves(on) { failAllSaves = on },
     async injectError(method, code) { if (code) armedErrors.set(method, code); else armedErrors.delete(method) },
     serves: method => SERVED.has(method) && (!WATCH_ONLY_ON_WATCH_BUILD.has(method) || watchBuild()),

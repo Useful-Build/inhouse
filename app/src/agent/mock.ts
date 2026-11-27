@@ -15,6 +15,7 @@ import type {
   SkillDef, Stage, StampRecord, TablePart, TeamRequest, ToolSetup, ToolsData, Trace, UsageData, MemoryLine, WaitingMemory,
 } from './types'
 import { AgentError, CHAT_TITLE_MAX, stageIndex } from './types'
+import type { BatchCovers } from './types'
 import type { ChatEngine, Host } from './mock-chat'
 import { shownClock, shownDateTimeIn, shownTimeOn } from './upgrade-times'
 import { DEMO_START, demoDayAt, demoNow } from './demo-clock'
@@ -27,7 +28,8 @@ import type { RoutineHistoryRun, RoutineRunHistory } from '../../shared/contract
 import type { Can } from '../../shared/contract/me'
 import type { InviteInput } from '../../shared/contract/members'
 import type { AvailableChannels, NotifyChannelList, PutNotifyChannels } from '../../shared/contract/notify-slack'
-import type { ActionCard, ActionFilter } from '../../shared/contract/actions'
+import type { ActionCard, ActionChoice, ActionFilter, ActionItemsPage } from '../../shared/contract/actions'
+import { MockActions } from './mock-actions'
 import type { Permission } from '../../shared/contract/permissions'
 import type { Question } from '../../shared/contract/questions'
 import type { Job } from '../../shared/contract/jobs'
@@ -151,12 +153,14 @@ const seedThread: SeedTurn[] = (chatScript.seedThread.turns as RawTurn[]).map((t
     ? { role: 'user', text: turn.user }
     : { role: 'agent', stage: turn.stage as Stage | undefined, trace: traceKey(needTrace(turn, 'the seed thread')), model: needModel(turn, 'the seed thread'), parts: (turn.agent ?? []).map(seedPart) })
 
-/** The other chats: plain text, work rows and tables, with the table's own data. */
+/** The other chats: plain text, work rows, tables with the table's own data, and the demo's action cards. */
 const chatPart = (a: Record<string, unknown>): MessagePart => {
   switch (a.type) {
     case 'text': return { type: 'text', text: a.text as string }
     case 'workRow': return { type: 'workRow', text: a.text as string, at: sampleAt('a work row', a.at) }
     case 'table': return { type: 'table', table: a.table as TablePart }
+    // Stage 1 M3-U: one of the demo's agent actions (sample-data/actions.json), as its card.
+    case 'ask': return { type: 'ask', actionId: a.actionId as string }
     default: throw new Error(`Unknown chat part type: ${String(a.type)}`)
   }
 }
@@ -871,6 +875,7 @@ export class MockAgent implements AgentClient {
     this.mockRuns.clear(); this.history.clear(); this.engine?.clear(); this.scripted = null; this.sendDelayMs = 0
     this.created.clear(); this.createdInfo.clear()
     this.runInfo.clear()
+    this.demoActions.reset()
     try { localStorage.removeItem(RUNS_KEY) } catch (e) { console.warn('Inhouse demo: could not clear saved runs.', e) }
     try { localStorage.removeItem(DATA_OVERRIDE_KEY) } catch (e) { console.warn('Inhouse demo: could not clear the data override.', e) }
     this.startedAt = Date.now()
@@ -991,13 +996,29 @@ export class MockAgent implements AgentClient {
     if (forgotten) forgot[key] = true; else delete forgot[key]
     return this.writeRecs([[rec, 1]], { forgot })
   }
-  // Stage 1 M2 (N18): the demo has no actions, permissions or questions. Its lists are empty and every answer is refused
-  // (there is nothing it could name), with no notice: the demo's own approvals stay as they are until M5.
-  actions(_filter?: ActionFilter): Promise<ActionCard[]> { return Promise.resolve([]) }
-  action(_id: string): Promise<ActionCard> { return this.rejected(NOT_FOUND, NO_M2_RECORD, false) }
-  answerAction(): Promise<ActionCard> { return this.rejected(NOT_FOUND, NO_M2_RECORD, false) }
-  undoAction(): Promise<ActionCard> { return this.rejected(NOT_FOUND, NO_M2_RECORD, false) }
-  resolveAction(): Promise<ActionCard> { return this.rejected(NOT_FOUND, NO_M2_RECORD, false) }
+  // Stage 1 M2 (N18): the demo has no permissions or questions: its lists are empty and every answer is refused (there is
+  // nothing it could name), with no notice. Stage 1 M3-U: its actions are the real agent's cards on sample data
+  // (mock-actions.ts), in the Normal scenario whatever the stage; in the other scenarios none, as before.
+  private demoActions = new MockActions({
+    now: () => demoNow(this.startedAt).getTime(),
+    shown: () => this.demo.scenario === 'Normal',
+    meId: ME_ID,
+    memberId: memberIdOf,
+  })
+  /** A demo action's answer: the card, or the refusal as an AgentError (no notice: the card says it). */
+  private acted<T>(run: () => T): Promise<T> {
+    try { return Promise.resolve(run()) } catch (e) {
+      if (!(e instanceof AgentError)) throw e
+      return this.rejected(e.code, e.message, false, { ...(e.reason ? { reason: e.reason } : {}), ...(e.current ? { current: e.current } : {}) })
+    }
+  }
+  actions(filter?: ActionFilter): Promise<ActionCard[]> { return Promise.resolve(this.demoActions.list(filter)) }
+  action(id: string): Promise<ActionCard> { return this.acted(() => this.demoActions.get(id)) }
+  answerAction(id: string, ifRev: number, choice: ActionChoice, covers?: BatchCovers): Promise<ActionCard> { return this.acted(() => this.demoActions.answer(id, ifRev, choice, covers)) }
+  undoAction(id: string, ifRev: number): Promise<ActionCard> { return this.acted(() => this.demoActions.undo(id, ifRev)) }
+  resolveAction(id: string, ifRev: number): Promise<ActionCard> { return this.acted(() => this.demoActions.resolve(id, ifRev)) }
+  withdrawAction(id: string, ifRev: number): Promise<ActionCard> { return this.acted(() => this.demoActions.withdraw(id, ifRev)) }
+  actionItems(id: string, after: number): Promise<ActionItemsPage> { return this.acted(() => this.demoActions.items(id, after)) }
   onActionUpdated(): () => void { return () => undefined }
   permissions(): Promise<Permission[]> { return Promise.resolve([]) }
   removePermission(): Promise<Permission[]> { return this.rejected(NOT_FOUND, NO_M2_RECORD, false) }

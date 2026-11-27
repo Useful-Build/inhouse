@@ -30,7 +30,7 @@ import { TraceSchema } from '../../../shared/contract/trace'
 import { DataExportCheckSchema } from '../../../shared/contract/data-access-check'
 import { ToolConnectResultSchema, ToolDisconnectResultSchema, ToolPausedInputSchema, ToolPausedResultSchema, ToolsDataSchema } from '../../../shared/contract/tools'
 import { AvailableChannelsSchema, NotifyChannelListSchema, PutNotifyChannelsSchema } from '../../../shared/contract/notify-slack'
-import { ActionCardSchema, ActionsListSchema, AnswerActionInputSchema, ResolveActionInputSchema, UndoActionInputSchema } from '../../../shared/contract/actions'
+import { ActionCardSchema, ActionItemsPageSchema, ActionsListSchema, AnswerActionInputSchema, ResolveActionInputSchema, UndoActionInputSchema, WithdrawActionInputSchema } from '../../../shared/contract/actions'
 import { PermissionSchema, PermissionsListSchema, RemovePermissionInputSchema } from '../../../shared/contract/permissions'
 import { AnswerQuestionInputSchema, QuestionSchema, QuestionsListSchema } from '../../../shared/contract/questions'
 import { ChatJobSchema } from '../../../shared/contract/jobs'
@@ -67,6 +67,8 @@ export const ANSWERS = {
   dataExportCheck: DataExportCheckSchema,
   // Stage 1 M2 (N18): the actions (routes 120 to 124), the permissions (110 and 111) and the questions (140 and 141).
   actions: ActionsListSchema, actionCard: ActionCardSchema, permissions: PermissionsListSchema, permission: PermissionSchema, questions: QuestionsListSchema, question: QuestionSchema,
+  // Stage 1 M3-U (N33): a batch's full list (route 125).
+  actionItems: ActionItemsPageSchema,
   // Stage 1 M1-D (N3): a chat's newest job (route 100) and a cancelled one (101).
   chatJob: ChatJobSchema,
 }
@@ -88,6 +90,8 @@ export const BODIES = {
   notifyChannels: PutNotifyChannelsSchema,
   // Stage 1 M2 (N18).
   answerAction: AnswerActionInputSchema, undoAction: UndoActionInputSchema, resolveAction: ResolveActionInputSchema,
+  // Stage 1 M3-U (N25): the asker's withdraw (route 126).
+  withdrawAction: WithdrawActionInputSchema,
   removePermission: RemovePermissionInputSchema, answerQuestion: AnswerQuestionInputSchema,
 }
 

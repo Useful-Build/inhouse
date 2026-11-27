@@ -3,7 +3,11 @@
 // card again when an `action.updated` names it or while it settles (the hold's end, the send: with backoff, through
 // failed reads, until it settles). The buttons send the rev the card was read at; a refusal says why, a conflict shows
 // the card as it is now, and a refusal with no card in it reads the card again.
-import { useCallback, useEffect, useId, useRef, useState, useSyncExternalStore } from 'react'
+// Stage 1 M3-U (N33, N25): a batch shows its first lines, its totals and "See all" (the full list in a sheet that loads
+// with its first opening), and its answer covers exactly the items and totals on screen when the press began. A waiting
+// batch reads itself every few seconds, since items joining it keep its rev (no `action.updated`). An admins card says
+// whom it waits for, and its asker may withdraw it.
+import { lazy, Suspense, useCallback, useEffect, useId, useRef, useState, useSyncExternalStore } from 'react'
 import { agent } from '../../agent'
 import type { ActionCard } from '../../agent/types'
 import { AgentError } from '../../agent/types'
@@ -14,9 +18,25 @@ import { cn } from '@/lib/utils'
 import { Badge } from '@/components/ui/badge'
 import { Button, Icon } from '../../ui'
 import { CONFIRMATION_SHEET } from '../../ui/agent'
-import { ALWAYS_STAYS, answeredToast, buttonsOf, factsOf, holdLeftMs, holdText, kickerOf, outcomeOf, refusalOf, settleDelayMs, settling } from './ask-card'
+import {
+  ALWAYS_STAYS, answeredToast, batchApprovedToast, buttonsOf, coversOf, coversText, factsOf, holdLeftMs, holdText, kickerOf, moreArrivedText, outcomeOf,
+  refusalOf, settleDelayMs, settling, showsFullList,
+} from './ask-card'
 import type { CardButton, Whose } from './ask-card'
 import { readAsks } from '../../shell/asks-count'
+import { fmtCount } from '../../lib/format'
+import { display } from '../../state/display'
+import type { BatchSheetProps } from './BatchSheet'
+
+/** How often a waiting batch reads itself: items joining it keep its rev, so no `action.updated` names them. */
+export const BATCH_REFRESH_MS = 5000
+
+// The full list loads with its first opening, outside Today's first load (scripts/check-bundle.mjs). A module Vite's
+// preload-error handling left undefined never settles, so the fallback (nothing) stays until the reload.
+const BatchSheet = lazy(async () => {
+  const m = await import('./BatchSheet')
+  return m === undefined ? new Promise<never>(() => {}) : { default: m.BatchSheet }
+})
 
 const GONE_KICKER = 'No longer there'
 const GONE_ICON = 'info'
@@ -63,6 +83,15 @@ export function AskCard({ actionId, initial, onChange, onOpenChat, whose = null,
   const [busy, setBusy] = useState(false)
   // Set at once on a press (state lags a render), so a double click can't send twice.
   const pressing = useRef(false)
+  // The card on screen when a press began (pointer down): a batch whose count grew before the click lands still answers
+  // for what its button said then.
+  const pressedOn = useRef<ActionCard | null>(null)
+  // The full list is open, with the card as it was when it opened: its answer covers that card's items and totals.
+  const [sheet, setSheet] = useState<ActionCard | null>(null)
+  // The most items seen on this batch while it waited (its reads, the full list's pages), and how many the answer left
+  // for their own card.
+  const tipSeen = useRef(initial?.batch?.itemCount ?? 0)
+  const [leftOver, setLeftOver] = useState(0)
   const [now, setNow] = useState(() => Date.now())
   const showToast = useUi(s => s.showToast)
   const titleId = useId()
@@ -79,6 +108,7 @@ export function AskCard({ actionId, initial, onChange, onOpenChat, whose = null,
     // A card that moved by itself (to "Needs a check", back to waiting, settled) changes what waits on this person.
     if (state.current !== null && state.current !== card.state) void readAsks()
     state.current = card.state
+    if (card.state === 'waiting' && card.batch) tipSeen.current = Math.max(tipSeen.current, card.batch.itemCount)
     setRead({ card, at: Date.now() })
     setNow(Date.now())
     setFailed(null)
@@ -110,6 +140,14 @@ export function AskCard({ actionId, initial, onChange, onOpenChat, whose = null,
     return () => clearTimeout(t)
   }, [card, left, load, now, gone, settleReads])
 
+  // A waiting batch reads itself every few seconds while the page shows (its count and totals grow as items join).
+  const growing = !!card && card.state === 'waiting' && !!card.batch && !gone
+  useEffect(() => {
+    if (!growing) return
+    const t = setInterval(() => { if (document.visibilityState === 'visible') void load() }, BATCH_REFRESH_MS)
+    return () => clearInterval(t)
+  }, [growing, load])
+
   if (!card) {
     return (
       <div className={cn(CONFIRMATION_SHEET, 'flex w-prose-measure flex-wrap items-center gap-2 text-sm text-muted-foreground', className)} data-action-card="loading" role="status">
@@ -119,23 +157,31 @@ export function AskCard({ actionId, initial, onChange, onOpenChat, whose = null,
     )
   }
 
-  const press = (b: CardButton) => {
+  /**
+   * Sends one press. `shown` is the card whose words were on screen when it began: its rev, and for a batch the items and
+   * totals the answer covers (never a newer read's). `item` settles one item of a batch (the full list's).
+   */
+  const send = (b: CardButton, shown: ActionCard, item?: number) => {
     if (pressing.current) return
     pressing.current = true
     setBusy(true)
     setRefusal(null)
-    const sent = b.kind === 'answer' ? agent.answerAction(card.id, card.rev, b.choice)
-      : b.kind === 'undo' ? agent.undoAction(card.id, card.rev)
-        : agent.resolveAction(card.id, card.rev, b.outcome)
+    const covers = coversOf(shown)
+    const sent = b.kind === 'answer' ? agent.answerAction(shown.id, shown.rev, b.choice, covers)
+      : b.kind === 'undo' ? agent.undoAction(shown.id, shown.rev)
+        : b.kind === 'withdraw' ? agent.withdrawAction(shown.id, shown.rev)
+          : agent.resolveAction(shown.id, shown.rev, b.outcome, item)
     const before = state.current
     sent.then(next => {
       take(next)
       if (b.kind === 'answer' && b.choice === 'always') setAllowedAlways(true)
-      // The pressed button is gone with the old state: keep the keyboard on the card.
-      headingRef.current?.focus()
+      if (b.kind === 'answer' && covers) setLeftOver(Math.max(0, tipSeen.current - covers.upTo))
+      // The pressed button is gone with the old state: keep the keyboard on the card (the list stays open for an item).
+      if (item === undefined) { setSheet(null); headingRef.current?.focus() }
       // The sidebar's badge counts what waits on this person: read it again (once: `take` already did if the state moved).
       if (state.current === before) void readAsks()
-      const words = answeredToast(b.kind === 'answer' ? b.choice : b.kind === 'undo' ? 'undo' : b.outcome)
+      const words = b.kind === 'answer' && b.choice === 'approve' && covers ? batchApprovedToast(covers.upTo)
+        : answeredToast(b.kind === 'answer' ? b.choice : b.kind === 'undo' ? 'undo' : b.kind === 'withdraw' ? 'withdraw' : b.outcome)
       showToast(b.kind === 'undo' && allowedAlways ? `${words} ${ALWAYS_STAYS}` : words, { icon: 'check', ms: 4000 })
     }, (e: unknown) => {
       const r = refusalOf(e)
@@ -144,9 +190,12 @@ export function AskCard({ actionId, initial, onChange, onOpenChat, whose = null,
       // someone or something moved the card first, so the badge reads again (once: `take` already did if the state moved).
       if (r.current) take(r.current)
       else void load()
+      // An open list starts again from the card as it is now, so its next answer names what it then shows.
+      if (r.current) setSheet(s => (s ? r.current : s))
       if (e instanceof AgentError && e.code === 'conflict' && state.current === before) void readAsks()
     }).finally(() => { pressing.current = false; setBusy(false) })
   }
+  const press = (b: CardButton) => { const shown = pressedOn.current ?? card; pressedOn.current = null; send(b, shown) }
 
   const buttons = gone ? [] : buttonsOf(card)
   // A card gone from the server (not found on a read) no longer says where it was: it may have gone out or not.
@@ -154,6 +203,15 @@ export function AskCard({ actionId, initial, onChange, onOpenChat, whose = null,
   const alwaysStays = allowedAlways && card.state === 'undone'
   const holdLine = !gone && left !== null ? holdText(left) : null
   const waitingLapse = card.state === 'waiting' && card.lapsed
+  const batch = card.batch
+  const fullList = !gone && showsFullList(card)
+  const sheetProps: BatchSheetProps | null = sheet && {
+    card, opened: sheet, whose, busy, refusal,
+    onClose: () => setSheet(null),
+    onSawTip: n => { tipSeen.current = Math.max(tipSeen.current, n) },
+    onAnswer: b => send(b, sheet),
+    onResolve: (outcome, n) => send({ kind: 'resolve', outcome, label: '', primary: false, key: 'item' }, card, n),
+  }
   return (
     <div role="group" aria-labelledby={titleId} data-action-card={gone ? 'gone' : card.state} data-action-id={card.id}
       className={cn(CONFIRMATION_SHEET, 'flex w-prose-measure flex-col', className)}>
@@ -173,9 +231,24 @@ export function AskCard({ actionId, initial, onChange, onOpenChat, whose = null,
         )}
       </div>
       {card.lines.length > 0 && (
-        <ul className="m-0 mt-3 list-none rounded-xl bg-draft-kind px-3.5 py-2.5 text-sm leading-prose text-foreground-2 wrap-anywhere">
+        <ul className="m-0 mt-3 list-none rounded-xl bg-draft-kind px-3.5 py-2.5 text-sm leading-prose text-foreground-2 wrap-anywhere" data-card-lines>
           {card.lines.map((l, i) => <li key={`${i}|${l}`}>{l}</li>)}
+          {batch && batch.itemCount > card.lines.length && (
+            <li className="text-muted-foreground">{`and ${fmtCount(batch.itemCount - card.lines.length, display())} more`}</li>
+          )}
         </ul>
+      )}
+      {batch && batch.itemCount > 0 && (
+        <div className="mt-3 flex flex-wrap items-center gap-x-3 gap-y-2 text-sm" data-batch-totals>
+          <span className="min-w-0 flex-1 text-foreground-2"><span className="text-muted-foreground">In all: </span><span className="font-strong">{coversText(batch)}</span></span>
+          {fullList && (
+            <Button variant="outline" size="sm" onPointerDown={() => { pressedOn.current = card }}
+              onClick={() => { const shown = pressedOn.current ?? card; pressedOn.current = null; setSheet(shown) }}
+              aria-haspopup="dialog" aria-label={`See all ${fmtCount(batch.itemCount, display())}: ${card.title}`}>
+              {`See all ${fmtCount(batch.itemCount, display())}`}
+            </Button>
+          )}
+        </div>
       )}
       <div className="mt-3 flex flex-wrap gap-1.5">
         {factsOf(card).map((f, i) => <Badge key={f} variant={i === 0 ? 'status' : 'warning'} size="lg">{f}</Badge>)}
@@ -183,6 +256,7 @@ export function AskCard({ actionId, initial, onChange, onOpenChat, whose = null,
       {waitingLapse && <p className="m-0 mt-3 text-sm text-warning-text">{card.lapsed}</p>}
       {outcome && <p className="m-0 mt-3 text-sm font-strong text-foreground-2">{outcome}</p>}
       {alwaysStays && <p className="m-0 mt-1 text-sm text-foreground-2">{ALWAYS_STAYS}</p>}
+      {leftOver > 0 && card.state !== 'waiting' && <p className="m-0 mt-1 text-sm text-foreground-2" data-left-over>{moreArrivedText(leftOver)} They're in Approvals.</p>}
       {holdLine && (
         <p className="m-0 mt-3 flex items-center gap-2 text-sm font-strong" data-hold>
           <Icon name="schedule" size={17} /><span role="timer" aria-live="off">{holdLine}</span>
@@ -191,12 +265,19 @@ export function AskCard({ actionId, initial, onChange, onOpenChat, whose = null,
       {buttons.length > 0 && (
         <div data-card-actions className="mt-3 flex flex-wrap gap-2">
           {buttons.map(b => (
-            <Button key={b.label} variant={b.primary ? 'primary' : 'soft'} disabled={busy} onClick={() => press(b)}
+            <Button key={b.key} variant={b.primary ? 'primary' : 'soft'} disabled={busy} onPointerDown={() => { pressedOn.current = card }} onClick={() => press(b)}
               aria-label={b.kind === 'answer' ? undefined : `${b.label}: ${card.title}`}>{b.label}</Button>
           ))}
         </div>
       )}
-      {refusal && <p role="alert" className="m-0 mt-3 text-sm text-destructive-text">{refusal}</p>}
+      {/* A batch's unclear items are settled one at a time, in its full list. */}
+      {buttons.length === 0 && batch && card.state === NEEDS_CHECK && card.can.resolve && !gone && (
+        <div data-card-actions className="mt-3 flex flex-wrap gap-2">
+          <Button variant="primary" onClick={() => setSheet(card)} aria-haspopup="dialog">Check each change</Button>
+        </div>
+      )}
+      {refusal && !sheet && <p role="alert" className="m-0 mt-3 text-sm text-destructive-text">{refusal}</p>}
+      {sheetProps && <Suspense fallback={null}><BatchSheet {...sheetProps} /></Suspense>}
     </div>
   )
 }

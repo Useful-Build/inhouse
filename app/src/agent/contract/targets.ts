@@ -152,6 +152,11 @@ export interface ContractTarget {
   seedAction?(): Promise<string>
   /** Stage 1 M2-H: the next send of an approved action ends as "Needs a check" (true), or goes out (false). */
   failNextSend?(on: boolean): Promise<void>
+  /**
+   * Stage 1 M3-U: a batch waiting on the signed-in person's answer (more than 10 items, so its list pages past its first
+   * lines); answers its id. The demo's is its sample batch; the real target's is made by the hook.
+   */
+  seedBatch?(): Promise<string>
 }
 
 // The mock saves to the browser's storage. Vitest runs in node, so a Map stands in, with a switch that makes a write throw.
@@ -323,6 +328,8 @@ function mockTarget(): ContractTarget {
     async writeElsewhere(record, value) { mockAgent.changeElsewhere(record, value) },
     async failRead(resource) { mockAgent.failRead(resource) },
     async scriptNextTurn(kind) { mockAgent.scriptNextTurn(kind) },
+    // The demo's sample batch (sample-data/actions.json), waiting again after the reset.
+    async seedBatch() { return (await mockAgent.actions({ states: ['waiting'] })).find(a => a.batch)!.id },
     async seedWaitingMemory(texts) {
       const inner = mockAgent as unknown as MockInternals
       const lines = texts.map((text, i) => ({ key: `mem_contractWaiting${String(i).padStart(7, '0')}`, text, source: 'Sam told your Inhouse agent in a chat', rev: 1, scope: 'brand' as const }))
