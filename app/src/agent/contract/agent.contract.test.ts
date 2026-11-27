@@ -1054,7 +1054,8 @@ describe.each(targets)('contract: $name', (t: ContractTarget) => {
       const blocked = page.channels.find(ch => ch.disabled)
       expect(open.length).toBeGreaterThan(0)
       const saved = await c.saveNotifyChannels({ channelIds: [open[0]!.channelId], alertsChannelId: open[0]!.channelId, ifRev: start.rev })
-      expect(saved).toEqual({ rev: start.rev + 1, channels: [{ channelId: open[0]!.channelId, name: open[0]!.name, alerts: true }] })
+      // Stage 1 M3-C (N27): the list carries whether posting is on; saving the list doesn't change it.
+      expect(saved).toEqual({ rev: start.rev + 1, channels: [{ channelId: open[0]!.channelId, name: open[0]!.name, alerts: true }], posting: start.posting })
       const stale = await c.saveNotifyChannels({ channelIds: [], ifRev: start.rev }).then(() => null, (e: unknown) => e)
       expect(stale).toBeInstanceOf(AgentError)
       expect(stale).toMatchObject({ code: 'conflict', current: { rev: saved.rev } })

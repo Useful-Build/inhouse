@@ -217,6 +217,9 @@ export const DESIGN_ROWS: readonly AccessRow[] = [
   // Stage 1 M2-Q (N16).
   { method: 'GET', pattern: '/api/questions', class: 'baseline', allow: ['member', 'admin'] },
   { method: 'POST', pattern: '/api/questions/:id/answer', class: 'baseline', allow: ['member', 'admin'] },
+  // Stage 1 M3-C (N26): the Inhouse ceiling (rows 150 and 151).
+  { method: 'GET', pattern: '/api/ceiling', class: 'technical', allow: ['admin', 'inhouse'] },
+  { method: 'PUT', pattern: '/api/ceiling/:operation', class: 'technical', allow: ['inhouse'] },
 ]
 
 /** `CanRows` as section 3 maps them. */

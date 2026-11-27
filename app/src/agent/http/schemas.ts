@@ -34,6 +34,7 @@ import { ActionCardSchema, ActionsListSchema, AnswerActionInputSchema, ResolveAc
 import { PermissionSchema, PermissionsListSchema, RemovePermissionInputSchema } from '../../../shared/contract/permissions'
 import { AnswerQuestionInputSchema, QuestionSchema, QuestionsListSchema } from '../../../shared/contract/questions'
 import { ChatJobSchema } from '../../../shared/contract/jobs'
+import { CeilingListSchema, CeilingRowSchema, UpdateCeilingInputSchema } from '../../../shared/contract/ceiling'
 
 /** What each route answers with. */
 export const ANSWERS = {
@@ -69,6 +70,8 @@ export const ANSWERS = {
   actions: ActionsListSchema, actionCard: ActionCardSchema, permissions: PermissionsListSchema, permission: PermissionSchema, questions: QuestionsListSchema, question: QuestionSchema,
   // Stage 1 M1-D (N3): a chat's newest job (route 100) and a cancelled one (101).
   chatJob: ChatJobSchema,
+  // Stage 1 M3-C (N26): the Inhouse ceiling (route 150) and one operation's row after a change (151).
+  ceiling: CeilingListSchema, ceilingRow: CeilingRowSchema,
 }
 
 /** What each write sends. */
@@ -89,6 +92,8 @@ export const BODIES = {
   // Stage 1 M2 (N18).
   answerAction: AnswerActionInputSchema, undoAction: UndoActionInputSchema, resolveAction: ResolveActionInputSchema,
   removePermission: RemovePermissionInputSchema, answerQuestion: AnswerQuestionInputSchema,
+  // Stage 1 M3-C (N26).
+  updateCeiling: UpdateCeilingInputSchema,
 }
 
 /** What the socket sends the browser and the events inside its frames; `accepts` is whether this build reads a frame's version. */

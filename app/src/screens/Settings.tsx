@@ -15,6 +15,8 @@ import { GRANT_HOURS } from '../../shared/contract/keys'
 import { LoadError } from '../ui/retry'
 import { InviteDialog } from './settings/InviteDialog'
 import { Permissions } from './settings/Permissions'
+import { Ceiling } from './settings/Ceiling'
+import { GiveQuestion } from './settings/GiveQuestion'
 import { allowance, mayEditNotify, pageResources, showsRemove } from './settings/allowance'
 import { readParts } from './settings/read-text'
 import { single } from './settings/single'
@@ -60,7 +62,7 @@ const RESOURCE_NAMES: Record<string, string> = {
 }
 
 /** A question waiting before a setting is saved. */
-interface Ask { title: string; text: string; action: string; go: () => void }
+interface Ask { title: string; text: string; action: string; gives?: true; go: () => void }
 
 let savedTimer: ReturnType<typeof setTimeout> | undefined
 /** A small "Saved" toast once typing stops, not one per keystroke. */
@@ -330,7 +332,7 @@ export function Settings() {
   }
   const page = settingsPage(setTab, env)
   // P5 W4: Slack notices is listed only for a brand with Slack connected.
-  const menu = menuFor(data.tools, demo === null, agent.me()?.role === 'inhouse')
+  const menu = menuFor(data.tools, demo === null, agent.me()?.role)
   const readOnly = phone && setTab.startsWith('team-')
   // The note is for a page where a control became text; a page of buttons and plain facts has nothing to explain.
   const hidesControls = readOnly && page.sections.some(sec => sec.rows.some(r => r.kind === 'toggle' || r.kind === 'select' || r.kind === 'text' || r.kind === 'mode'))
@@ -413,6 +415,8 @@ export function Settings() {
           )}
           {/* Stage 1 M2-H: Always allowed draws itself (the product only; content.ts names it for the search). */}
           {setTab === 'you-permissions' && demo === null && <Permissions />}
+          {/* Stage 1 M3-C: What the agent can do draws itself too. */}
+          {setTab === 'team-ceiling' && demo === null && <Ceiling />}
           {page.sections.filter(sec => sec.rows.length > 0 || sec.empty).map((sec, si) => (
             <section key={`${si}|${sec.label}`} className={sec.label ? undefined : 'mt-4.5'}>
               {sec.label && <SectionHeader title={sec.label} className="mt-6 mb-2.5" />}
@@ -459,10 +463,16 @@ export function Settings() {
       </div>
       )}
       {inviting && <InviteDialog onClose={() => setInviting(false)} memberOnly={me?.role === 'inhouse'} />}
-      {ask && (
+      {ask && !ask.gives && (
         <Confirm label={ask.title} title={ask.title} action={ask.action} onCancel={() => setAsk(null)} onConfirm={() => { ask.go(); setAsk(null) }}>
           {ask.text}
         </Confirm>
+      )}
+      {/* Stage 1 M3-C: a question before a change that gives something draws its action as a normal one. */}
+      {ask?.gives && (
+        <GiveQuestion title={ask.title} action={ask.action} onCancel={() => setAsk(null)} onConfirm={() => { ask.go(); setAsk(null) }}>
+          {ask.text}
+        </GiveQuestion>
       )}
     </div>
   )
