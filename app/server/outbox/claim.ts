@@ -18,12 +18,12 @@ import { timing } from './timing.ts'
 import type { OutboxActionRow, OutboxGateRow } from './types.ts'
 
 /** M2-D (N11): the action's chat isn't in the trash (a deleted chat withdraws its actions). */
-const CHAT_KEPT = 'NOT EXISTS (SELECT 1 FROM chats ch WHERE ch.id = outbox_actions.chat_id AND ch.deleted_at_ms IS NOT NULL)'
+export const CHAT_KEPT = 'NOT EXISTS (SELECT 1 FROM chats ch WHERE ch.id = outbox_actions.chat_id AND ch.deleted_at_ms IS NOT NULL)'
 /**
  * M2-D (N9): a Shopify action's scope names the store its account writes to now (`connector_accounts.shop`, the hub's
  * word): a store change with the same connection date can't send an action approved for the old store.
  */
-const SHOP_KEPT = `(json_extract(outbox_actions.scope_json, '$.shop') IS NULL OR EXISTS (SELECT 1 FROM connector_accounts cs
+export const SHOP_KEPT = `(json_extract(outbox_actions.scope_json, '$.shop') IS NULL OR EXISTS (SELECT 1 FROM connector_accounts cs
   WHERE cs.account_id = outbox_actions.account_id AND cs.shop = json_extract(outbox_actions.scope_json, '$.shop')))`
 
 export function claimStmt(p: { actionId: string; nowMs: number; pauseGen: number; stamp: string }): Stmt {

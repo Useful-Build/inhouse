@@ -119,6 +119,9 @@ export const deletionRules: Readonly<Record<string, DeletionRule>> = {
   // keeps who approved or resolved it, pseudonymous once their row is. The gate names no one.
   outbox_gate: { action: 'keep', why: 'one row of pause state: no member id' },
   outbox_actions: { action: 'delete_rows', column: 'asked_by', kept: ['approver', 'approved_by', 'resolved_by'] },
+  // Stage 1 M3-B: a batch's items name no asker; they go with their batch (0770's trigger deletes them with its row). An
+  // item of someone else's batch keeps who resolved it, pseudonymous once their row is.
+  outbox_items: { action: 'keep', why: 'no asker: a batch\'s items go with their batch\'s row (a trigger); resolved_by stays pseudonymous', kept: ['resolved_by'] },
   // Stage 1 M2-Q. The questions asked of the person go; one asked of every admin keeps who answered it, pseudonymous once
   // their row is.
   questions: { action: 'delete_rows', column: 'asked_of', kept: ['answered_by'] },

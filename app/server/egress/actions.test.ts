@@ -402,3 +402,45 @@ describe('the route (failure 5)', () => {
     expect(row.tool_use_id).not.toBe('toolu_forged')
   })
 })
+
+describe('Stage 1 M3-B: a call that joins a batch (N22)', () => {
+  it('the 6th waiting call answers at once from its own item: waiting with others on one card, the batch\'s one report later', async () => {
+    for (let k = 1; k <= 5; k++) {
+      const w = setup()
+      w.rpc.askWaitAnswer = { wait: false, why: 'busy' }
+      expect((await call(w, tagArgs(k))).structuredContent).toMatchObject({ status: 'waiting' })
+    }
+    const w = setup()
+    const r = await call(w, tagArgs(6))
+    const id = idOf(r)
+    const batch = (await rowOf(db, id))!
+    expect(batch).toMatchObject({ kind: 'batch', state: 'waiting', items_n: 1, report: 'later' })
+    expect(text(r)).toBe(`${ACTION_WORDS.collected('the person', 0)} ${ACTION_WORDS.laterNote} (approval_id: ${id}, item 1)`)
+    expect(r.structuredContent).toEqual({ message: text(r), approval_id: id, item: 1, status: 'waiting' })
+    // No wait for a card other calls share; the turn's ask part and the chat's update name the batch.
+    expect(methods(w.rpc)).toEqual(['admitAction', 'hubAccounts', 'askNoted', 'actionChanged'])
+    expect(w.clock.now).toBe(T0)
+    // A second call joins it; the words count the others.
+    const again = await call(setup(), tagArgs(7))
+    expect(idOf(again)).toBe(id)
+    expect(text(again)).toContain(ACTION_WORDS.collected('the person', 1))
+  })
+
+  it('a collected call is answered from its item, not the batch: an item sent says done, whatever the rest did', async () => {
+    for (let k = 1; k <= 5; k++) {
+      const w = setup()
+      w.rpc.askWaitAnswer = { wait: false, why: 'busy' }
+      await call(w, tagArgs(k))
+    }
+    const w = setup()
+    const tu = fresh('toolu')
+    w.rpc.admitActionAnswer = (): Admitted => ({ toolUseId: tu, turnId: w.turnId, runId: 'r_m2d', chatId: CHAT, ownerId: ASKER, jobId: null, replay: false })
+    const first = await call(w, tagArgs(8))
+    const id = idOf(first)
+    await db.prepare("UPDATE outbox_items SET state = 'sent', result_json = ? WHERE action_id = ? AND n = 1").bind(JSON.stringify({ ref: 'vip' }), id).run()
+    w.rpc.admitActionAnswer = (): Admitted => ({ toolUseId: tu, turnId: w.turnId, runId: 'r_m2d', chatId: CHAT, ownerId: ASKER, jobId: null, replay: true })
+    const replay = await call(w, tagArgs(8))
+    expect(text(replay)).toBe(`${ACTION_WORDS.sent('vip')} (approval_id: ${id}, item 1)`)
+    expect(replay.structuredContent).toMatchObject({ approval_id: id, item: 1, status: 'sent' })
+  })
+})

@@ -48,7 +48,7 @@ import { checkExport, exportEverything } from './api/data-access.ts'
 // Stage 1 M2-A: the permissions a person can see and remove.
 import { listPermissions, removePermission } from './api/permissions.ts'
 // Stage 1 M2-B: the outbox's cards and a person's answers to them.
-import { answerAction, getAction, listActions, resolveAction, undoAction } from './api/actions.ts'
+import { answerAction, getAction, listActionItems, listActions, resolveAction, undoAction } from './api/actions.ts'
 // Stage 1 M2-Q: the questions asked of a person, and answering one.
 import { answerQuestionRoute, listQuestions } from './api/questions.ts'
 // P5 (p5-w1 section 9): the Inhouse team connects an OAuth tool through the hub's ConnectGateway.
@@ -252,6 +252,7 @@ export const routes: readonly Route[] = [
   /* 122 */ { method: 'POST', pattern: '/api/actions/:id/answer', handler: answerAction },
   /* 123 */ { method: 'POST', pattern: '/api/actions/:id/undo', handler: undoAction },
   /* 124 */ { method: 'POST', pattern: '/api/actions/:id/resolve', handler: resolveAction },
+  /* 125 */ { method: 'GET', pattern: '/api/actions/:id/items', handler: listActionItems },
   // Stage 1 M2-Q (rows 140 to 149): the open questions asked of a person, and answering one.
   /* 140 */ { method: 'GET', pattern: '/api/questions', handler: listQuestions },
   /* 141 */ { method: 'POST', pattern: '/api/questions/:id/answer', handler: answerQuestionRoute },

@@ -112,6 +112,10 @@ export interface OutboxItemRow {
   error_code: string | null
   resolved_by: string | null
   resolved_at_ms: number | null
+  /** M3-B (0770): when the item was made (the backup's paged read). */
+  created_at_ms: number
+  /** M3-B (0770): its batch's `final_at_ms` once the batch is final (retention's age); null while it's open. */
+  final_at_ms: number | null
   updated_at_ms: number
   stamp: string | null
 }
@@ -146,9 +150,10 @@ export type OutboxRequestMode = 'tool' | 'ask_only'
 
 /**
  * `decide`'s refusals, plus `chat_deleted` (M2-D: the chat is in the trash) and `invocation_conflict`: a row for the same `(chat_id, tool_use_id)` holds other arguments
- * (another `payload_hash`). Nothing is written for either.
+ * (another `payload_hash`). Nothing is written for either. `busy` (Stage 1 M3-B, N22): a collecting batch's tip moved under
+ * the call three times in a row; nothing was written and the call may be made again.
  */
-export type OutboxRefuseReason = RefuseReason | 'invocation_conflict' | 'chat_deleted'
+export type OutboxRefuseReason = RefuseReason | 'invocation_conflict' | 'chat_deleted' | 'busy'
 
 export type OutboxRequestResult =
   /** Nothing was written. `text` is the plain refusal the agent reads. */

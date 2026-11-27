@@ -28,8 +28,9 @@ import { outboxFacts } from '../outbox/facts.ts'
 import { operationEntry, operationForTool, OPERATIONS } from '../outbox/operations/index.ts'
 import { openOutbox } from '../outbox/store.ts'
 import { SEND_KIND, sendTaskId } from '../outbox/send-task.ts'
+import { itemState } from '../outbox/card.ts'
 import { FINAL_STATES } from '../outbox/sql.ts'
-import type { OutboxActionRow } from '../outbox/types.ts'
+import type { OutboxActionRow, OutboxItemRow } from '../outbox/types.ts'
 import type { Asker, Origin, WriteOperationKey } from '../permissions/types.ts'
 import { MCP_PROTOCOL_VERSIONS } from '../mcp/server/index.ts'
 import { ACTIONS_TOOL_PREFIX, APPROVAL_REQUEST_TOOL } from '../do/brand-agent/invocations.ts'
@@ -99,16 +100,26 @@ export const ACTION_WORDS = {
   alreadyWaiting: "This call is already being waited on, so this one doesn't wait. You'll get the result from that wait or, if it has ended, as an automatic note from Inhouse.",
   busyNote: "This turn is already waiting on other approvals, so this one isn't waited on. You'll get the result when there is one.",
   unknownTool: 'There is no such action tool, so nothing was asked or sent.',
+  /** Stage 1 M3-B (N22): a batch that went out, its ref counting its items ("48 of 50 went out"). */
+  batchSent: (ref: string | null) => (ref ? `Done: ${ref}.` : 'Done. It went out.'),
+  /**
+   * Stage 1 M3-B (N22): the call joined one card with other changes like it (collected). Its own item's state is what
+   * the words say; the card's other items are other calls'.
+   */
+  collected: (name: string, others: number) =>
+    `Waiting for ${name}'s OK. It's in Approvals on one card with ${others === 1 ? '1 other change' : `${others} other changes`} like it, so ${name} answers them together.`,
   notAdmitted: "That call couldn't be matched to this turn, so nothing was asked or sent.",
   unavailable: 'Actions are unavailable for a moment, so nothing was asked or sent. Try once more; if it fails again, tell the person.',
 } as const
 
+const refOf = (resultJson: string | null): string | null => {
+  const ref = resultJson ? (JSON.parse(resultJson) as { ref?: unknown }).ref : undefined
+  return typeof ref === 'string' && ref !== '' ? ref : null
+}
+
 function wordsFor(row: OutboxActionRow, name: string): string {
   switch (row.state) {
-    case 'sent': {
-      const ref = row.result_json ? (JSON.parse(row.result_json) as { ref?: unknown }).ref : undefined
-      return ACTION_WORDS.sent(typeof ref === 'string' && ref !== '' ? ref : null)
-    }
+    case 'sent': return row.kind === 'batch' ? ACTION_WORDS.batchSent(refOf(row.result_json)) : ACTION_WORDS.sent(refOf(row.result_json))
     case 'denied': return ACTION_WORDS.denied
     case 'waiting': return ACTION_WORDS.waiting(name)
     case 'approved':
@@ -119,6 +130,14 @@ function wordsFor(row: OutboxActionRow, name: string): string {
     case 'withdrawn': return ACTION_WORDS.withdrawn
     case 'expired': return ACTION_WORDS.expired
   }
+}
+
+/** A collected call's words: its own item's state in server words. */
+function itemWords(item: OutboxItemRow, batch: OutboxActionRow, name: string): string {
+  const state = itemState(item, batch)
+  if (state === 'waiting') return ACTION_WORDS.collected(name, Math.max(0, batch.items_n - 1))
+  if (state === 'sent') return ACTION_WORDS.sent(refOf(item.result_json))
+  return wordsFor({ ...batch, kind: 'single', state }, name)
 }
 
 // ---------- the route ----------
@@ -251,9 +270,21 @@ export async function callAction(grant: RunGrant, name: string, args: Record<str
     { mode: 'tool' },
   )
   if (r.outcome === 'refused') return refused(r.reason, r.text)
-  // Stage 1 M3-A: a call that joined a batch has no action of its own (`action` is the shared batch), so the wait and
-  // the words below would be about other calls' items. Nothing returns it before M3-B, which answers it from the item.
-  if (r.outcome === 'collected') throw new Error(`write tool: the outbox collected a call into ${r.action.id} before batches exist (M3-B)`)
+  if (r.outcome === 'collected') {
+    // Stage 1 M3-B (N22): the call joined a batch other calls share, so it has no action of its own to wait on. It's
+    // answered at once from its own item; the batch's one report (a resume turn once it ends) tells the agent the rest.
+    const batch = r.action
+    await d.rpc.askNoted(admitted.turnId, batch.id)
+    await waiterGaveUp(d1Reports(d.db), batch.id, false)
+    await d.rpc.actionChanged(batch.id)
+    const name = await approverName(d.db, batch.approver)
+    const state = itemState(r.item, batch)
+    const final = isFinal(state)
+    return toolAnswer(
+      `${itemWords(r.item, batch, name)}${final ? '' : ` ${ACTION_WORDS.laterNote}`} (approval_id: ${batch.id}, item ${r.item.n})`,
+      { approval_id: batch.id, item: r.item.n, status: state },
+    )
+  }
   const actionId = r.action.id
   await d.rpc.askNoted(admitted.turnId, actionId)
   const approver = await approverName(d.db, r.action.approver)
@@ -317,9 +348,13 @@ async function waitFor(d: ActionsRouteDeps, actionId: string): Promise<OutboxAct
   }
 }
 
-/** The action an invocation made, if any (the outbox's `(chat_id, tool_use_id)` key). */
-const invocationRow = (db: D1Database, chatId: string, toolUseId: string) =>
-  first<{ id: string }>(db, stmt('SELECT id FROM outbox_actions WHERE chat_id = ? AND tool_use_id = ?', chatId, toolUseId))
+/**
+ * The action an invocation made, if any (the outbox's `(chat_id, tool_use_id)` key), or (Stage 1 M3-B) the batch its
+ * collected item sits in now.
+ */
+const invocationRow = async (db: D1Database, chatId: string, toolUseId: string) =>
+  (await first<{ id: string }>(db, stmt('SELECT id FROM outbox_actions WHERE chat_id = ? AND tool_use_id = ?', chatId, toolUseId)))
+    ?? first<{ id: string }>(db, stmt('SELECT action_id AS id FROM outbox_items WHERE chat_id = ? AND tool_use_id = ?', chatId, toolUseId))
 
 /** The approver's name as the agent reads it ("Dana"), or "the person". */
 async function approverName(db: D1Database, memberId: string): Promise<string> {

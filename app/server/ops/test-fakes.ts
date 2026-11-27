@@ -42,7 +42,8 @@
 //   test build); everything after it is the real path: the hub's accounts read and copied into D1, the outbox's
 //   `request`, BrandAgent's `ask` part, the send scheduled on BrandAgent, the report (that turn isn't live, so nothing
 //   waits). Answers `{ result }`: `{ outcome, reason?, text, action? }` (the outbox's outcome read back from the row)
-//   and `tool`, the tool's own answer as the agent reads it.
+//   and `tool`, the tool's own answer as the agent reads it. Stage 1 M3-B (N22): a call that joined a batch is
+//   `{ outcome: 'collected', action, item }`, the batch and the call's own item on it.
 import { z } from 'zod'
 import type { CallerScope, ConnectGateway, HubResult } from '../../hub/index/contract.ts'
 import type { RunGrant } from '../do/brand-agent/tokens.ts'
@@ -58,7 +59,7 @@ import { CeilingValuesSchema } from '../../shared/contract/ceiling.ts'
 import { runBatch } from '../db/sql.ts'
 import { setCeilingStmt } from '../permissions/ceiling.ts'
 import { OPERATIONS } from '../outbox/operations/index.ts'
-import type { OutboxActionRow } from '../outbox/types.ts'
+import type { OutboxActionRow, OutboxItemRow } from '../outbox/types.ts'
 import type { BrandAgent } from '../do/brand-agent/index.ts'
 import { approvalsWiring, handleActions } from '../egress/actions.ts'
 import type { ActionsRouteDeps } from '../egress/actions.ts'
@@ -352,6 +353,13 @@ async function actionOp(env: TestFakesEnv, op: Extract<ProductOp, { op: 'action'
   const actionId = tool.structuredContent?.approval_id
   const action = typeof actionId === 'string' ? await env.DB.prepare('SELECT * FROM outbox_actions WHERE id = ?').bind(actionId).first<OutboxActionRow>() : null
   if (!action) return refuse(502, 'no_action', 'the tool answered no action')
+  // Stage 1 M3-B (N22): a call that joined a batch names its item on that batch.
+  const n = tool.structuredContent?.item
+  if (typeof n === 'number') {
+    const item = await env.DB.prepare('SELECT * FROM outbox_items WHERE action_id = ? AND n = ?').bind(action.id, n).first<OutboxItemRow>()
+    if (!item) return refuse(502, 'no_item', 'the tool answered no item')
+    return ok({ result: { outcome: 'collected', text, action, item, tool } })
+  }
   const outcome = action.state === 'approved' && action.verdict === 'run' ? 'approved' : action.state === 'waiting' ? 'waiting' : 'existing'
   return ok({ result: { outcome, text, action, tool } })
 }
