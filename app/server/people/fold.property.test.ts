@@ -1,10 +1,10 @@
-// Properties of the fold and the plain-name rule (Stage 1 M3-T, N28): folding is idempotent on any text; a name the agent
-// is shown is exactly the typed text and fits the team line's shape; a plain Latin name with one letter swapped for a
-// look-alike from another script is withheld. That every active person is found by their own name, through the tool
+// Properties of the fold, the shown-name shape and the flags (Stage 1 M3-T, N28): folding is idempotent on any text; a
+// shown name fits the team line's shape; a Latin name with one letter swapped for a look-alike from another script is
+// flagged `mixed_script`. That every active person is found by their own name, through the tool
 // and D1, is in tools/team/member-find.test.ts.
 import { fc } from '@fast-check/vitest'
 import { describe, expect, it } from 'vitest'
-import { NAME_SHAPE, NAME_SHOWN_MAX, NAME_WITHHELD, fold, nameForAgent, readsAsInstruction } from './fold.ts'
+import { NAME_SHAPE, NAME_SHOWN_MAX, fold, nameFlags, nameShown } from './fold.ts'
 
 const RUNS = Number(import.meta.env.VITE_PROP_RUNS) || 1000
 
@@ -30,28 +30,24 @@ describe('the fold', () => {
 })
 
 describe('what the agent is shown', () => {
-  it("is the typed text, in the team line's shape, or the placeholder with a flag", () => {
+  it("a shown name is in the team line's shape and at most 40 characters", () => {
     fc.assert(fc.property(text, s => {
-      const shown = nameForAgent(s)
-      if (shown.flagged) expect(shown.name).toBe(NAME_WITHHELD)
-      else {
-        expect(shown.name).toBe(s)
-        expect(NAME_SHAPE.test(s)).toBe(true)
-        expect([...s].length).toBeLessThanOrEqual(NAME_SHOWN_MAX)
-        expect(readsAsInstruction(s)).toBe(false)
-      }
+      if (!nameShown(s)) return
+      expect(NAME_SHAPE.test(s)).toBe(true)
+      expect([...s].length).toBeLessThanOrEqual(NAME_SHOWN_MAX)
     }), { numRuns: RUNS })
   })
 
-  it('a plain Latin name with one letter swapped for a look-alike of another script is withheld', () => {
+  it('a Latin name with one letter swapped for a look-alike of another script is flagged mixed_script', () => {
     const word = fc.stringMatching(/^[A-Z][a-z]{1,9}$/)
-    const name = fc.array(word, { minLength: 1, maxLength: 3 }).map(ws => ws.join(' ')).filter(n => !nameForAgent(n).flagged)
+    const name = fc.array(word, { minLength: 1, maxLength: 3 }).map(ws => ws.join(' '))
     fc.assert(fc.property(name, fc.nat(), (n, pick) => {
+      expect(nameFlags(n)).not.toContain('mixed_script')
       const spots = [...n].flatMap((c, i) => (LOOK_ALIKE[c] === undefined ? [] : [i]))
       fc.pre(spots.length > 0)
       const at = spots[pick % spots.length]
       const swapped = [...n].map((c, i) => (i === at ? LOOK_ALIKE[c] : c)).join('')
-      expect(nameForAgent(swapped), swapped).toEqual({ name: NAME_WITHHELD, flagged: true })
+      expect(nameFlags(swapped), swapped).toContain('mixed_script')
     }), { numRuns: RUNS })
   })
 })

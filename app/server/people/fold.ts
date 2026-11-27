@@ -1,16 +1,13 @@
 // People's names as the agent reads them (Stage 1 M3-T, N28): `member_find` returns every active person, and finds them
 // by a folded form of their name. A name is text a person typed for themselves (`g:name`, up to 80 characters), so it
-// is data, never instructions. Nobody is left out: a name is shown as typed only when it is a plain name (the M2-G team
-// line's shape, no instruction word, one script); any other name is withheld (NAME_WITHHELD) and the person flagged,
-// still with their member id.
+// is data, never instructions. Nobody is left out: a name is shown as typed only when it has the M2-G team line's shape
+// (nameShown), otherwise only the member id comes back. Either way the name is flagged when it reads like an
+// instruction (`instruction_word`) or a word of it mixes scripts (`mixed_script`).
 //
 // The fold (for matching only, never shown): control characters become spaces and format characters (zero-width ones,
 // direction marks) go; NFKC (fullwidth `Ｉ` is `I`); lowercase; NFD with every combining mark removed (`İ`, `é`); NFC;
 // spaces collapse. Idempotent (fold.property.test.ts). Words split the fold on everything but letters and digits, so a
 // hyphen or an apostrophe (any of them) splits a word: "O'Brien-Smith" is `o`, `brien`, `smith`.
-
-/** What the agent is shown in place of a name that isn't a plain name. */
-export const NAME_WITHHELD = '(name withheld)'
 
 /** The longest name shown, and the most words in it (the M2-G team line's limits, prompt/connected.ts). */
 export const NAME_SHOWN_MAX = 40
@@ -113,7 +110,7 @@ const SCRIPTS: readonly (readonly [string, RegExp])[] = [
   'Georgian', 'Hangul', 'Ethiopic', 'Cherokee', 'Khmer', 'Mongolian', 'Hiragana', 'Katakana', 'Bopomofo', 'Han',
 ].map(s => [s, new RegExp(String.raw`^\p{Script=${s}}$`, 'u')] as const)
 const SHARED = /^[\p{Script=Common}\p{Script=Inherited}]$/u
-/** Script sets one name may mix (Unicode TR39's "highly restrictive" level: Japanese, Chinese and Korean with Latin). */
+/** Script sets one word may mix (Unicode TR39's "highly restrictive" level: Japanese, Chinese and Korean with Latin). */
 const MIXES_ALLOWED: readonly (readonly string[])[] = [
   ['Latin', 'Han', 'Hiragana', 'Katakana'], ['Latin', 'Han', 'Bopomofo'], ['Latin', 'Han', 'Hangul'],
 ]
@@ -128,18 +125,27 @@ export function scriptsOf(s: string): Set<string> {
   return out
 }
 
-/** Whether a name mixes scripts beyond TR39's highly restrictive sets (Cyrillic `о` in "Ignоre", Greek `ο` in "Lεo"). */
+/** A word's letters, for the script check: split on anything but letters and marks. */
+const WORD_SPLIT = /[^\p{L}\p{M}]+/u
+
+/**
+ * Whether a word of a name mixes scripts beyond TR39's highly restrictive sets (Cyrillic `о` in "Ignоre", Greek `ε` in
+ * "Lεo"). Words are compared one by one, so "Dana Ким" is two words of one script each.
+ */
 export function mixesScripts(name: string): boolean {
-  const scripts = [...scriptsOf(name)]
-  return scripts.length > 1 && !MIXES_ALLOWED.some(set => scripts.every(s => set.includes(s)))
+  return name.normalize('NFKC').split(WORD_SPLIT).some(word => {
+    const scripts = [...scriptsOf(word)]
+    return scripts.length > 1 && !MIXES_ALLOWED.some(set => scripts.every(s => set.includes(s)))
+  })
 }
 
-/** Whether a name is a plain name: the shape, at most NAME_SHOWN_MAX characters, no instruction word, one script. */
-export function plainName(name: string): boolean {
-  return [...name].length <= NAME_SHOWN_MAX && NAME_SHAPE.test(name) && !readsAsInstruction(name) && !mixesScripts(name)
-}
+/** Whether a name has the shape the agent is shown (the M2-G team line's: 1 to 4 words, at most NAME_SHOWN_MAX characters). */
+export const nameShown = (name: string): boolean => [...name].length <= NAME_SHOWN_MAX && NAME_SHAPE.test(name)
 
-/** A name as the agent is shown it: exactly as typed when it is a plain name, otherwise withheld and flagged. */
-export function nameForAgent(name: string | null): { name: string; flagged: boolean } {
-  return name !== null && plainName(name) ? { name, flagged: false } : { name: NAME_WITHHELD, flagged: true }
+/** Why a name is flagged. */
+export type NameFlag = 'instruction_word' | 'mixed_script'
+
+/** A name's flags, in this order: `instruction_word`, `mixed_script`. */
+export function nameFlags(name: string): NameFlag[] {
+  return [...(readsAsInstruction(name) ? ['instruction_word' as const] : []), ...(mixesScripts(name) ? ['mixed_script' as const] : [])]
 }
