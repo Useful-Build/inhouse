@@ -121,12 +121,22 @@ test("a routine's question goes to its creator's inbox with no chat; the run wai
 
   // The run asks its creator: the question is in her list, with no chat she could open.
   let q: Q | undefined
-  await expect.poll(async () => {
-    const r = await call(request, dana, 'GET', '/api/questions')
-    expect(r.status, r.text).toBe(200)
-    q = (r.json.items as Q[]).find(x => !before.has(x.id) && x.question === QUESTION_ASKED.question)
-    return q !== undefined
-  }, { timeout: 240_000, message: "the routine's question in its creator's list" }).toBe(true)
+  try {
+    await expect.poll(async () => {
+      const r = await call(request, dana, 'GET', '/api/questions')
+      expect(r.status, r.text).toBe(200)
+      q = (r.json.items as Q[]).find(x => !before.has(x.id) && x.question === QUESTION_ASKED.question)
+      return q !== undefined
+    }, { timeout: 240_000, message: "the routine's question in its creator's list" }).toBe(true)
+  } catch (e) {
+    // Where the run got to, so a failure on the sandbox says why: its runs (route 86), the newest one's steps, and the
+    // questions the creator and the admin hold.
+    const history = (await call(request, dana, 'GET', `/api/routines/${routine!.id}/runs`)).json as { runs?: { trace?: string }[] }
+    const trace = history.runs?.[0]?.trace
+    const steps = trace ? (await call(request, dana, 'GET', `/api/traces/${trace}`)).json : null
+    const asked = { dana: (await call(request, dana, 'GET', '/api/questions')).json, admin: (await call(request, actor('admin'), 'GET', '/api/questions')).json }
+    throw new Error(`${(e as Error).message}\nruns: ${JSON.stringify(history).slice(0, 2000)}\ntrace: ${JSON.stringify(steps).slice(0, 6000)}\nquestions: ${JSON.stringify(asked).slice(0, 3000)}`)
+  }
   expect(q).toMatchObject({ state: 'open', options: QUESTION_ASKED.options, chatId: null, answer: null })
   // Another member never sees it, nor can answer it.
   expect(((await call(request, leo, 'GET', '/api/questions')).json.items as Q[]).map(x => x.id)).not.toContain(q!.id)
