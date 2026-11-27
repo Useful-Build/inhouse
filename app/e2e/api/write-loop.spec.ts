@@ -11,6 +11,11 @@
 //  - approved with `upTo = 200` and the totals the card showed: 200 more writes, and the 250 left sit on a new
 //    collecting card.
 // The operation is turned on only through the test-fakes hook (N2, N19) and off again after, with the permission removed.
+// #598: the loop takes about 25 minutes (500 calls, one at a time through the egress), so it runs ONLY when named, like
+// job-soak.spec.ts: `gh workflow run sandbox-test-deploy ... -f only="api/write-loop.spec.ts"`. It reads the workflow's
+// `only` list (the step's ONLY environment) for its own name and skips everywhere else (the default agent set, a full run
+// without `only`). The orchestrator names it when the outbox, the egress, permissions, the hub's writes, the actions
+// server or the runner's proxy change.
 import { expect, test } from '@playwright/test'
 import type { APIRequestContext } from '@playwright/test'
 import { WRITE_LOOP_DONE } from '../../test/scripted-model/scenarios/limits.ts'
@@ -18,6 +23,8 @@ import { answerOf, createChat, needsContainer, send, textOf } from './chat-kit.t
 import { hook, hubCall, requestAction, setCeiling } from './fakes-kit.ts'
 import { actor, call, me } from './kit.ts'
 
+const SELF = 'api/write-loop.spec.ts'
+const asked = (process.env.ONLY ?? '').split(/\s+/).includes(SELF)
 const dana = actor('memberA')
 const TAG_ADD = 'shopify.order.tag_add'
 test.describe.configure({ mode: 'serial' })
@@ -53,7 +60,7 @@ const removeTagPermissions = async (request: APIRequestContext) => {
 }
 
 test.beforeAll(async ({ request }) => {
-  if (!process.env.E2E_TEST_BUILD_REMOTE) return
+  if (!process.env.E2E_TEST_BUILD_REMOTE || !asked) return
   // The Shopify account answers a read (its grant), so the hub calls it active and the write path can use it.
   expect((await hubCall(request, 'callTool', 'orders_search', { first: 1 })).ok).toBe(true)
   // A killed run may have left a permission behind: the loop starts from the one it makes itself.
@@ -65,13 +72,14 @@ test.beforeAll(async ({ request }) => {
 })
 
 test.afterAll(async ({ request }) => {
-  if (!process.env.E2E_TEST_BUILD_REMOTE) return
+  if (!process.env.E2E_TEST_BUILD_REMOTE || !asked) return
   await setCeiling(request, TAG_ADD, false)
   await removeTagPermissions(request)
 })
 
 test('the agent\'s loop of 500 allowed writes stops at the limit and becomes one card; approving 200 sends 200, the rest wait', async ({ request }) => {
   needsContainer()
+  test.skip(!asked, `the 25-minute loop runs only when named: sandbox-test-deploy -f only="${SELF}"`)
   test.setTimeout(2_700_000)
   const danaId = (await me(request, dana)).memberId
 

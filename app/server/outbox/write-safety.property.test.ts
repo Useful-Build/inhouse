@@ -213,8 +213,13 @@ interface Call {
   operation: string
   args: unknown
   writes: Verdict[]
+  /** What each upstream write carried, as the store (or Slack) received it, in the order of `writes`. */
+  sent: Sent[]
   answer: CallAnswer
 }
+
+/** One upstream write as it arrived: a Shopify mutation's variables, or a Slack post. */
+type Sent = { kind: 'shop'; operation: string; variables: Record<string, unknown> } | { kind: 'slack'; channelId: string; text: string }
 
 /** `Symbol.dispose`, as the runtime has it (this project's TypeScript lib doesn't name it yet). */
 const DISPOSE = (Symbol as unknown as { dispose: symbol }).dispose
@@ -264,7 +269,7 @@ class HubStandIn {
   /** Upstream writes some call saw happen inside it (W1 compares it with the store's log). */
   attributed = 0
   /** Runs first in every call, synchronously: the oracle's look at the permit (and a planted Pause inside the call). */
-  onCall: (req: WriteRequest) => Call = req => ({ actionId: req.actionId, n: req.item?.n ?? null, attempt: req.attempt, permit: [], operation: req.operation, args: req.args, writes: [], answer: null })
+  onCall: (req: WriteRequest) => Call = req => ({ actionId: req.actionId, n: req.item?.n ?? null, attempt: req.attempt, permit: [], operation: req.operation, args: req.args, writes: [], sent: [], answer: null })
   /**
    * Runs once, inside the `beforeAt`-th call from now (the next by default), after the oracle's look and before the hub's
    * work: a rule that changes mid-call.
@@ -275,8 +280,9 @@ class HubStandIn {
   /** The fake store takes one request at a time here, so each write it logs is known to belong to one call. */
   #lock: Promise<void> = Promise.resolve()
 
-  #wrote(call: Call, v: Verdict): void {
+  #wrote(call: Call, v: Verdict, sent: Sent): void {
     call.writes.push(v)
+    call.sent.push(sent)
     this.attributed++
   }
 
@@ -299,7 +305,7 @@ class HubStandIn {
       } finally {
         added = this.shop.writes.slice(before)
         release()
-        for (const log of added) this.#wrote(call, await shopVerdict(log, res))
+        for (const log of added) this.#wrote(call, await shopVerdict(log, res), { kind: 'shop', operation: log.operation, variables: log.variables })
       }
     }
   }
@@ -332,7 +338,7 @@ class HubStandIn {
         const refused = this.#refusal(accountId, expect?.connectedAtMs ?? -1)
         if (refused && !refused.ok) return { ok: false, error: refused.error }
         this.slackPosts.push({ channelId: req.channelId, text: req.text })
-        this.#wrote(call, this.slackFault === 'succeed' ? 'ran' : this.slackFault === 'refuse' ? 'refused' : 'unclear')
+        this.#wrote(call, this.slackFault === 'succeed' ? 'ran' : this.slackFault === 'refuse' ? 'refused' : 'unclear', { kind: 'slack', channelId: req.channelId, text: req.text })
         if (this.slackFault === 'throw') throw new Error('the Slack call broke')
         if (this.slackFault === 'refuse') return { ok: false, error: this.#code.hubError('upstream_rejected') }
         return { ok: true, value: { ts: `1800000000.${String(this.slackPosts.length).padStart(6, '0')}` } }
@@ -474,16 +480,16 @@ type AccountOp = 'shop' | 'slack'
  * A request's size: one record (`one`), a few (at or under the bulk threshold: `few`), more than the threshold (`many`),
  * past a grant's or the ceiling's largest call (`large`, `huge`), or with an argument the store refuses (`bad`).
  */
-type Size = 'one' | 'few' | 'many' | 'large' | 'huge' | 'bad' | 'dozen'
+type Size = 'one' | 'few' | 'many' | 'large' | 'huge' | 'bad' | 'dozen' | 'four'
 /** A rule that changes inside a call (M3-W): a revoke, a lowered ceiling, an admin demoted, a fast Pause and Resume. */
-type Disturb = 'none' | 'revoke' | 'lower' | 'demote' | 'flip'
+type Disturb = 'none' | 'revoke' | 'lower' | 'demote' | 'flip' | 'restore'
 /** How one send goes: a crash, a fast Pause and Resume, a permit reached late, a binding that throws or hangs. */
 interface SendOpts { crash: { at: number; when: 'before' | 'after' } | null; flipAt: number; latePermit: boolean; binding: BindingFault; inCall?: Disturb; inCallAt?: number; crashOnResult?: boolean }
 interface CeilingStep { k: 'ceiling'; op: Op; enabled: boolean; perDayMax: number; unitsMax?: number; bulkThreshold?: number; batchMax?: number }
 type Step =
   | { k: 'request'; who: Who | 'system'; origin: 'chat' | 'job' | 'routine'; op: Op; mode: 'tool' | 'ask_only'; replay: 'none' | 'same' | 'other'; size?: Size }
   | { k: 'burst'; who: Who; op: CollectOp; n: number }
-  | { k: 'answer'; i: number; by: Target; choice: 'fit_once' | 'fit_always' | 'once' | 'always' | 'approve' | 'deny'; stale: boolean; twice: boolean; cut?: number }
+  | { k: 'answer'; i: number; by: Target; choice: 'fit_once' | 'fit_always' | 'once' | 'always' | 'approve' | 'deny'; stale: boolean; twice: boolean; cut?: number; newest?: true }
   | { k: 'drive'; i: number; cut: number; alarms: number }
   | { k: 'undo'; i: number; by: Target }
   | { k: 'withdraw'; i: number; by: Target | 'agent' }
@@ -576,7 +582,7 @@ const m3SendOpts: fc.Arbitrary<SendOpts> = fc.record({
   flipAt: fc.oneof(W(10, fc.constant(0)), W(1, fc.integer({ min: 1, max: 30 }))),
   latePermit: fc.constantFrom(false, false, false, false, false, false, false, false, true),
   binding: fc.constantFrom<BindingFault>('ok', 'ok', 'ok', 'ok', 'ok', 'ok', 'ok', 'throw', 'hang'),
-  inCall: fc.constantFrom<Disturb>('none', 'none', 'none', 'none', 'none', 'none', 'revoke', 'lower', 'demote', 'flip'),
+  inCall: fc.constantFrom<Disturb>('none', 'none', 'none', 'none', 'none', 'none', 'revoke', 'lower', 'demote', 'flip', 'restore'),
   crashOnResult: fc.constantFrom(false, false, false, false, false, false, false, true),
 })
 /** A call's result being stored (dispatch.ts `storeResult`, batch/send.ts `storeItem`). */
@@ -708,7 +714,7 @@ function argsFor(o: Op, n: number, size: Size): Record<string, unknown> {
   switch (o) {
     case 'shop':
     case 'untag': {
-      const count = size === 'few' ? 2 + (n % 2) : size === 'many' || size === 'large' ? 4 + (n % 3) : size === 'dozen' ? 12 : 1
+      const count = size === 'few' ? 2 + (n % 2) : size === 'many' || size === 'large' ? 4 + (n % 3) : size === 'dozen' ? 12 : size === 'four' ? 4 : 1
       const orders = size === 'bad' ? ['gid://shopify/Order/9009'] : Array.from({ length: count }, (_, k) => (k < 3 ? ORDER(n + k) : `gid://shopify/Order/${9010 + k}`))
       return { orderIds: orders, tags: [t] }
     }
@@ -744,6 +750,53 @@ const canon = (v: unknown): string => JSON.stringify(v, (_k, x: unknown) => (x !
   ? Object.fromEntries(Object.entries(x as Record<string, unknown>).sort(([a], [b]) => (a < b ? -1 : a > b ? 1 : 0)))
   : x))
 
+/** "5.00" (a Shopify decimal string) in minor units; NaN when it isn't one. */
+const cents = (v: unknown): number => {
+  const m = typeof v === 'string' ? /^(\d+)(?:\.(\d{1,2}))?$/.exec(v) : null
+  return m ? Number(m[1]) * 100 + Number((m[2] ?? '').padEnd(2, '0')) : Number.NaN
+}
+
+/**
+ * #596: what the store received, against what the test asked for that send key, in the test's own words (main's tie
+ * from each logged write to its action, by its tag or text and now its idempotency key, kept and widened to every
+ * operation). Returns what differs, or null.
+ */
+function storeDiffers(sent: Sent, want: { operation: WriteOperationKey; args: Record<string, unknown> }, key: string): string | null {
+  const a = want.args
+  if (sent.kind === 'slack') return want.operation !== 'slack.channel.post' ? 'a post for a Shopify request' : sent.channelId !== CHANNEL_ID ? 'the channel' : sent.text !== a.text ? 'the text' : null
+  if (sent.operation !== want.operation) return `the operation (${sent.operation})`
+  const v = sent.variables
+  const input = (typeof v.input === 'object' && v.input !== null ? v.input : {}) as Record<string, unknown>
+  switch (want.operation) {
+    case 'shopify.order.tag_add':
+    case 'shopify.order.tag_remove': {
+      const ids: unknown[] = []
+      for (let i = 0; `id${i}` in v; i++) ids.push(v[`id${i}`])
+      return canon(v.tags) !== canon(a.tags) ? 'the tags' : canon(ids) !== canon(a.orderIds) ? 'the orders' : null
+    }
+    case 'shopify.draft_order.create':
+      return canon(input.lineItems) !== canon(a.lines) ? 'the lines' : canon(input.tags) !== canon(a.tags) || input.note !== a.note ? 'the note or tags' : null
+    case 'shopify.inventory.restock':
+    case 'shopify.inventory.reduce': {
+      const c = (Array.isArray(input.changes) ? input.changes[0] : null) as Record<string, unknown> | null
+      const sign = want.operation === 'shopify.inventory.restock' ? 1 : -1
+      if (!c || c.inventoryItemId !== a.inventoryItemId || c.locationId !== a.locationId || c.delta !== sign * (a.quantity as number)) return 'the change'
+      return input.reason !== a.reason ? 'the reason' : v.idempotencyKey !== key ? 'the idempotency key' : null
+    }
+    case 'shopify.refund.create': {
+      const amount = a.amount as { minor: number; currency: string }
+      const lines = (Array.isArray(input.refundLineItems) ? input.refundLineItems : []) as Record<string, unknown>[]
+      const paid = (Array.isArray(input.transactions) ? input.transactions : []) as Record<string, unknown>[]
+      if (input.orderId !== a.orderId || input.currency !== amount.currency || input.notify !== a.notifyCustomer) return 'the order, currency or notice'
+      if (canon(lines.map(l => ({ lineItemId: l.lineItemId, quantity: l.quantity }))) !== canon(a.lines)) return 'the lines'
+      if (paid.reduce((n, t) => n + cents(t.amount), 0) !== amount.minor) return `the amount (${paid.map(t => String(t.amount)).join(' + ')} for ${amount.minor})`
+      return v.idempotencyKey !== key ? 'the idempotency key' : null
+    }
+    case 'slack.channel.post':
+      return 'a Shopify write for a post'
+  }
+}
+
 const rowOf = (id: string) => db.prepare('SELECT * FROM outbox_actions WHERE id = ?').bind(id).first<OutboxActionRow>()
 const memberOf = (id: string) => db.prepare('SELECT id, role, status, kind, rev FROM members WHERE id = ?').bind(id).first<MemberRow>()
 const itemsOf = async (actionId: string) => (await db.prepare('SELECT * FROM outbox_items WHERE action_id = ? ORDER BY n').bind(actionId).all<OutboxItemRow>()).results
@@ -764,6 +817,8 @@ interface Outcome {
   admitted: number
   /** M3-W: upstream writes for a batch item, and for an operation of the M3 write set. */
   itemEffects: number
+  /** #597: the rare paths this run reached. */
+  paths: { grantItemCalls: number; restoreInItemCall: number; crashBeforeItemResult: number }
   m3Effects: number
   problems: string[]
 }
@@ -786,7 +841,11 @@ interface Claim {
 }
 
 /** An approval the test saw given: by a person (their id), or by a grant at the request; for a batch, what it covered. */
-interface Approval { rev: number; by: string; era: number; upTo?: number; shown?: Map<number, { itemId: string; args: string }> }
+interface Approval {
+  rev: number; by: string; era: number; upTo?: number; shown?: Map<number, { itemId: string; args: string }>
+  /** A batch run under a grant at its request: the one call it holds, in the test's own counts (N22 way 1). */
+  call?: { records: number; units: number }
+}
 
 async function runSequence(steps: readonly Step[], o: World): Promise<Outcome> {
   await setup(o)
@@ -848,6 +907,8 @@ async function runSequence(steps: readonly Step[], o: World): Promise<Outcome> {
   /** Actions a routine's notice made, in the test's own words (W4 doesn't trust the row's `origin` for these). */
   const routineActions = new Set<string>()
   const restoresMade: string[] = []
+  /** #597: how often a run reached the rare paths (reported by the suites, so a generator that stops reaching them shows). */
+  const paths = { grantItemCalls: 0, restoreInItemCall: 0, crashBeforeItemResult: 0 }
   let permitClock = () => now
   let flipInCall = false
   const late: Promise<void>[] = []
@@ -863,7 +924,7 @@ async function runSequence(steps: readonly Step[], o: World): Promise<Outcome> {
       if (permitClock() >= claim.claimedAtMs + PERMIT_MS) permit.push('the permit was reached after its deadline')
       if (object.pauseGen !== claim.gen || object.paused) permit.push('a Pause or Resume came between the claim and the call')
     }
-    const call: Call = { actionId: req.actionId, n: req.item?.n ?? null, attempt: req.attempt, permit, operation: req.operation, args: req.args, writes: [], answer: null }
+    const call: Call = { actionId: req.actionId, n: req.item?.n ?? null, attempt: req.attempt, permit, operation: req.operation, args: req.args, writes: [], sent: [], answer: null }
     calls.push(call)
     if (flipInCall) { flip(); flip() }
     return call
@@ -961,7 +1022,7 @@ async function runSequence(steps: readonly Step[], o: World): Promise<Outcome> {
   }
 
   /** M3-W: the oracle's look at a batch item's claim, right after it. W2 for items, in the test's own words. */
-  async function itemClaimFaults(b: OutboxActionRow, it: OutboxItemRow): Promise<{ faults: string[]; limit: number | null; day: string | null }> {
+  async function itemClaimFaults(b: OutboxActionRow, it: OutboxItemRow, claimedAtMs: number): Promise<{ faults: string[]; limit: number | null; day: string | null }> {
     const rev = b.approved_rev ?? -1
     const r = await ruleFaults({ ...b, rev }, it.units, it.records, `${b.id}#${rev}`)
     const f = r.faults
@@ -974,8 +1035,26 @@ async function runSequence(steps: readonly Step[], o: World): Promise<Outcome> {
       const shown = ap.shown?.get(it.n)
       if (!shown || shown.itemId !== it.item_id || shown.args !== it.args_json) f.push('an item the card did not show at that position')
     }
-    if (b.approved_at_ms === null) f.push('an item of a batch with no approval')
-    if (it.not_before_ms !== null && it.not_before_ms > now) f.push('a throttled item claimed before its wait')
+    // The batch's own claim (once, N22): past its hold, under 10 minutes after its approval.
+    if (b.approved_at_ms === null || b.send_at_ms === null || b.claimed_at_ms === null) f.push('an item of a batch with no approval, hold or claim')
+    else {
+      if (b.send_at_ms > b.claimed_at_ms) f.push('a batch claimed inside the hold')
+      if (b.approved_at_ms <= b.claimed_at_ms - timing().approvalMaxAgeMs) f.push('a batch claimed on an approval over 10 minutes old')
+    }
+    // A batch under a grant is one call (N22 way 1): the call, not one item, is what the bulk threshold and the largest
+    // calls bound (N23).
+    if (b.grant_id !== null) {
+      const call = ap?.call
+      const ceiling = await db.prepare('SELECT * FROM permission_ceiling WHERE operation = ?').bind(b.operation).first<CeilingRow>()
+      const g = await db.prepare('SELECT * FROM permission_grants WHERE id = ?').bind(b.grant_id).first<GrantRow>()
+      if (!call) f.push('a grant-backed batch the test never saw a grant take at its request')
+      else {
+        if (ceiling && call.records > ceiling.bulk_threshold) f.push(`a grant-backed call over the bulk threshold (${call.records} > ${ceiling.bulk_threshold})`)
+        if (ceiling && call.units > ceiling.units_max) f.push(`a grant-backed call past the ceiling's largest (${call.units} > ${ceiling.units_max})`)
+        if (g && call.units > g.units_max) f.push(`a grant-backed call past the grant's largest (${call.units} > ${g.units_max})`)
+      }
+    }
+    if (it.not_before_ms !== null && it.not_before_ms > claimedAtMs) f.push('a throttled item claimed before its wait')
     return r
   }
 
@@ -988,7 +1067,10 @@ async function runSequence(steps: readonly Step[], o: World): Promise<Outcome> {
       before: async (n, sqls) => {
         if (o2.crash?.when === 'before' && o2.crash.at === n) throw new Crash('crash')
         // M3-W: the process dies right after a call, before its result is stored (the call went out; its answer is lost).
-        if (o2.crashOnResult && RESULT_SQL.test(sqls[0] ?? '')) throw new Crash('crash')
+        if (o2.crashOnResult && RESULT_SQL.test(sqls[0] ?? '')) {
+          if (sqls[0]?.startsWith('UPDATE outbox_items')) paths.crashBeforeItemResult++
+          throw new Crash('crash')
+        }
         if (sqls[0]?.startsWith("UPDATE outbox_actions SET state = 'sending'")) pre = await rowOf(id)
         if (sqls[0]?.startsWith("UPDATE outbox_items SET state = 'sending'")) {
           // Every pending item of a sending batch, with its batch: the one whose attempt moves won the claim.
@@ -1016,7 +1098,7 @@ async function runSequence(steps: readonly Step[], o: World): Promise<Outcome> {
           for (const { item, batch } of preItems.values()) {
             const post = await db.prepare('SELECT * FROM outbox_items WHERE item_id = ?').bind(item.item_id).first<OutboxItemRow>()
             if (!post || post.state !== 'sending' || post.attempt !== item.attempt + 1) continue
-            const r = await itemClaimFaults(batch, item)
+            const r = await itemClaimFaults(batch, item, post.claimed_at_ms ?? -1)
             const rev = batch.approved_rev ?? -1
             claims.set(`${post.action_id}:${post.n}#${post.attempt}`, {
               ...r, era, gen: object.pauseGen, claimedAtMs: post.claimed_at_ms ?? -1, grantId: batch.grant_id, useId: `${batch.id}#${rev}`,
@@ -1070,11 +1152,24 @@ async function runSequence(steps: readonly Step[], o: World): Promise<Outcome> {
         const c = await db.prepare('SELECT * FROM permission_ceiling WHERE operation = ?').bind(req.operation).first<CeilingRow>()
         if (!c) return
         await setCeiling({ k: 'ceiling', op: opOf(req.operation), enabled: c.enabled === 1, perDayMax: c.per_day_max, unitsMax: 1, bulkThreshold: c.bulk_threshold, batchMax: c.batch_max })
+      } else if (d === 'restore') {
+        // A restore's hold while this call is out: the call can't be recalled; the rest is held for a check.
+        if (req.item) paths.restoreInItemCall++
+        await restoreHold(false)
       } else {
         const m = await memberOf('m_ws_d')
         if (m?.role === 'admin') await members.changeRole({ id: m.id, role: 'member', ifRev: m.rev }, at())
       }
     }
+  }
+
+  /** A restore's hold (M2-R, M3-B): the gate held, approved and sending rows (and their items) held for a check, every live grant revoked. */
+  async function restoreHold(gap: boolean): Promise<void> {
+    const afterId = (await db.prepare('SELECT COALESCE(MAX(id), 0) AS n FROM audit_log').first<number>('n')) ?? 0
+    const rid = restoreId()
+    await holdOutbox(db, { restoreId: rid, afterId, gap, at: { nowMs: now, actorId: 'm_ws_d', requestId: fresh('restore') } })
+    restoresMade.push(rid)
+    brandEnds()
   }
   const opOf = (operation: string): Op => (Object.keys(OPERATION) as Op[]).find(k => OPERATION[k] === operation) ?? 'shop'
 
@@ -1151,9 +1246,11 @@ async function runSequence(steps: readonly Step[], o: World): Promise<Outcome> {
         items.forEach((i, k) => { if (parts[k]) asked.set(i.item_id, { operation, args: parts[k] }) })
       }
       if (r.outcome === 'approved' && !approvals.has(r.action.id)) {
+        const entry = OPERATIONS[operation]
         approvals.set(r.action.id, {
           rev: r.action.approved_rev ?? -1, by: 'grant', era, upTo: parts.length,
           shown: new Map(items.map(i => [i.n, { itemId: i.item_id, args: i.args_json }])),
+          call: { records: entry.records(entry.args.parse(args) as never), units: entry.units(entry.args.parse(args) as never) },
         })
       }
       return
@@ -1237,7 +1334,8 @@ async function runSequence(steps: readonly Step[], o: World): Promise<Outcome> {
         break
       }
       case 'answer': {
-        const id = await aim(s.i, 'waiting')
+        // `newest`: the card the last request made (a fixed prefix names it exactly).
+        const id = s.newest ? await db.prepare("SELECT id FROM outbox_actions WHERE state = 'waiting' ORDER BY created_at_ms DESC, id DESC LIMIT 1").first<string>('id') : await aim(s.i, 'waiting')
         if (id) await answerRow(id, s)
         break
       }
@@ -1387,17 +1485,25 @@ async function runSequence(steps: readonly Step[], o: World): Promise<Outcome> {
         if (!id) break
         const row = (await rowOf(id))!
         const person = await by(s.by, row)
+        // #586: who may say what happened, in the test's own words: an active person who is the card's approver, or an
+        // active admin. A resolve by anyone else is a problem, and never what a released unit may rest on (W6).
+        const m = await memberOf(person.memberId)
+        const mayResolve = m !== null && m.kind === 'person' && m.status === 'active' && (m.role === 'admin' || m.id === row.approver)
+        let won = false
         if (row.kind === 'batch') {
           // One unclear item at a time.
           const item = await db.prepare("SELECT * FROM outbox_items WHERE action_id = ? AND state = 'needs_check' ORDER BY n LIMIT 1").bind(id).first<OutboxItemRow>()
           if (!item) break
           const r = await port.resolve(person, id, { outcome: s.outcome, ifRev: row.rev, item: item.n })
           const after = await db.prepare('SELECT * FROM outbox_items WHERE item_id = ?').bind(item.item_id).first<OutboxItemRow>()
-          if ('action' in r && after?.state === s.outcome && after.resolved_by === person.memberId && s.outcome === 'failed') resolvedFailed.add(item.item_id)
+          won = 'action' in r && after?.state === s.outcome && after.resolved_by === person.memberId
+          if (won && mayResolve && s.outcome === 'failed') resolvedFailed.add(item.item_id)
         } else {
           const r = await port.resolve(person, id, { outcome: s.outcome, ifRev: row.rev })
-          if ('action' in r && r.action.state === s.outcome && s.outcome === 'failed') resolvedFailed.add(id)
+          won = 'action' in r && r.action.state === s.outcome
+          if (won && mayResolve && s.outcome === 'failed') resolvedFailed.add(id)
         }
+        if (won && !mayResolve) problems.push(`W6: a check resolved by someone who may not resolve it (${person.memberId} on ${id})`)
         break
       }
       case 'notice': {
@@ -1459,16 +1565,9 @@ async function runSequence(steps: readonly Step[], o: World): Promise<Outcome> {
         }
         break
       }
-      case 'restore': {
-        // A restore's hold (M2-R, M3-B): the gate held, approved and sending rows (and their items) held for a check,
-        // every live grant revoked.
-        const afterId = (await db.prepare('SELECT COALESCE(MAX(id), 0) AS n FROM audit_log').first<number>('n')) ?? 0
-        const rid = restoreId()
-        await holdOutbox(db, { restoreId: rid, afterId, gap: s.gap, at: { nowMs: now, actorId: 'm_ws_d', requestId: fresh('restore') } })
-        restoresMade.push(rid)
-        brandEnds()
+      case 'restore':
+        await restoreHold(s.gap)
         break
-      }
       case 'confirm': {
         // The admin's confirm of the last restore releases its hold (the gate's next sync seats it at the object's generation).
         const rid = restoresMade.at(-1)
@@ -1519,6 +1618,12 @@ async function runSequence(steps: readonly Step[], o: World): Promise<Outcome> {
       const a = c.args as { channelId?: unknown; text?: unknown }
       if (a.channelId !== CHANNEL_ID || a.text !== want.args.text) problems.push(`W9: a post other than the one asked for (${where})`)
     } else if (canon(c.args) !== canon(want.args)) problems.push(`W9: a call whose arguments are not the ones asked for (${where})`)
+    if (want) {
+      for (const sentOne of c.sent) {
+        const differs = storeDiffers(sentOne, want, `${c.actionId}:${c.n ?? 1}`)
+        if (differs !== null) problems.push(`W9: the store received other than what was asked: ${differs} (${where})`)
+      }
+    }
   }
   for (const [key, cs] of perKey) {
     if (!cs.some(wentOut)) continue
@@ -1559,7 +1664,8 @@ async function runSequence(steps: readonly Step[], o: World): Promise<Outcome> {
   }
   const itemEffects = calls.filter(c => c.n !== null).reduce((a, c) => a + c.writes.length, 0)
   const m3Effects = calls.filter(c => c.operation !== 'shopify.order.tag_add' && c.operation !== 'slack.channel.post').reduce((a, c) => a + c.writes.length, 0)
-  return { effects, admitted, itemEffects, m3Effects, problems }
+  paths.grantItemCalls = calls.filter(c => c.n !== null && (claimOf(c)?.grantId ?? null) !== null).length
+  return { effects, admitted, itemEffects, m3Effects, paths, problems }
 }
 
 /** The world's daily maximum for Shopify tags: tight in a third of the runs each, so a grant's day fills. */
@@ -1695,7 +1801,14 @@ const allow = (who1: Who, o: Op): Step[] => [askFor(who1, o), answer('own', 'fit
 // on 2026-11-27 over 3 runs each: the main M3 suite sent 861 to 941 writes over 300 runs, 329 to 340 of them batch items
 // and 373 to 423 of the M3 write set's operations; the M3 send path 1471 to 1565 writes, 1067 to 1126 of them items.
 const M3_FLOOR = { effects: 400, items: 150, m3: 180 }
+
+/** #597: the rare paths a suite reached, summed over its runs, and logged so a review can read the counts. */
+type Paths = Outcome['paths']
+const addPaths = (to: Paths, from: Paths) => { for (const k of Object.keys(to) as (keyof Paths)[]) to[k] += from[k] }
+const noPaths = (): Paths => ({ grantItemCalls: 0, restoreInItemCall: 0, crashBeforeItemResult: 0 })
 const M3_SEND_FLOOR = { effects: 700, items: 500 }
+/** #597: the rare-path suite's floors (about half the lowest seen; see its log line). */
+const RARE_FLOOR = { grantItemCalls: 1, restoreInItemCall: 1, crashBeforeItemResult: 1 }
 
 describe('the write-safety gate (M3-W): every operation, batches, admin cards, limits, item crashes, throttles and restores', () => {
   beforeAll(async () => {
@@ -1810,6 +1923,7 @@ describe('the write-safety gate (M3-W): every operation, batches, admin cards, l
 
   it('holds W1 to W9 over random sequences of every M3 step', async () => {
     const totals = { effects: 0, items: 0, m3: 0 }
+    const reached = noPaths()
     const runs = 300
     // Most runs start with "Always allow" for the first member's tags and stock, so runs under a grant, a grant's largest
     // call and its day are common; a third of the worlds cap the tags at 1 or 2 a day.
@@ -1819,8 +1933,10 @@ describe('the write-safety gate (M3-W): every operation, batches, admin cards, l
       totals.effects += out.effects
       totals.items += out.itemEffects
       totals.m3 += out.m3Effects
+      addPaths(reached, out.paths)
       expect(out.problems).toEqual([])
     }), { numRuns: runs })
+    console.info(`M3-W main: ${JSON.stringify({ ...totals, ...reached })} over ${runs} runs`)
     expect(totals.effects, `writes over ${runs} runs: ${JSON.stringify(totals)}`).toBeGreaterThan(M3_FLOOR.effects)
     expect(totals.items, `item writes over ${runs} runs: ${JSON.stringify(totals)}`).toBeGreaterThan(M3_FLOOR.items)
     expect(totals.m3, `M3 operations' writes over ${runs} runs: ${JSON.stringify(totals)}`).toBeGreaterThan(M3_FLOOR.m3)
@@ -1837,20 +1953,133 @@ describe('the write-safety gate (M3-W): every operation, batches, admin cards, l
       { k: 'answer', i: 0, by: 'own', choice: 'approve', stale: false, twice: false, cut: 1 },
       ...Array.from({ length: 6 }, (): Step => askFor(1, 'restock')),
       { k: 'drive', i: 0, cut: 0, alarms: 0 },
+      // The member's refund, approved by an admin: the card the request just made (High 3 of the first review: `aim` found
+      // another member's card here, so the admin's answer lost and the refund was rarely approved).
       askFor(0, 'refund'),
-      answer(2, 'approve'),
+      { ...answer(2, 'approve'), newest: true } as Step,
     ]
     const sendPath = m3StepArb.filter(s => ['tick', 'dispatch', 'sweep', 'flip', 'late', 'resolve', 'fault', 'undo', 'revoke', 'role', 'account', 'ceiling', 'restore', 'confirm', 'drive', 'answer'].includes(s.k))
     const totals = { effects: 0, items: 0 }
+    const reached = noPaths()
     await fc.assert(fc.asyncProperty(PER_DAY_MAX, fc.array(sendPath, { minLength: 5, maxLength: 30 }), async (perDayMax, tail) => {
       const out = await runSequence([...prefix, ...tail], { ceiling: true, perDayMax, m3: true })
       totals.effects += out.effects
       totals.items += out.itemEffects
+      addPaths(reached, out.paths)
       expect(out.problems).toEqual([])
     }), { numRuns: 300 })
+    console.info(`M3-W send path: ${JSON.stringify({ ...totals, ...reached })} over 300 runs`)
     expect(totals.effects, `writes over 300 runs: ${JSON.stringify(totals)}`).toBeGreaterThan(M3_SEND_FLOOR.effects)
     expect(totals.items, `item writes over 300 runs: ${JSON.stringify(totals)}`).toBeGreaterThan(M3_SEND_FLOOR.items)
   }, 600_000)
+
+  it('#597: the rare paths: items sent under a grant, a restore while an item is out, a crash before an item\'s result is stored', async () => {
+    // A grant-backed batch approved at its request and an exact bulk card approved in full, both due; then only the steps
+    // around their sends, with a crash before a stored result and a restore inside a call drawn often.
+    const prefix: Step[] = [
+      ...allow(0, 'shop'),
+      { k: 'tick', ms: 11_000, alarm: SEND },
+      askFor(0, 'shop', 'few'),
+      askFor(0, 'shop', 'many'),
+      { ...answer('own', 'approve'), newest: true } as Step,
+      { k: 'tick', ms: 11_000, alarm: false },
+    ]
+    const rareSend: fc.Arbitrary<SendOpts> = fc.record({
+      crash: fc.constant(null), flipAt: fc.constant(0), latePermit: fc.constant(false), binding: fc.constantFrom<BindingFault>('ok', 'ok', 'ok', 'hang'),
+      inCall: fc.constantFrom<Disturb>('none', 'restore', 'restore', 'revoke', 'flip'), inCallAt: fc.integer({ min: 1, max: 4 }), crashOnResult: fc.constantFrom(false, true, true),
+    })
+    const rare: fc.Arbitrary<Step> = fc.oneof(
+      W(5, fc.record({ k: fc.constant('tick' as const), ms: fc.constantFrom(0, 1_500, 61_000), alarm: rareSend })),
+      W(3, fc.tuple(fc.record({ k: fc.constant('dispatch' as const), i: idx }), rareSend).map(([a, b]) => ({ ...a, ...b }))),
+      W(2, fc.record({ k: fc.constant('sweep' as const), passes: fc.constantFrom<1 | 2>(1, 2) })),
+      W(2, fc.record({ k: fc.constant('resolve' as const), i: idx, by: target, outcome: fc.constantFrom('sent' as const, 'failed' as const) })),
+      W(1, fc.constant({ k: 'confirm' as const })),
+      W(1, fc.record({ k: fc.constant('flip' as const), hookFails: fc.boolean(), pulse: fc.constantFrom(true, false) })),
+      W(1, fc.constant({ k: 'late' as const })),
+      W(1, fc.record({ k: fc.constant('fault' as const), target: fc.constant<Op>('shop'), shop: fc.constantFrom<WriteFault>('succeed', 'succeed', 'refuse', 'timeout', 'throttle'), slack: fc.constant<SlackFault>('succeed') })),
+    )
+    const reached = noPaths()
+    let effects = 0
+    await fc.assert(fc.asyncProperty(fc.array(rare, { minLength: 3, maxLength: 15 }), async tail => {
+      const out = await runSequence([...prefix, ...tail], { ceiling: true, m3: true })
+      effects += out.effects
+      addPaths(reached, out.paths)
+      expect(out.problems).toEqual([])
+    }), { numRuns: 150 })
+    console.info(`M3-W rare paths: ${JSON.stringify({ effects, ...reached })} over 150 runs`)
+    expect(reached.grantItemCalls, JSON.stringify(reached)).toBeGreaterThan(RARE_FLOOR.grantItemCalls)
+    expect(reached.restoreInItemCall, JSON.stringify(reached)).toBeGreaterThan(RARE_FLOOR.restoreInItemCall)
+    expect(reached.crashBeforeItemResult, JSON.stringify(reached)).toBeGreaterThan(RARE_FLOOR.crashBeforeItemResult)
+  }, 600_000)
+
+  it('"Always allow" never covers a call over the bulk threshold: four orders are one exact card, nothing goes out under the grant', async () => {
+    const out = await runSequence([
+      ...allow(0, 'shop'),
+      { k: 'tick', ms: 11_000, alarm: SEND },
+      askFor(0, 'shop', 'four'),
+      { k: 'tick', ms: 11_000, alarm: SEND },
+      { k: 'tick', ms: 2_000, alarm: SEND },
+    ], { ceiling: true, m3: true })
+    expect(out.problems).toEqual([])
+    expect(out.itemEffects).toBe(0)
+    const card = await db.prepare("SELECT state, verdict, guardrail, grant_id FROM outbox_actions WHERE kind = 'batch'").first()
+    expect(card).toEqual({ state: 'waiting', verdict: 'exact', guardrail: 'bulk', grant_id: null })
+  })
+
+  it('a batch is never claimed inside its hold, nor on an approval over 10 minutes old', async () => {
+    const out = await runSequence([
+      ...allow(0, 'shop'),
+      { k: 'tick', ms: 11_000, alarm: SEND },
+      askFor(0, 'shop', 'few'),
+      // Its task run at once, inside the hold; then again once its approval is past 10 minutes old.
+      { k: 'dispatch', i: 0, ...SEND },
+      { k: 'tick', ms: timing().approvalMaxAgeMs + 30_000, alarm: false },
+      { k: 'dispatch', i: 0, ...SEND },
+    ], { ceiling: true, m3: true })
+    expect(out.problems).toEqual([])
+    expect(out.itemEffects).toBe(0)
+  })
+
+  it('#586: only the card\'s approver or an admin may say a check didn\'t go out', async () => {
+    // A member's refund approved by an admin, made unclear by the store's timeout; the member who asked can't resolve it.
+    const out = await runSequence([
+      askFor(0, 'refund'),
+      { ...answer(2, 'approve'), newest: true } as Step,
+      { k: 'fault', target: 'refund', shop: 'timeout', slack: 'succeed' },
+      { k: 'tick', ms: 11_000, alarm: SEND },
+      { k: 'resolve', i: 0, by: 0, outcome: 'failed' },
+    ], { ceiling: true, m3: true })
+    expect(out.problems).toEqual([])
+    const card = await db.prepare("SELECT state FROM outbox_actions WHERE operation = 'shopify.refund.create'").first<string>('state')
+    expect(card).toBe('needs_check')
+  })
+
+  it('#596: a refund whose amount Shopify would now suggest differently is never sent (the store receives only what was approved)', async () => {
+    // Order 9001's line at $5.00, asked as $6.00: the hub's lookup finds the suggestion isn't the approved amount.
+    const out = await runSequence([
+      askFor(2, 'refund', 'bad'),
+      { ...answer('own', 'approve'), newest: true } as Step,
+      { k: 'tick', ms: 11_000, alarm: SEND },
+    ], { ceiling: true, m3: true })
+    expect(out.problems).toEqual([])
+    expect(out.effects).toBe(0)
+    const card = await db.prepare("SELECT state, error_code FROM outbox_actions WHERE operation = 'shopify.refund.create'").first<{ state: string; error_code: string }>()
+    expect(card).toEqual({ state: 'failed', error_code: 'upstream_rejected' })
+  })
+
+  it('High 3: an admin who approved a member\'s refund, demoted during its hold: the refund doesn\'t go, and it waits for an admin again', async () => {
+    const out = await runSequence([
+      askFor(0, 'refund'),
+      { ...answer(2, 'approve'), newest: true } as Step,
+      { k: 'role', who: 2, to: 'member' },
+      { k: 'tick', ms: 11_000, alarm: SEND },
+      { k: 'tick', ms: 2_000, alarm: SEND },
+    ], { ceiling: true, m3: true })
+    expect(out.problems).toEqual([])
+    expect(out.effects).toBe(0)
+    const card = await db.prepare("SELECT state, approver_kind FROM outbox_actions WHERE operation = 'shopify.refund.create'").first<{ state: string; approver_kind: string }>()
+    expect(card).toEqual({ state: 'waiting', approver_kind: 'admins' })
+  })
 
   it('the product\'s state (no ceiling row): no M3 request is admitted and nothing reaches an upstream', async () => {
     const noCeiling = m3StepArb.filter(s => s.k !== 'ceiling')
