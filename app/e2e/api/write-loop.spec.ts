@@ -1,5 +1,5 @@
-// Stage 1 M3-W (N32's first line), on the sandbox deploy with a real container and the scripted model (`needsContainer()`;
-// the `write-loop` scenario in test/scripted-model/scenarios/limits.ts): the agent itself makes 500 allowed `tag_add`
+// Stage 1 M3-W (N32's first line), on the sandbox deploy with a real container and the scripted model (the
+// `write-loop` scenario in test/scripted-model/scenarios/limits.ts): the agent itself makes 500 allowed `tag_add`
 // calls of one order each, through the `actions` server, the egress's admission and the outbox's request; BrandAgent's
 // own alarm sends through `HUB_WRITE` into the hub's fake Shopify write store, whose log the hook's `state` reads. The
 // API twin of this proof, with a made-up run grant and no container, is e2e/api/batches.spec.ts. Oracles, the plan's
@@ -12,14 +12,14 @@
 //    collecting card.
 // The operation is turned on only through the test-fakes hook (N2, N19) and off again after, with the permission removed.
 // #598: the loop takes about 25 minutes (500 calls, one at a time through the egress), so it runs ONLY when named, like
-// job-soak.spec.ts: `gh workflow run sandbox-test-deploy ... -f only="api/write-loop.spec.ts"`. It reads the workflow's
+// job-soak.spec.ts: `gh workflow run sandbox-test-deploy ... -f full=true -f only="api/write-loop.spec.ts"`. It reads the workflow's
 // `only` list (the step's ONLY environment) for its own name and skips everywhere else (the default agent set, a full run
 // without `only`). The orchestrator names it when the outbox, the egress, permissions, the hub's writes, the actions
 // server or the runner's proxy change.
 import { expect, test } from '@playwright/test'
 import type { APIRequestContext } from '@playwright/test'
 import { WRITE_LOOP_DONE } from '../../test/scripted-model/scenarios/limits.ts'
-import { answerOf, createChat, needsContainer, send, textOf } from './chat-kit.ts'
+import { answerOf, createChat, send, textOf } from './chat-kit.ts'
 import { hook, hubCall, requestAction, setCeiling } from './fakes-kit.ts'
 import { actor, call, me } from './kit.ts'
 
@@ -60,7 +60,7 @@ const removeTagPermissions = async (request: APIRequestContext) => {
 }
 
 test.beforeAll(async ({ request }) => {
-  if (!process.env.E2E_TEST_BUILD_REMOTE || !asked) return
+  if (!asked) return
   // The Shopify account answers a read (its grant), so the hub calls it active and the write path can use it.
   expect((await hubCall(request, 'callTool', 'orders_search', { first: 1 })).ok).toBe(true)
   // A killed run may have left a permission behind: the loop starts from the one it makes itself.
@@ -72,14 +72,13 @@ test.beforeAll(async ({ request }) => {
 })
 
 test.afterAll(async ({ request }) => {
-  if (!process.env.E2E_TEST_BUILD_REMOTE || !asked) return
+  if (!asked) return
   await setCeiling(request, TAG_ADD, false)
   await removeTagPermissions(request)
 })
 
 test('the agent\'s loop of 500 allowed writes stops at the limit and becomes one card; approving 200 sends 200, the rest wait', async ({ request }) => {
-  needsContainer()
-  test.skip(!asked, `the 25-minute loop runs only when named: sandbox-test-deploy -f only="${SELF}"`)
+  test.skip(!asked, `the 25-minute loop runs only when named: sandbox-test-deploy -f full=true -f only="${SELF}"`)
   test.setTimeout(2_700_000)
   const danaId = (await me(request, dana)).memberId
 
