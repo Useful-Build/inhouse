@@ -10,6 +10,7 @@ import { ChatRow } from '../ui/chat'
 import { Sheet, SheetContent, SheetTitle } from '@/components/ui/sheet'
 import { AGENT, DAILY, mac, SHORTCUTS } from './nav'
 import type { NavDef } from './nav'
+import { useSideLook } from './side-look'
 
 // The account row while its menu is open: it holds its hover look (open is hover, never selected).
 const OPEN_ROW = 'data-[state=open]:bg-accent data-[state=open]:text-foreground'
@@ -32,6 +33,13 @@ export function Sidebar() {
     document.documentElement.dataset.side = side
     return () => { delete document.documentElement.dataset.side }
   }, [side])
+  // Design exploration: the look (index.css keys its rules off data-side-look). Ink is a dark island in either theme.
+  const look = useSideLook(s => s.look)
+  useLayoutEffect(() => {
+    document.documentElement.dataset.sideLook = look
+    return () => { delete document.documentElement.dataset.sideLook }
+  }, [look])
+  const ink = look === 'ink' && !phone
   const { go, newChat, openChat, openChatList, openTeam, patch, toggleSidebar } = useUi.getState()
   // The phone drawer opens with focus on itself, so no row shows a focus ring until someone tabs.
   const drawer = useRef<HTMLDivElement>(null)
@@ -82,8 +90,8 @@ export function Sidebar() {
 
     // Collapsed on desktop: an icon rail with the same items, each named in a tooltip.
   if (rail) return (
-    <aside id="sidebar" aria-label="Sidebar" className="relative z-sidebar my-2.5 mr-0 ml-2.5 box-border flex w-sidebar-rail flex-none flex-col items-center gap-px overflow-x-hidden overflow-y-auto rounded-2xl border border-border bg-card px-2.5 pt-3 pb-2.5 shadow-float">
-      <span className="mb-1 flex size-9 flex-none items-center justify-center rounded-lg border border-input bg-card">
+    <aside id="sidebar" aria-label="Sidebar" className={cn('relative z-sidebar my-2.5 mr-0 ml-2.5 box-border flex w-sidebar-rail flex-none flex-col items-center gap-px overflow-x-hidden overflow-y-auto rounded-2xl border border-border bg-card px-2.5 pt-3 pb-2.5 shadow-float', ink && 'dark')}>
+      <span data-side-mark className="mb-1 flex size-9 flex-none items-center justify-center rounded-lg border border-input bg-card">
         <InhouseMark />
       </span>
       <IconButton icon="search" label="Search" shortcut={SHORTCUTS.palette} size={18} onClick={() => patch({ palette: true })} variant="chrome" />
@@ -108,9 +116,9 @@ export function Sidebar() {
 
   const aside = (
       <aside id="sidebar" aria-label="Sidebar" className={cn('my-2.5 mr-0 ml-2.5 box-border flex w-sidebar flex-none flex-col overflow-x-hidden overflow-y-auto rounded-2xl border border-border bg-card px-2.5 pt-3 pb-2.5 shadow-float',
-        phone ? 'min-h-0 flex-1' : 'relative z-sidebar')}>
+        phone ? 'min-h-0 flex-1' : 'relative z-sidebar', ink && 'dark')}>
         <div className="flex items-center gap-1.5 py-1 pr-1 pl-1.5">
-          <span className="mr-1 flex size-9 flex-none items-center justify-center rounded-lg border border-input bg-card">
+          <span data-side-mark className="mr-1 flex size-9 flex-none items-center justify-center rounded-lg border border-input bg-card">
             <InhouseMark />
           </span>
           <div className="mr-1 min-w-0 flex-1">

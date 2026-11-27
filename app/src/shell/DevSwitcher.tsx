@@ -6,6 +6,8 @@ import { useUi } from '../state/store'
 import { Button, Icon, IconButton, Segmented, Switch } from '../ui'
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip'
 import { demoEnabled } from './demo'
+import { SIDE_LOOKS, useSideLook } from './side-look'
+import type { SideLook } from './side-look'
 
 
 /** The dashed circle that opens the switches. It sits in the top bar, so it never covers a page's controls. */
@@ -36,6 +38,7 @@ export function DevSwitcher() {
   const scenario = useUi(s => s.scenario)
   const ambient = useUi(s => s.ambient)
   const animateMark = useUi(s => s.animateMark)
+  const sideLook = useSideLook(s => s.look)
   const { setDemo, resetDemo, showToast, patch } = useUi.getState()
   if (!demoEnabled() || !open) return null
   const label = 'mt-2.5 mb-1 text-2xs font-strong text-muted-foreground'
@@ -46,6 +49,8 @@ export function DevSwitcher() {
         <span className="text-2xs text-muted-foreground">Dev only</span>
         <IconButton icon="close" label="Close demo switches" size={18} box="icon-sm" onClick={() => patch({ demoOpen: false })} />
       </div>
+      <div className={label}>Sidebar look</div>
+      <Segmented<SideLook> label="Sidebar look" value={sideLook} options={SIDE_LOOKS} onChange={useSideLook.getState().setLook} />
       <div className={label}>Stage</div>
       <Segmented label="Stage" value={stage} options={STAGES.map(s => [s, s])} onChange={v => setDemo({ stage: v })} />
       <div className={label}>Scenario</div>

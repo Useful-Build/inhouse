@@ -585,3 +585,66 @@
 @keyframes m1{0%{transform:translate(8px,0) scale(1.067)}6.49%{transform:translate(0,0) scale(1)}9.09%{transform:translate(0,0) scale(1)}13.64%{transform:translate(2.2px,0) scale(1)}16.88%{transform:translate(4.6px,.5px) scale(1.022)}17.53%{transform:translate(2.4px,-.2px) scale(.733)}21%{transform:translate(.1px,.1px) scale(.822)}23.16%{transform:translate(-.2px,1.2px) scale(.956)}29.22%{transform:translate(6.9px,5.6px) scale(1.111)}35.06%{transform:translate(16px,1.1px) scale(1.022)}37.45%{transform:translate(16.4px,.2px) scale(.867)}42.64%{transform:translate(13px,.1px) scale(.756)}46.1%{transform:translate(13px,.1px) scale(.756)}49.78%{transform:translate(8.7px,.1px) scale(.644)}52.16%{transform:translate(8.7px,.1px) scale(.644)}56.06%{transform:translate(7.1px,-.6px) scale(.978)}56.71%{transform:translate(8.2px,-.1px) scale(1.489)}60.17%{transform:translate(8px,0) scale(0)}61.26%{transform:translate(8px,0) scale(0)}62.77%{transform:translate(8px,0) scale(.578)}66.23%{transform:translate(8px,0) scale(1.178)}71.86%{transform:translate(0,0) scale(1)}73.38%{transform:translate(0,0) scale(1)}77.92%{transform:translate(4.1px,0) scale(1.022)}80.09%{transform:translate(8.1px,0) scale(1.422)}85.28%{transform:translate(0,0) scale(1)}87.66%{transform:translate(0,0) scale(1)}92.86%{transform:translate(3.6px,0) scale(.889)}94.59%{transform:translate(8.1px,0) scale(1.044)}98.27%{transform:translate(8px,0) scale(.267)}100%{transform:translate(8px,0) scale(1.067)}}
 @keyframes m2{0%{transform:translate(0,0) scale(1.6)}6.49%{transform:translate(0,0) scale(1)}9.09%{transform:translate(0,0) scale(1)}13.64%{transform:translate(-4.8px,0) scale(1.5)}16.88%{transform:translate(-2.4px,.6px) scale(1.533)}17.53%{transform:translate(-1.1px,1px) scale(1.733)}21%{transform:translate(4.5px,1.3px) scale(1.733)}23.16%{transform:translate(7.6px,2.4px) scale(1.567)}29.22%{transform:translate(7.2px,-1.6px) scale(1.133)}35.06%{transform:translate(.4px,-1.1px) scale(.967)}37.45%{transform:translate(-2.2px,-.6px) scale(.967)}42.64%{transform:translate(-7.4px,.1px) scale(1.167)}46.1%{transform:translate(-7.4px,.1px) scale(1.167)}49.78%{transform:translate(-8.2px,0) scale(1.467)}52.16%{transform:translate(-8.2px,0) scale(1.467)}56.06%{transform:translate(-1.3px,-.6px) scale(1.467)}56.71%{transform:translate(.2px,-.1px) scale(2.233)}60.17%{transform:translate(0,0) scale(0)}61.26%{transform:translate(0,0) scale(0)}62.77%{transform:translate(0,0) scale(.867)}66.23%{transform:translate(0,0) scale(1.767)}71.86%{transform:translate(0,0) scale(1)}73.38%{transform:translate(0,0) scale(1)}77.92%{transform:translate(-3.2px,0) scale(1.533)}80.09%{transform:translate(.1px,0) scale(2.133)}85.28%{transform:translate(0,0) scale(1)}87.66%{transform:translate(0,0) scale(1)}92.86%{transform:translate(.1px,0) scale(1)}94.59%{transform:translate(.1px,0) scale(1.567)}98.27%{transform:translate(0,0) scale(.4)}100%{transform:translate(0,0) scale(1.6)}}
 @keyframes m3{0%{transform:translate(-8px,0) scale(.96)}6.49%{transform:translate(0,0) scale(1)}9.09%{transform:translate(0,0) scale(1)}13.64%{transform:translate(.3px,0) scale(.86)}16.88%{transform:translate(-.6px,-.2px) scale(.7)}17.53%{transform:translate(-1.2px,-.4px) scale(.68)}21%{transform:translate(-3px,1px) scale(.68)}23.16%{transform:translate(-6.7px,-2.5px) scale(.62)}29.22%{transform:translate(-13.5px,-2.4px) scale(.66)}35.06%{transform:translate(-16.1px,.8px) scale(.88)}37.45%{transform:translate(-14.3px,.8px) scale(1)}42.64%{transform:translate(-5px,.1px) scale(1.08)}46.1%{transform:translate(-5px,.1px) scale(1.08)}49.78%{transform:translate(0,0) scale(.92)}52.16%{transform:translate(0,0) scale(.92)}56.06%{transform:translate(-4.9px,.4px) scale(.7)}56.71%{transform:translate(-7.8px,-.1px) scale(1.34)}60.17%{transform:translate(-8px,0) scale(0)}61.26%{transform:translate(-8px,0) scale(0)}62.77%{transform:translate(-8px,0) scale(.52)}66.23%{transform:translate(-8px,0) scale(1.06)}71.86%{transform:translate(0,0) scale(1)}73.38%{transform:translate(0,0) scale(1)}77.92%{transform:translate(-1.9px,0) scale(.82)}80.09%{transform:translate(-7.9px,0) scale(1.28)}85.28%{transform:translate(0,0) scale(1)}87.66%{transform:translate(0,0) scale(1)}92.86%{transform:translate(-3.4px,0) scale(.84)}94.59%{transform:translate(-7.9px,0) scale(.94)}98.27%{transform:translate(-8px,0) scale(.24)}100%{transform:translate(-8px,0) scale(.96)}}
+
+/* ---------- sidebar looks: design exploration (branch design/sidebar-iterations) ----------
+ * The Sidebar sets data-side-look on <html> (shell/side-look.ts; the demo switches flip it). `card` is today's floating
+ * card and needs no rule. `desk` and `ink` lay the sidebar flush on a desk and raise the page as a rounded sheet;
+ * `paper` is a flush white column with one hairline. Desktop only: the phone drawer keeps the card.
+ * The winner folds into the Sidebar's own classes and tokens, and the rest of this block goes. */
+:root {
+  --app-desk: #efeff1;                 /* the desk under the sheet: a step under the page (#fafafa) */
+  --app-ink: #151517;                  /* the ink desk: the brand's ink */
+  --app-sheet-ring: 0 0 0 1px rgba(0, 0, 0, .07), 0 1px 2px rgba(0, 0, 0, .04), 0 10px 28px -18px rgba(0, 0, 0, .14);
+  --app-side-row-active: #ffffff;      /* the selected row on the desk: a raised white chip */
+  --app-side-row-hover: rgba(0, 0, 0, .05);
+  --app-side-row-shadow: 0 0 0 1px rgba(0, 0, 0, .06), 0 1px 2px rgba(0, 0, 0, .05);
+}
+.dark {
+  --app-desk: #0a0a0c;
+  --app-ink: #0a0a0c;
+  --app-sheet-ring: 0 0 0 1px rgba(255, 255, 255, .07);
+  --app-side-row-active: rgba(255, 255, 255, .1);
+  --app-side-row-hover: rgba(255, 255, 255, .055);
+  --app-side-row-shadow: none;
+}
+
+/* desk, ink and paper: the sidebar is a flush, full-height column, so its room is its width alone. */
+:root:not([data-side="none"]):is([data-side-look="desk"], [data-side-look="ink"], [data-side-look="paper"]) {
+  --app-side-offset: var(--app-sidebar);
+  &[data-side="rail"] { --app-side-offset: var(--app-sidebar-rail); }
+  #sidebar { margin: 0; border: 0; border-radius: 0; box-shadow: none; color: var(--foreground); padding-bottom: 12px; }
+  &[data-side="full"] #sidebar { padding-inline: 12px; }
+  [data-skyspace-offset="full"] { --app-cove-shift: 126px; }
+  [data-skyspace-offset="rail"] { --app-cove-shift: 31px; }
+}
+
+/* paper: a white column and one hairline. The mark sits on the top bar's centre line (29px). */
+:root:not([data-side="none"])[data-side-look="paper"] {
+  #sidebar { border-right: 1px solid var(--border); background: var(--card); padding-top: 7px; }
+  &[data-side="rail"] #sidebar { padding-top: 11px; }
+}
+
+/* desk and ink: the page is a sheet on the desk. The sheet's ground is drawn under the Skyspace layer (which is clipped
+ * to the same box), so Today's skylight sits inside the sheet. The mark sits on the sheet's top bar centre line (8 + 29px). */
+:root:not([data-side="none"]):is([data-side-look="desk"], [data-side-look="ink"]) {
+  --app-sheet-gap: 8px;
+  --app-sheet-radius: 12px;
+  [data-shell] { background: var(--app-desk); }
+  [data-shell]::before {
+    content: ""; position: absolute; z-index: -2; inset: var(--app-sheet-gap); left: var(--app-side-offset);
+    border-radius: var(--app-sheet-radius); background: var(--background); box-shadow: var(--app-sheet-ring); pointer-events: none;
+  }
+  [data-shell-main] { margin: var(--app-sheet-gap); margin-left: 0; border-radius: var(--app-sheet-radius); overflow: hidden; }
+  [data-shell] > [data-skyspace] { inset: var(--app-sheet-gap); left: var(--app-side-offset); border-radius: var(--app-sheet-radius); }
+  [data-skyspace-offset] { --app-cove-shift: 0px; }
+  #sidebar { background: transparent; padding-top: 15px; --fill-hover: var(--app-side-row-active); --accent: var(--app-side-row-hover); }
+  &[data-side="rail"] #sidebar { padding-top: 19px; }
+  #sidebar .bg-fill-hover { box-shadow: var(--app-side-row-shadow); }
+}
+
+/* ink: the desk is the brand's ink and the sidebar a dark island (the Sidebar adds .dark to it); the mark keeps its light tile. */
+:root:not([data-side="none"])[data-side-look="ink"] {
+  [data-shell] { background: var(--app-ink); }
+  [data-side-mark] { border-color: transparent; background: var(--foreground); }
+  [data-side-mark] svg { color: var(--background); }
+}
