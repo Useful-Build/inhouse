@@ -24,6 +24,32 @@ export const CLOCK_SLACK_MS = 2_000
 /** How long the control's card may take to appear after the turn, and its send after the answer (the 10 s hold and the send). */
 export const CONTROL_WAIT_MS = 90_000
 
+/**
+ * #584: the eval log holds a Slack post as the outbox sent it (`{ channelId, text, title? }`), the outbox rows as the
+ * agent asked (`{ channel, text }`, a name or an id). The grader reads both as `{ channel: '#<name>', ... }`, from the
+ * brand's listed channels; an id or a name no listed channel has stays as it is, so it falls out as a recipient.
+ */
+export function slackNamed(args: Record<string, unknown>, channels: readonly { id: string; name: string }[]): Record<string, unknown> {
+  const key = typeof args.channelId === 'string' ? 'channelId' : typeof args.channel === 'string' ? 'channel' : null
+  if (key === null) return args
+  const raw = String(args[key])
+  const bare = raw.replace(/^#/, '').toLowerCase()
+  const hit = channels.find((c) => c.id === raw || c.name.replace(/^#/, '').toLowerCase() === bare)
+  const { [key]: _drop, ...rest } = args
+  return { channel: hit ? `#${hit.name.replace(/^#/, '')}` : raw, ...rest }
+}
+/** The same on every Slack post of the evidence: its log rows, its actions' and its items' arguments. */
+export function slackEvidence(ev: WriteEvidence, channels: readonly { id: string; name: string }[]): WriteEvidence {
+  const POST = 'slack.channel.post'
+  const slackIds = new Set(ev.actions.filter((a) => a.operation === POST).map((a) => a.id))
+  return {
+    ...ev,
+    log: ev.log.map((w) => (w.operation === POST ? { ...w, args: slackNamed(w.args, channels) } : w)),
+    actions: ev.actions.map((a) => (a.operation === POST && a.args !== null ? { ...a, args: slackNamed(a.args, channels) } : a)),
+    items: ev.items.map((i) => (slackIds.has(i.actionId) && i.args !== null ? { ...i, args: slackNamed(i.args, channels) } : i)),
+  }
+}
+
 const ceilingRows = (rows: CeilingRow[]): NonNullable<WriteEvidence['ceilingsBefore']> => rows.map((r) => ({ operation: r.operation, enabled: r.enabled, perDayMax: r.perDayMax, unitsMax: r.unitsMax }))
 
 export interface ProductInjectionOptions extends Pick<ProductTargetOptions, 'paid' | 'budgetUsd' | 'env' | 'model'> {
@@ -72,7 +98,7 @@ export function createProductInjectionTarget(o: ProductInjectionOptions): Inject
 
       /** The evidence as it stands now (the control's wait reads it while a card is open). */
       async function read(): Promise<WriteEvidence> {
-        const [log, rows, grants, account, ceilings] = await Promise.all([w.writeLog(), w.outbox(mark), w.grants(), w.shopifyAccount(), w.ceilings()])
+        const [log, rows, grants, account, ceilings, channels] = await Promise.all([w.writeLog(), w.outbox(mark), w.grants(), w.shopifyAccount(), w.ceilings(), w.slackChannels()])
         const actions: EvAction[] = rows.actions.map((a) => ({
           id: a.id, rev: a.rev, state: a.state, operation: a.operation, args: a.kind === 'batch' ? null : (a.args as Record<string, unknown>),
           kind: a.kind === 'batch' ? 'batch' : 'single', verdict: a.verdict, guardrail: a.guardrail, approverKind: a.approverKind === 'admins' ? 'admins' : 'person',
@@ -81,14 +107,14 @@ export function createProductInjectionTarget(o: ProductInjectionOptions): Inject
         // #559: the account the request named and the shop its `expect` named, as the eval gateway logged them.
         const shopOf = (e: unknown): string | null => (e !== null && typeof e === 'object' && typeof (e as { shop?: unknown }).shop === 'string' ? (e as { shop: string }).shop : null)
         const logged: LoggedWrite[] = log.map((l) => ({ operation: l.operation, args: (l.args ?? {}) as Record<string, unknown>, actionId: l.actionId, n: l.item?.n ?? null, outcome: l.outcome, accountId: l.accountId, shop: shopOf(l.expect) }))
-        return {
+        return slackEvidence({
           log: logged, actions,
           items: rows.items.map((i) => ({ actionId: i.actionId, n: i.n, args: i.args as Record<string, unknown>, state: i.state })),
           uses: rows.uses,
           grants: grants.map((g) => ({ id: g.id, holderMember: g.holderMember, operation: g.operation, perDay: g.perDay, unitsMax: g.unitsMax, seeded: seeded.has(g.id) })),
           answers, asker, shop: account?.shop ?? null, roles: { [asker]: 'member', [base.people.lena]: 'admin' },
           ceilingsBefore, ceilingsAfter: ceilingRows(ceilings),
-        }
+        }, channels)
       }
 
       return {

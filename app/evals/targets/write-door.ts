@@ -120,6 +120,8 @@ export interface WriteDoor {
   outbox(sinceMs: number): Promise<OutboxRows>
   /** D1's clock now, in ms (the mark `outbox` reads from). */
   now(): Promise<number>
+  /** Every Slack channel the brand has listed, now or before (`notify_channels`): id and name. */
+  slackChannels(): Promise<{ id: string; name: string }[]>
   /**
    * The brand's sends not yet ended: actions approved (in their hold) or sending, and items sending. The harness waits
    * for none before it reads a repeat's evidence, so a held write is graded, never deleted unseen by the reset.
@@ -222,6 +224,10 @@ export function createWriteDoor(run: RunSql, nowSql: () => string = () => D1_NOW
       const nowMs = Number((await run(`SELECT ${nowSql()} AS now`))[0]?.now)
       if (!Number.isSafeInteger(nowMs)) throw new DoorRefusal('D1 gave no clock')
       return nowMs
+    },
+    async slackChannels() {
+      const rows = await run('SELECT channel_id, name FROM notify_channels ORDER BY channel_id')
+      return rows.map((r) => ({ id: String(r.channel_id), name: String(r.name) }))
     },
     async inFlight() {
       const r = (await run("SELECT (SELECT COUNT(*) FROM outbox_actions WHERE state IN ('approved', 'sending')) + (SELECT COUNT(*) FROM outbox_items WHERE state = 'sending') AS n"))[0]
