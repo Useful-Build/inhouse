@@ -1284,14 +1284,7 @@ export class HttpAgent implements AgentClient {
   ceiling = async (): Promise<CeilingList> => { const m = await import('./ceiling'); return this.plain(() => m.readCeiling(this.http)) }
   setCeiling = async (operation: string, input: UpdateCeilingInput): Promise<CeilingRow> => {
     const [m, k] = await Promise.all([import('./ceiling'), this.k ?? this.http.contract()])
-    try {
-      return await this.plain(() => m.putCeilingRow(this.http, k, operation, input))
-    } catch (e) {
-      // A stale change's `current` is passed on only when it is a row; else the page reads the list again.
-      if (!(e instanceof AgentError) || e.code !== 'conflict' || e.current === undefined) throw e
-      const current = k.ANSWERS.ceilingRow.safeParse(e.current)
-      throw new AgentError('conflict', e.message, { ...(e.reason ? { reason: e.reason } : {}), ...(current.success ? { current: current.data } : {}) })
-    }
+    return this.plain(() => m.putCeilingRow(this.http, k, operation, input))
   }
   // ----- Stage 1 M1-D (N3): a chat's long job (routes 100 and 101); ./jobs loads on first use -----
   job = async (chatId: string): Promise<Job | null> => { const m = await import('./jobs'); return this.plain(() => m.readChatJob(this.http, chatId)) }
