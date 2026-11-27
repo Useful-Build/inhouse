@@ -227,7 +227,17 @@ for (const width of [1440, 768, 390]) {
       const bg = (el: ReturnType<Page['locator']>) => el.evaluate(e => getComputedStyle(e).backgroundColor)
       // The fill eases in: wait for the transitions to end, then compare once.
       await atRest(page)
-      expect(await bg(place(page, 'All files'))).not.toBe('rgba(0, 0, 0, 0)')
+      // The selected fill is the --fill-hover token, read back through an element so both sides are computed colours.
+      const selectedFill = await page.evaluate(() => {
+        const probe = document.createElement('i')
+        probe.style.background = 'var(--fill-hover)'
+        document.body.append(probe)
+        const colour = getComputedStyle(probe).backgroundColor
+        probe.remove()
+        return colour
+      })
+      expect(selectedFill).not.toBe('rgba(0, 0, 0, 0)')
+      expect(await bg(place(page, 'All files'))).toBe(selectedFill)
       await expect(sideItem).toHaveAttribute('aria-current', 'page')
       expect(await bg(sideItem)).toBe('rgba(0, 0, 0, 0)')
     }

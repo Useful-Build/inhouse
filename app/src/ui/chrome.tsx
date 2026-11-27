@@ -26,7 +26,7 @@ const navItemVariants = cva('flex w-full flex-none items-center gap-2.75 rounded
     locked: { true: '', false: '' },
     /** The sidebar: the selected row is marked on the sidebar's edge (its marker line), so the row takes no fill. It turns to ink and its icon fills. */
     marked: { true: '', false: '' },
-    /** With `marked`: the other rows wait a step quieter until the pointer or the keyboard is in the sidebar (`group/side`). Off on a phone, which has no hover. */
+    /** With `marked`: the other rows wait a step quieter until the pointer or the keyboard is in the sidebar (`group/side`: hover, or a focus ring inside it, so the focus a click leaves behind doesn't keep it awake). Off on a phone, which has no hover. */
     hush: { true: '', false: '' },
   },
   // One selected look in the Settings menu and the Library's places (a fill a step stronger than hover); the sidebar's is `marked`.
@@ -42,7 +42,7 @@ const navItemVariants = cva('flex w-full flex-none items-center gap-2.75 rounded
     // After the looks above, so these win (twMerge keeps the last).
     { marked: true, active: true, class: 'bg-transparent font-strong text-foreground' },
     { marked: true, active: false, class: 'hover:bg-side-hover' },
-    { marked: true, hush: true, active: false, locked: false, class: 'text-foreground-3 transition-colors group-hover/side:text-foreground group-focus-within/side:text-foreground' },
+    { marked: true, hush: true, active: false, locked: false, class: 'text-foreground-3 transition-colors group-hover/side:text-foreground group-has-focus-visible/side:text-foreground' },
   ],
   defaultVariants: { size: 'default', tone: 'default', avatar: false, rail: false, active: false, locked: false, marked: false, hush: false },
 })

@@ -14,7 +14,7 @@ export const appMergeConfig: ConfigExtension<string, string> = {
       radius: ['bar'],
       animate: ['ih-wind', 'mark-1', 'mark-2', 'mark-3', 'step-in'],
       // --container-* (w-, max-w-, columns-) and --spacing-* (min-h-, max-h-, inset, margins) names.
-      container: ['sidebar', 'sidebar-rail', 'sidebar-inner', 'settings-nav', 'library-nav', 'today-column', 'chat-column', 'page-narrow', 'page-default', 'page-wide', 'page-detail', 'detail-rail', 'reading-measure',
+      container: ['sidebar', 'sidebar-rail', 'settings-nav', 'library-nav', 'today-column', 'chat-column', 'page-narrow', 'page-default', 'page-wide', 'page-detail', 'detail-rail', 'reading-measure',
         'screen-gutter', 'screen-gutter-sm', 'menu-message', 'menu-attach', 'menu-tools', 'menu-mode', 'menu-mode-phone', 'menu-account', 'popover-notifications', 'select-menu', 'problem-panel', 'activity-panel', 'library',
         'window-sm', 'window-md', 'window-form', 'window-lg', 'window-xl', /* PR 5 */ 'prose-measure', 'answer-measure'],
       spacing: ['select-height', 'below-topbar', 'playhead', 'playhead-offset', 'bar-tick', 'today-top', 'chat-empty-top',

@@ -21,7 +21,8 @@ const OPEN_ROW = 'data-[state=open]:bg-side-hover data-[state=open]:text-foregro
 function placeMarker(el: HTMLElement) {
   const box = el.parentElement
   if (!box) return
-  const row = box.querySelector<HTMLElement>('[aria-current="page"]:not([data-chat-fallback])')
+  // The open chat by its row, not its button: while its title is being renamed the button isn't there.
+  const row = box.querySelector<HTMLElement>('[aria-current="page"]:not([data-chat-fallback], [data-chat-open]), [data-chat-row][data-current]')
   if (!row) { el.dataset.off = ''; return }
   const b = box.getBoundingClientRect(), r = row.getBoundingClientRect()
   el.style.setProperty('--side-marker-y', `${r.top - b.top - box.clientTop + box.scrollTop}px`)
@@ -34,6 +35,10 @@ function placeMarker(el: HTMLElement) {
  * The selected row (a page, the open chat, the account row) turns to ink, and one marker, a short ink line on the
  * sidebar's edge, glides to it. The other rows wait a step quieter until the pointer or the keyboard is in the sidebar
  * (`group/side`, NavItem's and ChatRow's `hush`). The phone drawer is the same rows on a card, never quiet (no hover).
+ *
+ * The `<aside>` is the column: on desktop its width animates on a collapse. Inside it one scroller holds the rows at
+ * the column's final width, so an expand reveals them without reflow, and a scrollbar that takes room narrows the rows
+ * instead of covering them. The marker lives in the scroller, so it scrolls with the rows.
  */
 export function Sidebar() {
   const ctx = useCtx()
@@ -121,7 +126,8 @@ export function Sidebar() {
   // sidebar's do (12px in, on one axis with the mark, Search and New chat), so on a collapse they hold their place
   // while the column narrows.
   if (rail) return (
-    <aside id="sidebar" aria-label="Sidebar" className="group/side side-move relative z-sidebar box-border flex w-sidebar-rail flex-none flex-col items-start gap-px overflow-x-hidden overflow-y-auto pt-2 pb-3 pl-3">
+    <aside id="sidebar" aria-label="Sidebar" className="group/side side-move relative z-sidebar flex w-sidebar-rail flex-none flex-col overflow-hidden">
+      <div className="relative isolate box-border flex min-h-0 w-sidebar-rail flex-1 flex-col items-start gap-px overflow-x-hidden overflow-y-auto pt-2 pb-3 pl-3">
       {line}
       <span className="ml-2.25 flex h-14.5 flex-none items-center">
         <InhouseMark size={22} />
@@ -143,23 +149,23 @@ export function Sidebar() {
             leading={<Avatar who={ctx.data.meta.currentUser.id} size={24} fontSize={10} cssInitials />} />
         </AccountMenu>
       </div>
+      </div>
     </aside>
   )
 
-  // Each block is the rows' full width from the first frame of an expand, so nothing reflows while the column grows:
-  // it is revealed. The drawer's card has a border, so its rows take the room it leaves.
-  const block = phone ? '' : 'min-w-sidebar-inner'
   // A group's label. Its box has a set height, so the rows under it don't move when its font arrives (the marker is
   // placed from where the rows are).
   const label = 'mono-label box-border flex h-10.75 flex-none items-end px-2.5 pb-1.5'
   // A quiet text control (See all): with the rows, it waits a step quieter.
-  const hushed = phone ? '' : 'text-foreground-3 transition-colors group-hover/side:text-foreground group-focus-within/side:text-foreground'
+  const hushed = phone ? '' : 'text-foreground-3 transition-colors group-hover/side:text-foreground group-has-focus-visible/side:text-foreground'
   const aside = (
-      <aside id="sidebar" aria-label="Sidebar" className={cn('group/side relative isolate box-border flex w-sidebar flex-none flex-col overflow-x-hidden overflow-y-auto px-3 pt-2 pb-3',
-        phone ? 'my-2.5 mr-0 ml-2.5 min-h-0 flex-1 rounded-2xl border border-border bg-card shadow-float' : 'side-move z-sidebar')}>
+      <aside id="sidebar" aria-label="Sidebar" className={cn('group/side box-border flex w-sidebar flex-none flex-col overflow-hidden',
+        phone ? 'my-2.5 mr-0 ml-2.5 min-h-0 flex-1 rounded-2xl border border-border bg-card shadow-float' : 'side-move relative z-sidebar')}>
+        {/* The drawer's card has a border, so its scroller takes the room the card leaves. */}
+        <div className={cn('relative isolate box-border flex min-h-0 flex-1 flex-col overflow-x-hidden overflow-y-auto px-3 pt-2 pb-3', phone ? 'w-full' : 'w-sidebar')}>
         {line}
         {/* As tall as the top bar and level with it. The mark sits on the nav icons' axis and the name starts on the labels' line. */}
-        <div className={cn('flex h-14.5 flex-none items-center gap-2.5 pr-1 pl-2.25', block)}>
+        <div className="flex h-14.5 flex-none items-center gap-2.5 pr-1 pl-2.25">
           <InhouseMark size={22} />
           <div className="min-w-0 flex-1">
             <div className="truncate text-base font-semibold tracking-card">Inhouse</div>
@@ -168,7 +174,7 @@ export function Sidebar() {
           <IconButton icon="edit_square" label="New chat" shortcut={SHORTCUTS.newChat} size={18} onClick={() => newChat()} variant="chrome" />
         </div>
 
-        <div className={cn('mt-1.5 flex flex-col gap-px', block)}>
+        <div className="mt-1.5 flex flex-col gap-px">
           <NavItem marked hush={!phone} icon="search" label="Search" aria-keyshortcuts={SHORTCUTS.palette.aria}
             onClick={() => patch(phone ? { sideOpen: false, palette: true } : { palette: true })}
             trailing={!phone && (
@@ -186,29 +192,30 @@ export function Sidebar() {
         </div>
 
         {pinned.length > 0 && (
-          <div role="group" aria-labelledby="side-pinned" className={cn('flex flex-none flex-col', block)}>
+          <div role="group" aria-labelledby="side-pinned" className="flex flex-none flex-col">
             <div id="side-pinned" className={label}>Pinned</div>
             {pinned.map(chatRow)}
           </div>
         )}
         {/* No chats yet (day one, or every one deleted): no heading over an empty list. */}
         {chats.length > 0 && <>
-        <div className={cn('box-border flex h-11.25 flex-none items-center justify-between px-2.5 pt-5.5 pb-1.5', block)}>
+        <div className="box-border flex h-11.25 flex-none items-center justify-between px-2.5 pt-5.5 pb-1.5">
           <span className="mono-label">Recent chats</span>
           <Button variant="link" size="sm" data-chat-fallback className={cn('text-xs font-medium', !(page === 'chats' && chatList) && hushed)} aria-current={page === 'chats' && chatList ? 'page' : undefined} onClick={openChatList}>See all</Button>
         </div>
-        <div role="group" aria-label="Recent chats" className={cn('flex flex-none flex-col', block)}>{recent.map(chatRow)}</div>
+        <div role="group" aria-label="Recent chats" className="flex flex-none flex-col">{recent.map(chatRow)}</div>
         </>}
 
         <div className="grow shrink-0 basis-3" />
         {/* The account row, the Inhouse team button and on desktop the collapse button, in line with New chat above. */}
-        <div className={cn('flex flex-none items-center gap-1 pr-1', block)}>
+        <div className="flex flex-none items-center gap-1 pr-1">
           <AccountMenu>
             <NavItem marked hush={!phone} tone="quiet" avatar label={name} aria-label={`${name}, account and settings`} active={meActive} className={cn(OPEN_ROW, 'min-w-0 flex-1')} leading={<Avatar who={ctx.data.meta.currentUser.id} size={24} fontSize={10} cssInitials />}
               trailing={phone && <Icon name="unfold_more" size={16} className="text-faint" />} />
           </AccountMenu>
           {team}
           {!phone && toggle}
+        </div>
         </div>
       </aside>
   )

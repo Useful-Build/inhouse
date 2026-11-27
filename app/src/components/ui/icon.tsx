@@ -21,7 +21,7 @@ export function Icon({ name, size = 20, weight, fill, style, className }: {
   const w = weight ?? (size <= 14 ? 400 : 300)
   return (
     <span aria-hidden="true" className={cn('ms', className)}
-      style={{ fontSize: size, width: size, fontVariationSettings: `'wght' ${w}${fill ? ",'FILL' 1" : ''}`, ...style }}>
+      style={{ fontSize: size, width: size, fontVariationSettings: `'wght' ${w},'FILL' ${fill ? 1 : 0}`, ...style }}>
       {(BASE_ICONS as Record<string, string>)[name] ?? name}
     </span>
   )

@@ -133,7 +133,6 @@
   /* columns and page widths */
   --app-sidebar: 252px;
   --app-sidebar-rail: 62px;       /* the collapsed sidebar: a 40px nav square, 12px in from the window and 10px off the page */
-  --app-sidebar-inner: calc(var(--app-sidebar) - 24px); /* the sidebar's rows: its width less its side padding */
   --app-settings-nav: 274px;
   --app-library-nav: 236px;
   --app-today-column: 720px;      /* Today's column and its composer */
@@ -372,7 +371,6 @@
   /* app role tokens (the :root block above) */
   --container-sidebar: var(--app-sidebar);
   --container-sidebar-rail: var(--app-sidebar-rail);
-  --container-sidebar-inner: var(--app-sidebar-inner);
   --container-settings-nav: var(--app-settings-nav);
   --container-library-nav: var(--app-library-nav);
   --container-today-column: var(--app-today-column);
@@ -582,7 +580,7 @@
  * It has no surface of its own: it sits on the page's wall, behind one hairline (side-rule, on the main column). */
 /* The selection marker: a short ink line on the sidebar's edge, level with the selected row, that glides between rows.
  * The Sidebar sets where the row is (--side-marker-y, --side-marker-h); until then the line has no height. It scrolls
- * with the rows (the sidebar is its containing block) and sits under them (the sidebar is its stacking context). */
+ * with the rows (the sidebar's scroller is its containing block) and sits under them (it is its stacking context too). */
 @utility side-marker {
   position: absolute; top: 0; right: 0; z-index: -1; pointer-events: none;
   width: 2px; height: calc(var(--side-marker-h, 0px) - 14px); transform: translateY(calc(var(--side-marker-y, 0px) + 7px));

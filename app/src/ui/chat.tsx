@@ -143,7 +143,7 @@ const chatButtonVariants = cva('flex h-full min-w-0 flex-1 items-center text-lef
   },
   compoundVariants: [
     { place: 'sidebar', open: true, class: 'font-strong text-foreground' },
-    { place: 'sidebar', open: false, hush: true, class: 'text-foreground-3 transition-colors group-hover/side:text-foreground-2 group-focus-within/side:text-foreground-2' },
+    { place: 'sidebar', open: false, hush: true, class: 'text-foreground-3 transition-colors group-hover/side:text-foreground-2 group-has-focus-visible/side:text-foreground-2' },
     { place: 'sidebar', reserve: true, class: 'pr-9' },
     { place: 'sidebar', reserve: false, class: 'pr-2.5 pointer-coarse:pr-9' },
     // See all: the time ends on the card's edge, 12px in; a phone or touch screen keeps the trigger's room after it.
@@ -194,7 +194,10 @@ export function ChatRow({ chat, place = 'sidebar', open = false, running = false
     return range.getBoundingClientRect().width > shown + 0.5
   }
   // Faded out, not `invisible`: it stays focusable and in the accessibility tree, so Tab and Shift+Tab reach it.
-  const reveal = phone ? '' : 'opacity-0 group-hover/chat:opacity-100 group-focus-within/chat:opacity-100 aria-expanded:opacity-100 pointer-coarse:opacity-100'
+  // In the sidebar it shows with the row's own fill (hover, a focus ring, an open menu), never on the focus a click
+  // leaves behind: the open chat's row has no fill, so the trigger's fill would sit over its title as a lone square.
+  const reveal = phone ? '' : cn('opacity-0 group-hover/chat:opacity-100 aria-expanded:opacity-100 pointer-coarse:opacity-100',
+    place === 'sidebar' ? 'group-has-focus-visible/chat:opacity-100' : 'group-focus-within/chat:opacity-100')
 
   // The sidebar trigger sits over the title's end, so it carries the hovered row's own fill (solid, to cover the text).
   const trigger = 'bg-side-hover hover:bg-fill-strong'
@@ -219,7 +222,7 @@ export function ChatRow({ chat, place = 'sidebar', open = false, running = false
   }
 
   return (
-    <div ref={box} data-chat-row={chat.id} className={chatRowVariants({ place, open: open || !!picked })}>
+    <div ref={box} data-chat-row={chat.id} data-current={open ? '' : undefined} className={chatRowVariants({ place, open: open || !!picked })}>
       {editing ? (
         <ChatTitleInput title={chat.title} size={place === 'sidebar' ? 'sm' : 'default'} className={place === 'list' ? 'mx-1.5' : undefined}
           onDone={(t, byKey) => { if (t !== null) renameChat(chat.id, t); refocus.current = byKey; setEditing(false) }} />
