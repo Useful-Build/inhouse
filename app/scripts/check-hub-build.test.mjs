@@ -23,6 +23,8 @@ const EXPECTED = {
   'deploy-shopify-canary': [1, /FAIL {2}shopify upstream canary: the deployable.*\n.*INHOUSE_SHOPIFY_UPSTREAM_CANARY_7c2d/],
   'deploy-shopify-write-canary': [1, /FAIL {2}shopify write upstream canary: the deployable.*\n.*INHOUSE_SHOPIFY_WRITE_UPSTREAM_CANARY_9f4e/],
   'deploy-mcp-canary': [1, /FAIL {2}mcp upstream canary: the deployable.*\n.*INHOUSE_MCP_UPSTREAM_CANARY_7c2d/],
+  // Stage 1 M3-R (N30): the eval deployment's write log gateway is the test bundle's alone.
+  'deploy-eval-write-gateway': [1, /FAIL {2}eval write gateway: the deployable.*\n.*"EvalWriteGateway" in/],
   'deploy-fakes-canary': [1, /FAIL {2}test-fakes canary: the deployable.*\n.*INHOUSE_HUB_FAKES_CANARY_3a6f/],
   'deploy-fakes-globals': [1, /FAIL {2}test-fakes globals: the deployable.*\n.*__inhouseHubTestLogs/],
   // The deployable script keeps the define's dead branches as text: names inside `if (false)` only are fine.

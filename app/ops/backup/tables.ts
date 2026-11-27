@@ -106,6 +106,10 @@ export const TABLE_RULES: readonly TableRule[] = [
   { name: 'outbox_items', orderBy: ['item_id'], mode: 'paged', createdColumn: 'created_at_ms', after: ['outbox_actions'] },
   // Stage 1 M2-Q: few rows, each updated once or twice (answered, delivered), so a whole snapshot.
   { name: 'questions', orderBy: ['id'], mode: 'snapshot' },
+  // Stage 1 M3-R: the eval write log and its faults, written only on the eval deployment and cleared per case-repeat;
+  // empty everywhere else, so whole snapshots.
+  { name: 'eval_write_log', orderBy: ['n'], mode: 'snapshot' },
+  { name: 'eval_write_fault', orderBy: ['operation'], mode: 'snapshot' },
 ]
 
 /** A name that goes into SQL as a quoted identifier: letters, digits and `_` only. */

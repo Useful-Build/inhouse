@@ -130,9 +130,13 @@
 // `{ binding: "HUB", service: "inhouse-sbx-eval-hub", entrypoint: "ReadGateway" }` and
 // `{ binding: "HUB_CONNECT", service: "inhouse-sbx-eval-hub", entrypoint: "ConnectGateway" }` (P5's main merge, #337:
 // the per-turn prompt v3 reads the accounts through it, and the read binding alone would leave every eval turn on the
-// static v2; the eval hub is the hub's test bundle, which exports ConnectGateway): never
+// static v2; the eval hub is the hub's test bundle, which exports ConnectGateway), or (Stage 1 M3-R, N30) that pair and
+// `{ binding: "HUB_WRITE", service: "inhouse-sbx-eval-hub", entrypoint: "EvalWriteGateway" }`, the hub test build's
+// credential-free write log (never the real WriteGateway; no other config may name EvalWriteGateway): never
 // P5's HUB_DELIVERY (the eval brand is at Watch and delivers nothing to Slack), and never the candidate's, a PR's or the
-// house's hub; `--eval --hub` locks the eval hub's own config by the hub rules above.
+// house's hub; `--eval --hub` locks the eval hub's own config by the hub rules above, with one exception: the eval hub
+// alone may bind one D1, exactly `{ binding: "EVAL_WRITE_LOG", database_name: <the eval deployment's database> }`
+// (EvalWriteGateway's log; no migrations_dir).
 import { existsSync, readFileSync } from 'node:fs'
 import { dirname, isAbsolute, resolve } from 'node:path'
 import { pathToFileURL } from 'node:url'
@@ -402,9 +406,21 @@ const OBSERVABILITY_PART_KEYS = new Set(['enabled', 'head_sampling_rate', 'invoc
 const SANDBOX_HUB_ENTRYPOINTS = { HUB: 'ReadGateway', HUB_CONNECT: 'ConnectGateway', HUB_DELIVERY: 'DeliveryGateway', HUB_WRITE: 'WriteGateway' }
 /** (P4, P5, M2-C) The allowed sets of those bindings, exactly: P4's read binding alone, P5's three, or M2-C's four. */
 const SANDBOX_HUB_SETS = [['HUB'], ['HUB', 'HUB_CONNECT', 'HUB_DELIVERY'], ['HUB', 'HUB_CONNECT', 'HUB_DELIVERY', 'HUB_WRITE']]
-/** (eval hub) The eval deployment's one allowed set: its own hub's read and connect bindings together (#337); never delivery or write. */
-const EVAL_HUB_SETS = [['HUB', 'HUB_CONNECT']]
-const EVAL_SERVICES_SHAPE = 'services is set: the eval deployment may bind exactly { HUB -> ReadGateway, HUB_CONNECT -> ConnectGateway } to its own hub, each entry { binding, service, entrypoint } and nothing else (never HUB_DELIVERY or HUB_WRITE)'
+/**
+ * (eval hub) The eval deployment's hub bindings: read and connect (#337), and from Stage 1 M3-R (N30) the write binding
+ * to EvalWriteGateway, the hub test build's credential-free write log, never the real WriteGateway. No other config may
+ * name EvalWriteGateway (SANDBOX_HUB_ENTRYPOINTS, and the product rule's exact list).
+ */
+const EVAL_HUB_ENTRYPOINTS = { HUB: 'ReadGateway', HUB_CONNECT: 'ConnectGateway', HUB_WRITE: 'EvalWriteGateway' }
+/** (eval hub) The eval deployment's allowed sets: read and connect together, or those two and the write log; never delivery. */
+const EVAL_HUB_SETS = [['HUB', 'HUB_CONNECT'], ['HUB', 'HUB_CONNECT', 'HUB_WRITE']]
+const EVAL_SERVICES_SHAPE = 'services is set: the eval deployment may bind exactly { HUB -> ReadGateway, HUB_CONNECT -> ConnectGateway } to its own hub, or those two and HUB_WRITE -> EvalWriteGateway (its write log), each entry { binding, service, entrypoint } and nothing else (never HUB_DELIVERY, and HUB_WRITE never to WriteGateway)'
+/**
+ * (Stage 1 M3-R, N30) The one D1 binding the eval hub config may hold: the eval deployment's own database
+ * (evalNames().d1), which EvalWriteGateway writes its log to (hub/testing/eval-write.ts reads `env.EVAL_WRITE_LOG`). The ops
+ * repo adds it to the eval hub's config; no other hub config may bind a D1.
+ */
+export const EVAL_WRITE_LOG_BINDING = 'EVAL_WRITE_LOG'
 const SERVICES_SHAPE = 'services is set: a sandbox config may not use it, but for exactly { HUB -> ReadGateway }, { HUB -> ReadGateway, HUB_CONNECT -> ConnectGateway, HUB_DELIVERY -> DeliveryGateway } or { HUB -> ReadGateway, HUB_CONNECT -> ConnectGateway, HUB_DELIVERY -> DeliveryGateway, HUB_WRITE -> WriteGateway }, each entry { binding, service: <its own hub>, entrypoint } and nothing else'
 /** (P4) The keys a sandbox hub config may give a value (a subset of SANDBOX_KEYS). */
 const HUB_KEYS = new Set([
@@ -541,6 +557,8 @@ export function checkSandboxConfig(config, { accountId, zone, mode, configDir })
       continue
     }
     if (!SANDBOX_KEYS.has(key) && !isEmpty(value)) fail(`${key} is set: a sandbox config may not use it (it could reach resources or files outside the sandbox)`)
+    // (M3-R, N30) The eval hub's one D1, the write log: its own rule below.
+    else if (hub && evalMode && key === 'd1_databases') continue
     else if (hub && !HUB_KEYS.has(key) && !isEmpty(value)) fail(`${key} is set: a sandbox hub config may not use it (the hub has no route, assets or storage but its own Durable Objects)`)
   }
   if (Object.hasOwn(config, 'env')) fail('env is set: a deployable config has no env blocks (each could override what this checks)')
@@ -555,8 +573,9 @@ export function checkSandboxConfig(config, { accountId, zone, mode, configDir })
   } else if (!isEmpty(services)) {
     // Each entry exactly { binding, service, entrypoint } with its binding's entrypoint, and the bindings exactly one
     // allowed set (sorted, so order doesn't matter and a binding given twice can't stand in for another).
+    const entrypoints = evalMode ? EVAL_HUB_ENTRYPOINTS : SANDBOX_HUB_ENTRYPOINTS
     const entryOk = s => !!s && typeof s === 'object' && !Array.isArray(s) && Object.keys(s).length === 3 &&
-      Object.hasOwn(s, 'service') && Object.hasOwn(SANDBOX_HUB_ENTRYPOINTS, s.binding) && s.entrypoint === SANDBOX_HUB_ENTRYPOINTS[s.binding]
+      Object.hasOwn(s, 'service') && Object.hasOwn(entrypoints, s.binding) && s.entrypoint === entrypoints[s.binding]
     const bindings = JSON.stringify(services.map(s => s?.binding).sort())
     const shaped = services.every(entryOk) && (evalMode ? EVAL_HUB_SETS : SANDBOX_HUB_SETS).some(set => JSON.stringify([...set].sort()) === bindings)
     if (!shaped) fail(evalMode ? EVAL_SERVICES_SHAPE : SERVICES_SHAPE)
@@ -597,6 +616,16 @@ export function checkSandboxConfig(config, { accountId, zone, mode, configDir })
 
   const d1 = list('d1_databases')
   if (d1.length > 1) fail('d1_databases has more than one database')
+  // (M3-R, N30) The eval hub binds the eval deployment's database (the name rule below) as EVAL_WRITE_LOG and nothing
+  // more: no migrations (the product's own config migrates it).
+  if (hub && evalMode) {
+    d1.forEach((d, i) => {
+      const keys = d && typeof d === 'object' && !Array.isArray(d) ? Object.keys(d) : null
+      if (!keys || keys.length !== 2 || d.binding !== EVAL_WRITE_LOG_BINDING || !Object.hasOwn(d, 'database_name')) {
+        fail(`d1_databases[${i}] must be exactly { binding: "${EVAL_WRITE_LOG_BINDING}", database_name } in the eval hub config (the eval write log's database)`)
+      }
+    })
+  }
   d1.forEach((d, i) => {
     onlyKeys(`d1_databases[${i}]`, d, D1_KEYS)
     nameOk(`d1_databases[${i}].database_name`, d?.database_name, 'd1')

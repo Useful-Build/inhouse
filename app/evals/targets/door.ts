@@ -23,10 +23,12 @@ import { randomBytes } from 'node:crypto'
 import path from 'node:path'
 import { MAX_JOB_BUDGET_USD, MIN_JOB_BUDGET_USD, capOk, parseHostlist } from '../../shared/contract/settings-table.ts'
 import { TEST_SHOP_KEY, TEST_SHOP_OWNER } from '../../server/egress/test-shop.ts'
+import { D1_NOW_MS, DoorRefusal, sqlString } from './sql.ts'
+import type { RunSql } from './sql.ts'
 
-export class DoorRefusal extends Error {
-  override name = 'DoorRefusal'
-}
+// Stage 1 M3-R: these live in ./sql.ts (no Node import, for the write door); re-exported so every caller is unchanged.
+export { D1_NOW_MS, DoorRefusal, sqlString }
+export type { RunSql }
 
 /** The eval deployment's database: scripts/sandbox/names.mjs's evalNames().d1 (a test pins the two equal). */
 export const EVAL_DB = 'inhouse-sbx-eval-db'
@@ -126,10 +128,6 @@ const CHAT_ID = /^[A-Za-z0-9_-]{1,64}$/
 const CARD_TEXT = /^[A-Za-z0-9 :.,'-]{1,80}$/
 
 export interface NewApproval { id: string; chatId: string; askedBy: string; title: string; line: string }
-export const sqlString = (s: string): string => `'${s.replaceAll("'", "''")}'`
-
-/** Runs one SQL statement on the database and returns the rows it answered (none for a write). */
-export type RunSql = (sql: string) => Promise<Record<string, unknown>[]>
 
 /** The morning-check set's rule: EVAL_DB (its graded run) or a PR's test database (its scripted proof), in the sandbox account. */
 export function assertMorningCheckDatabase(name: string | undefined, env: Record<string, string | undefined>): string {
@@ -146,10 +144,6 @@ export function assertSandboxDatabase(name: string | undefined, env: Record<stri
   return name
 }
 
-/** D1's own clock in milliseconds, as SQL: one value for the whole statement. */
-// julianday('now') rather than unixepoch('subsec'): the same instant in ms, without needing SQLite 3.42's subsec modifier
-// (D1's SQL docs name no SQLite version). SQLite keeps 'now' fixed for the whole statement.
-export const D1_NOW_MS = "CAST(ROUND((julianday('now') - 2440587.5) * 86400000) AS INTEGER)"
 
 /** `nowSql` is the SQL for "now" in ms (default D1_NOW_MS; tests give a fixed integer to step a clock). */
 export function createDoor(run: RunSql, nowSql: () => string = () => D1_NOW_MS): MemoryDoor {

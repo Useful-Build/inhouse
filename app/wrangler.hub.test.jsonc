@@ -6,7 +6,9 @@
 {
 	"$schema": "./hub/node_modules/wrangler/config-schema.json",
 	"name": "inhouse-hub",
-	"main": "hub/index/index.ts",
+	// Stage 1 M3-R (N30): the test build's own main module, the deployable one's exports plus EvalWriteGateway (the eval
+	// deployment's credential-free write log). The deployable config's main stays hub/index/index.ts.
+	"main": "hub/testing/entry/index.ts",
 	// The newest date the pinned wrangler 4.158.0's workerd supports (app/wrangler.jsonc is on 2026-11-13).
 	"compatibility_date": "2026-11-11",
 	"workers_dev": false,

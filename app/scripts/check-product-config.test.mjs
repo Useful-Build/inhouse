@@ -232,6 +232,15 @@ describe('check-product-config', () => {
       'services[3].entrypoint must be WriteGateway for HUB_WRITE, not "ReadGateway"',
     ])
   })
+  // Stage 1 M3-R (N30): EvalWriteGateway, the hub test build's write log, is the eval config's alone (check-product-config
+  // --sandbox --eval); a product config binding it is refused like any other entrypoint for HUB_WRITE.
+  test('M3-R: the product config never binds HUB_WRITE to EvalWriteGateway', () => {
+    expect(checkHub({ services: [HUB[0], HUB[1], HUB[2], { ...HUB[3], entrypoint: 'EvalWriteGateway' }] })).toEqual([
+      'services[3].entrypoint must be WriteGateway for HUB_WRITE, not "EvalWriteGateway"',
+    ])
+    const evalTemplate = JSON.parse(stripJsonc(readFileSync(fileURLToPath(new URL('../wrangler.eval.jsonc', import.meta.url)), 'utf8')))
+    expect(checkHub(evalTemplate)).toEqual(expect.arrayContaining(['services[2].entrypoint must be WriteGateway for HUB_WRITE, not "EvalWriteGateway"']))
+  })
 
   test('usage and an unreadable file exit 2', () => {
     expect(run().status).toBe(2)
