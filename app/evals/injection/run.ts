@@ -8,11 +8,12 @@
 // a planted bypass of each kind in every repeat must be caught as that kind and fail the gate; a repeat whose evidence
 // can't be read, or whose turn never ends, must fail the gate. Its results are what the dry run commits.
 // The product target spends money: it refuses without --paid and --budget, and the paid run is the orchestrator's (run 3).
+import fs from 'node:fs'
 import path from 'node:path'
 import { parseArgs } from 'node:util'
 import { INJECTION_CASES } from './cases.ts'
 import { createFakeInjectionTarget, FAKE_PLANTS, type FakePlant } from './fake.ts'
-import { gateOf, runInjection, type InjectionRunOutput, type InjectionTarget } from './runner.ts'
+import { gateOf, runInjection, type InjectionRow, type InjectionRunOutput, type InjectionTarget } from './runner.ts'
 import { appendRow, gateLine, startRows, writeInjectionResults, type ReportMeta } from './report.ts'
 import type { InjectionCase } from './types.ts'
 
@@ -57,7 +58,8 @@ async function main(): Promise<void> {
   const wanted = v.cases === 'all' ? null : new Set(v.cases!.split(','))
   const cases = wanted ? INJECTION_CASES.filter((c) => wanted.has(c.id)) : INJECTION_CASES
   if (wanted && cases.length !== wanted.size) fail('unknown case in --cases')
-  const topic = v.topic ?? path.basename(out)
+  // #606: an empty --topic (an unset workflow input) is no topic.
+  const topic = v.topic && v.topic.trim() !== '' ? v.topic : path.basename(out)
 
   if (v['self-check']) {
     if (v.target !== 'fake') fail('--self-check runs on the fake target only')
@@ -86,7 +88,17 @@ async function main(): Promise<void> {
   // Cases the run leaves out on purpose, by name (Fable's #550 review): printed in the report and the gate line.
   const waive = v.waive ? v.waive.split(',').filter((x) => x !== '') : []
   for (const id of waive) if (!INJECTION_CASES.some((c) => c.id === id)) fail(`unknown case in --waive: ${id}`)
-  const s = await runAndWrite({ target, cases, reps, waive, out, meta: { topic, target: target.name, model: v.target === 'fake' ? 'none' : v.model!, reps }, ...(budgetUsd !== undefined ? { budgetUsd } : {}) })
+  const meta = { topic, target: target.name, model: v.target === 'fake' ? 'none' : v.model!, reps }
+  const soFar: InjectionRow[] = []
+  // A cancel or a job timeout (Neon's #602 review, as evals/run.ts does): the rows so far written, the target's close (on
+  // the product: the Slack workspace emptied, Slack disconnected, the eval lease given back), then a non-zero exit.
+  for (const [signal, code] of [['SIGINT', 130], ['SIGTERM', 143]] as const) {
+    process.once(signal, () => {
+      console.error(`${signal}: writing the rows so far and closing the target before exiting`)
+      void onCancel(target, out, soFar).then((ok) => process.exit(ok ? code : 1))
+    })
+  }
+  const s = await runAndWrite({ target, cases, reps, waive, out, meta, soFar, ...(budgetUsd !== undefined ? { budgetUsd } : {}) })
   console.log(`gate ${gateLine(s)}; ${s.repeats.pass}/${s.repeats.ran} repeats pass, ${s.bypasses.total} bypasses, cost $${s.soft.costUsd.toFixed(4)}`)
   if (!s.gate.pass) process.exitCode = 1
 }
@@ -96,13 +108,35 @@ async function main(): Promise<void> {
  * product it disconnects Slack; a failed call there must never cost the rows). A close that fails is recorded on the run
  * (`closeErr`), fails the gate, and the results are written again with it.
  */
-export async function runAndWrite(o: { target: InjectionTarget; cases: InjectionCase[]; reps: number; waive: string[]; out: string; meta: ReportMeta; budgetUsd?: number }): Promise<ReturnType<typeof writeInjectionResults>> {
+/**
+ * On a cancel: every finished row to rows.json (rows.jsonl has them already), then the target's close. Resolves false when
+ * either failed (printed), so the exit says so.
+ */
+export async function onCancel(target: Pick<InjectionTarget, 'close'>, out: string, soFar: readonly InjectionRow[]): Promise<boolean> {
+  let ok = true
+  try {
+    fs.mkdirSync(out, { recursive: true })
+    fs.writeFileSync(path.join(out, 'rows.json'), JSON.stringify(soFar, null, 1))
+  } catch (e) {
+    ok = false
+    console.error(`the rows so far could not be written: ${e instanceof Error ? e.message : String(e)}`)
+  }
+  try {
+    await target.close?.()
+  } catch (e) {
+    ok = false
+    console.error(`the target could not close (Slack, the eval lease): ${e instanceof Error ? e.message : String(e)}`)
+  }
+  return ok
+}
+
+export async function runAndWrite(o: { target: InjectionTarget; cases: InjectionCase[]; reps: number; waive: string[]; out: string; meta: ReportMeta; budgetUsd?: number; soFar?: InjectionRow[] }): Promise<ReturnType<typeof writeInjectionResults>> {
   let result: InjectionRunOutput
   // Each graded row goes to rows.jsonl as its repeat ends (ops #49): a job timeout, a cancel or a crash keeps every
   // finished row; the report is written at the end from the run's rows.
   startRows(o.out)
   try {
-    result = await runInjection({ target: o.target, cases: o.cases, reps: o.reps, waive: o.waive, setSize: INJECTION_CASES.length, onRow: (row) => appendRow(o.out, row), ...(o.budgetUsd !== undefined ? { budgetUsd: o.budgetUsd } : {}) })
+    result = await runInjection({ target: o.target, cases: o.cases, reps: o.reps, waive: o.waive, setSize: INJECTION_CASES.length, onRow: (row) => { o.soFar?.push(row); appendRow(o.out, row) }, ...(o.budgetUsd !== undefined ? { budgetUsd: o.budgetUsd } : {}) })
   } catch (e) {
     // No rows to keep: give back what the target holds, and say so if that fails too.
     try {

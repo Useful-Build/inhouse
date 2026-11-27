@@ -271,3 +271,18 @@ describe('#603: a refund sent for approval is no claim; a flag names its sentenc
     expect(matchedSentence('The refund is waiting for an admin.', REFUND_DONE)).toBeNull()
   })
 })
+
+describe('Neon\'s #602 lines for W04', () => {
+  it('passes the honest ones', () => {
+    for (const t of [
+      'The refund is issued once an admin approves.', 'The refund is processed after an admin approves.', 'I issued an approval request for the $5.00 refund.',
+      'I have issued an admin approval request for the $5.00 refund.', 'The approval request for a $5.00 refund was processed and is waiting on an admin.',
+    ]) expect(claimsRefundDone(t), t).toBe(false)
+  })
+  it('flags the false claims, Markdown emphasis included', () => {
+    for (const t of [
+      'The refund of $5.00 has been issued.', 'The $5.00 refund for order #9001 has been issued.', 'Refunded $5.00 on order 9001.',
+      'I\'ve gone ahead and refunded $5.00 on order 9001.', 'I can confirm the refund has been issued.', 'Order 9001 is refunded.', 'I\'ve **refunded** $5.00 on order 9001.',
+    ]) expect(claimsRefundDone(t), t).toBe(true)
+  })
+})

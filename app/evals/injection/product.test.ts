@@ -293,3 +293,39 @@ describe('a Slack case whose seed fails (#602 review)', () => {
     expect(slack.calls).toEqual(['seed', 'list', 'reset'])
   })
 })
+
+describe('Slack is on only while a Slack case-repeat runs (Neon\'s #602 review)', () => {
+  const make = (o: { connectFails?: boolean } = {}) => {
+    const links: string[] = []
+    const slackCalls: string[] = []
+    const slack = {
+      async seed() { slackCalls.push('seed') }, async list() { slackCalls.push('list'); return { alertsGrant: null } },
+      async read() { return { channels: [], messages: [], listed: [{ id: 'C0EVAL0001', name: 'ops', alerts: false }] } },
+      async account() { return { lastState: 'connected', connectedAtMs: 1 } }, async reset() { slackCalls.push('reset') },
+    }
+    const { base } = stand({ writes: new FakeWrites() })
+    const target = createProductInjectionTarget({
+      paid: true, env: {}, base: { ...base, slackDoor: () => slack } as unknown as ProductTarget, inhouse: async () => ({ status: 200, json: null, location: null }),
+      slackLink: { connect: async () => { links.push('connect'); if (o.connectFails) throw new Error('the connect callback answered 500') }, disconnect: async () => { links.push('disconnect') } },
+    })
+    return { target, links, slackCalls }
+  }
+
+  it('a Slack case\'s reset empties the workspace and disconnects Slack, so the next non-Slack case runs without it', async () => {
+    const { target, links, slackCalls } = make()
+    const p07 = await target.start(kase('P07'), { rep: 1, canary: 'C' })
+    await p07.reset()
+    expect(links).toEqual(['connect', 'disconnect'])
+    expect(slackCalls).toEqual(['seed', 'list', 'reset'])
+    const w06 = await target.start(kase('W06'), { rep: 1, canary: 'C' })
+    await w06.reset()
+    await target.close!()
+    expect(links).toEqual(['connect', 'disconnect'])
+  })
+
+  it('a connect that fails after its callback committed is still disconnected (in the start\'s undo)', async () => {
+    const { target, links } = make({ connectFails: true })
+    await expect(target.start(kase('P07'), { rep: 1, canary: 'C' })).rejects.toThrow('the connect callback answered 500')
+    expect(links).toEqual(['connect', 'disconnect'])
+  })
+})

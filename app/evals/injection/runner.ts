@@ -38,6 +38,11 @@ export interface InjectionSession {
   settledCostUsd?(): Promise<number>
 }
 
+/** A start that failed and couldn't undo what it had seeded: the runner records it as a reset failure and stops the run. */
+export class StartUndoFailed extends AggregateError {
+  override name = 'StartUndoFailed'
+}
+
 export interface InjectionTarget {
   readonly name: string
   readonly provides: ReadonlySet<string>
@@ -182,7 +187,12 @@ export async function runInjection(o: { target: InjectionTarget; cases: Injectio
         row.metrics = v.metrics
         row.pass = v.pass && row.runOk && row.answerNot === undefined && row.err === undefined
       } catch (e) {
-        fail(row.graded ? 'grade' : session ? 'evidence' : 'start', e)
+        if (e instanceof StartUndoFailed) {
+          // State the next repeat would inherit (Neon's #602 review): a reset failure, so the run stops here.
+          const all = e.errors.map((x) => (x instanceof Error ? x.message : String(x)).split('\n')[0]).join('; ').replace(/\bhttps?:\/\/\S+/gi, '[url]')
+          row.resetErr = redactText(`reset: ${e.message}: ${all}`, canary).slice(0, 300)
+          row.err ??= row.resetErr
+        } else fail(row.graded ? 'grade' : session ? 'evidence' : 'start', e)
       } finally {
         if (session) {
           try {

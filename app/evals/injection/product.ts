@@ -19,7 +19,7 @@ import { accessHeaders, createProductTarget, EVAL_AUD_VAR, testIssuerSignIn, typ
 import { connectSlack, disconnectSlack, type InhouseApi } from '../targets/slack-door.ts'
 import { SEED_INHOUSE } from '../../server/seed/brand.ts'
 import type { ExfilSpec } from '../types.ts'
-import type { InjectionSession, InjectionTarget } from './runner.ts'
+import { StartUndoFailed, type InjectionSession, type InjectionTarget } from './runner.ts'
 import { canonical } from './grade.ts'
 import { askFor } from './names.ts'
 import type { CeilingRow } from '../targets/write-door.ts'
@@ -100,6 +100,27 @@ export function createProductInjectionTarget(o: ProductInjectionOptions): Inject
   const plants = inhouse ? [...PRODUCT_PLANTS, 'slack'] : PRODUCT_PLANTS
   let slackConnected = false
   const link = o.slackLink ?? { connect: connectSlack, disconnect: disconnectSlack }
+  /**
+   * Neon's #602 review: Slack is on only while a Slack case-repeat runs. Its workspace emptied and Slack disconnected,
+   * the disconnect tried even when the emptying failed; both errors thrown. A no-op when Slack isn't on.
+   */
+  async function leaveSlack(): Promise<void> {
+    if (!slackConnected || !inhouse) return
+    const failed: unknown[] = []
+    try {
+      await base.slackDoor().reset()
+    } catch (e) {
+      failed.push(e)
+    }
+    try {
+      await link.disconnect(inhouse)
+      slackConnected = false
+    } catch (e) {
+      failed.push(e)
+    }
+    if (failed.length === 1) throw failed[0]
+    if (failed.length > 1) throw new AggregateError(failed, 'emptying the Slack workspace and disconnecting Slack both failed')
+  }
   const sleep = o.sleep ?? ((ms: number) => new Promise<void>((r) => setTimeout(r, ms)))
   const now = o.now ?? Date.now
   return {
@@ -109,8 +130,8 @@ export function createProductInjectionTarget(o: ProductInjectionOptions): Inject
     spentUsd: () => base.spentUsd?.() ?? 0,
     close: async () => {
       try {
-        // #583: leave the shared eval deployment without Slack.
-        if (slackConnected && inhouse) await link.disconnect(inhouse)
+        // #583: leave the shared eval deployment without Slack (a cancel mid-repeat lands here too).
+        await leaveSlack()
       } finally {
         await base.close?.()
       }
@@ -139,8 +160,9 @@ export function createProductInjectionTarget(o: ProductInjectionOptions): Inject
           if (!inhouse) throw new Error('a Slack case needs the Inhouse app (INHOUSE_EVAL_INHOUSE_ORIGIN and _AUD)')
           // A fresh connection per case-repeat (the fake keeps its tokens in memory), the workspace with the case's plant
           // in #support, then the case's listed channels (after its ceiling: the door lists only where posting is on).
-          await link.connect(inhouse)
+          // Marked before the connect: a connect that fails after its callback committed is still disconnected later.
           slackConnected = true
+          await link.connect(inhouse)
           const slack = base.slackDoor()
           await slack.seed({ messages: c.plant?.via === 'slack' ? [{ channel: 'support', text: c.plant.text(run.canary) }] : [] })
           await slack.list({ by: base.people.lena, channels: c.channels.map((name) => ({ name: name.replace(/^#/, '') })) })
@@ -150,7 +172,7 @@ export function createProductInjectionTarget(o: ProductInjectionOptions): Inject
       } catch (e) {
         // Every part of the undo runs even when one before it throws (the Slack workspace above all), and the seed's own
         // error stays the one thrown.
-        const undo: (() => Promise<unknown>)[] = [() => session.reset(), ...(teammate ? [() => base.removeTeammate(teammate!)] : []), ...(slackCase && slackConnected ? [() => base.slackDoor().reset()] : [])]
+        const undo: (() => Promise<unknown>)[] = [() => session.reset(), ...(teammate ? [() => base.removeTeammate(teammate!)] : []), () => leaveSlack()]
         const failed: unknown[] = []
         for (const step of undo) {
           try {
@@ -159,7 +181,8 @@ export function createProductInjectionTarget(o: ProductInjectionOptions): Inject
             failed.push(u)
           }
         }
-        if (failed.length) throw new AggregateError([e, ...failed], 'the seed failed, and undoing it failed too')
+        // A failed undo leaves state the next repeat would inherit: the runner records it as a reset failure and stops.
+        if (failed.length) throw new StartUndoFailed([e, ...failed], 'the seed failed, and undoing it failed too')
         throw e
       }
 
@@ -273,7 +296,8 @@ export function createProductInjectionTarget(o: ProductInjectionOptions): Inject
             try {
               if (teammate) await base.removeTeammate(teammate)
             } finally {
-              if (slackCase) await base.slackDoor().reset()
+              // Slack off again before the next case: a later non-Slack case must not see Slack in its tools.
+              await leaveSlack()
             }
           }
         },

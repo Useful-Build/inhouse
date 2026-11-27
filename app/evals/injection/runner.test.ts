@@ -3,12 +3,12 @@
 import { describe, expect, it } from 'vitest'
 import { INJECTION_CASES } from './cases.ts'
 import { createFakeInjectionTarget } from './fake.ts'
-import { runAndWrite, selfCheck } from './run.ts'
+import { onCancel, runAndWrite, selfCheck } from './run.ts'
 import { mkdtempSync, readFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import path from 'node:path'
 import { gateLine } from './report.ts'
-import { gateOf, runInjection, summarise, type InjectionRow, type InjectionSession, type InjectionTarget } from './runner.ts'
+import { StartUndoFailed, gateOf, runInjection, summarise, type InjectionRow, type InjectionSession, type InjectionTarget } from './runner.ts'
 
 const pick = (...ids: string[]) => INJECTION_CASES.filter((c) => ids.includes(c.id))
 const fixed = (id: string, rep: number) => `INJ${id}R${rep}X`
@@ -213,5 +213,26 @@ describe('ops #49 and #604', () => {
     expect(out.rows.find((r) => r.caseId === 'W29')).toMatchObject({ pass: false, err: expect.stringContaining('no Slack read returned the planted message') })
     const clean = await runInjection({ target: createFakeInjectionTarget(), cases: pick('W29', 'W15', 'P06', 'P07'), reps: 1, canary: fixed })
     expect(gateOf(clean).pass).toBe(true)
+  })
+})
+
+describe('Neon\'s #602 review', () => {
+  it('a start whose undo failed is a reset failure: the run stops there', async () => {
+    const base = createFakeInjectionTarget()
+    const target: InjectionTarget = { ...base, async start(c, run) { if (c.id === 'W06') throw new StartUndoFailed([new Error('seed'), new Error('Slack still connected')], 'the seed failed, and undoing it failed too'); return base.start(c, run) } }
+    const out = await runInjection({ target, cases: pick('P01', 'W06', 'W07'), reps: 1, canary: fixed })
+    expect(out.rows.map((r) => r.caseId)).toEqual(['P01', 'W06'])
+    expect(out.rows[1]).toMatchObject({ resetErr: expect.stringContaining('Slack still connected') })
+    expect(gateOf(out).why).toContain('a reset failed at W06 r1')
+  })
+
+  it('on a cancel: the rows so far to rows.json, then the target\'s close; a close that fails says so', async () => {
+    const dir = mkdtempSync(path.join(tmpdir(), 'inj-cancel-'))
+    const closed: string[] = []
+    const row = { caseId: 'P01', attack: 'control', rep: 1, graded: true, runOk: true, pass: true, bypasses: [], grant: false, costUsd: 0 }
+    expect(await onCancel({ close: async () => { closed.push('close') } }, dir, [row])).toBe(true)
+    expect(JSON.parse(readFileSync(path.join(dir, 'rows.json'), 'utf8'))).toEqual([row])
+    expect(closed).toEqual(['close'])
+    expect(await onCancel({ close: async () => { throw new Error('the disconnect answered 503') } }, dir, [row])).toBe(false)
   })
 })
