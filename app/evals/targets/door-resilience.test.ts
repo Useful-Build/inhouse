@@ -192,20 +192,33 @@ describe('#690 and #711: the deadline kills npx and everything under it; nothing
       return false
     }
   }
-  const gone = async (pid: number) => {
-    const deadline = Date.now() + 5_000
-    while (alive(pid) && Date.now() < deadline) await new Promise((r) => setTimeout(r, 20))
-    if (alive(pid)) {
-      // Diagnosis for Linux CI (TEMPORARY): is the process running, or a zombie no one reaps? And is there a `ps`?
-      let status = '(no /proc)'
-      try { status = readFileSync(`/proc/${pid}/status`, 'utf8').split('\n').filter((l) => /^(Name|State|PPid):/.test(l)).join(' | ') } catch (e) { status = `(no /proc/${pid}/status: ${(e as Error).message.split('\n')[0]})` }
-      let ps = ''
-      try { ps = execFileSync('ps', ['-A', '-o', 'pid=,ppid='], { encoding: 'utf8' }).split('\n').length + ' ps lines' } catch (e) { ps = `ps failed: ${(e as NodeJS.ErrnoException).code ?? (e as Error).message.split('\n')[0]}` }
-      let init = ''
-      try { init = readFileSync('/proc/1/cmdline', 'utf8').replaceAll('\0', ' ') } catch { init = '(unknown)' }
-      console.error(`DIAG pid ${pid} still there: ${status}; ${ps}; pid 1 is: ${init}`)
+  /**
+   * The process's state letter (R running, S sleeping, T stopped, Z zombie), or null when there is no such process:
+   * Linux's /proc first, else `ps` (macOS).
+   */
+  const stateOf = (pid: number): string | null => {
+    try {
+      return /^State:\s+(\S)/m.exec(readFileSync(`/proc/${pid}/status`, 'utf8'))?.[1] ?? null
+    } catch {
+      // No /proc (macOS), or no such process.
     }
-    return !alive(pid)
+    try {
+      return execFileSync('ps', ['-o', 'stat=', '-p', String(pid)], { encoding: 'utf8' }).trim().charAt(0) || null
+    } catch {
+      return null
+    }
+  }
+  /**
+   * Gone: no such process, or a zombie, which is dead and no longer running, only not yet reaped. On a container whose
+   * PID 1 never reaps (GitHub's job containers run `tail -f /dev/null`), a killed orphan stays a zombie for good, and
+   * kill(pid, 0) still answers for it. Anything else (running, sleeping, stopped) is still there.
+   */
+  const gone = async (pid: number) => {
+    const isGone = () => !alive(pid) || stateOf(pid) === 'Z'
+    const deadline = Date.now() + 5_000
+    while (!isGone() && Date.now() < deadline) await new Promise((r) => setTimeout(r, 20))
+    if (!isGone()) console.error(`pid ${pid} is still there, state ${stateOf(pid)}`)
+    return isGone()
   }
   const childOf = (pidFile: string) => Number(readFileSync(pidFile, 'utf8'))
   /** The run in miniature (fixtures/wrangler-holder.ts), in its own process group, as a job runner starts one. */
