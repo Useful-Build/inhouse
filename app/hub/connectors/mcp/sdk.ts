@@ -12,7 +12,8 @@
 //   era cache say `modern`.
 // - `connect({ prior })` adopts a cached verdict with no round trip (modern) or runs the plain handshake (legacy). The
 //   cache (`EraCache`) is in object memory, bound to the endpoint and the credential generation, and expires with the
-//   discover result's `ttlMs` (capped at an hour). A list always probes afresh, so a list refreshes it.
+//   discover result's `ttlMs` (capped at an hour). A list always probes afresh (so a list refreshes it) unless the caller
+//   pins the era as legacy (`sdkListTools`'s `era`; the Slack probe, #700).
 // - The transport gets no auth provider (so the SDK's `auth()` never runs: no token endpoint, no `console.warn`, no saved
 //   or dropped login) and `onInsufficientScope: 'throw'` (the SDK's default is `'reauthorize'`). Our fetch attaches the
 //   credential; a 401 or 403 comes back to the caller as it is. Its SSE reconnection is off (`maxRetries: 0`).
@@ -315,15 +316,15 @@ function failFrom(op: Op, deps: SdkDeps, target: McpTarget, rpc?: string): McpFa
 }
 
 /**
- * Every tool an endpoint lists, page by page, from the wire. Always negotiates afresh (a probe, or the 2025 handshake),
- * and caches the era it found.
+ * Every tool an endpoint lists, page by page, from the wire. Negotiates afresh (a probe, or the 2025 handshake), and
+ * caches the era it found; `era: 'legacy'` pins the plain 2025 handshake, so no `server/discover` is sent.
  */
-export async function sdkListTools(deps: SdkDeps, target: McpTarget): Promise<McpListOk | McpFail> {
+export async function sdkListTools(deps: SdkDeps, target: McpTarget, opts: { era?: 'legacy' } = {}): Promise<McpListOk | McpFail> {
   const op = operation(deps, target, LIST_METHODS, 0, deps.listBudget ?? LIST_BUDGET)
   const { client, transport } = connection(op, target, null)
   try {
     try {
-      await connect(op, { client, transport }, null)
+      await connect(op, { client, transport }, opts.era === 'legacy' ? { kind: 'legacy' } : null)
     } catch {
       deps.eras.drop(target.endpoint, target.generation)
       return failFrom(op, deps, target)
