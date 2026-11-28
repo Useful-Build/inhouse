@@ -65,7 +65,7 @@
       "nudge": true,
       "title": "Post to #ops-alerts in Slack",
       "lines": ["Order 4512 for Harbor & Pine is tagged Wholesale. Pack it with today's trade orders."],
-      "askedAt": "0d 07:54"
+      "askedAt": "-3d 15:50"
     },
     {
       "id": "ac_demoWholesaleTag000000",
@@ -76,7 +76,7 @@
       "title": "Add a tag to order 4512",
       "order": { "number": 4512, "customer": "Harbor & Pine", "amount": "1248.00" },
       "lines": ["Tag: Wholesale"],
-      "askedAt": "0d 07:52"
+      "askedAt": "-3d 15:49"
     },
     {
       "id": "ac_demoPriyaHoldTag000000",

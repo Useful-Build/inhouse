@@ -29,7 +29,7 @@ export type SkillTab = 'all' | 'team' | 'mine'
 export const skillSlug = (name: string) => name.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '') || 'skill'
 /**
  * Every skill's link, one per skill: the Inhouse team's skills first, then the team's own (made in a chat). A skill whose
- * name makes a slug already taken gets "-2", "-3" and so on, so a team-made "Reorder drafting" never opens the built-in one.
+ * name makes a slug already taken gets "-2", "-3" and so on, so a team-made "Reorder check" never opens the built-in one.
  */
 export const skillSlugs = (data: { skills: SkillDef[] }, state: { skillsExtra: SkillDef[] }): Map<SkillDef, string> => {
   const out = new Map<SkillDef, string>()

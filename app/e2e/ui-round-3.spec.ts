@@ -139,8 +139,8 @@ test('Team window: Withdraw moves your open request to Closed with an Undo, and 
 })
 
 test("A skill's page: Try in a chat starts a chat holding the skill; one of ours has no Edit, Delete or Versions", async ({ fx, page }) => {
-  await start(page, fx, '#/skills/reorder-drafting')
-  await expect(page.getByRole('heading', { level: 1, name: 'Reorder drafting' })).toBeVisible()
+  await start(page, fx, '#/skills/reorder-check')
+  await expect(page.getByRole('heading', { level: 1, name: 'Reorder check' })).toBeVisible()
   // Skills stays the selected sidebar row on a skill's page.
   await expect(side(page).getByRole('button', { name: 'Skills', exact: true })).toHaveAttribute('aria-current', 'page')
   await expect(page.getByRole('article', { name: 'Instructions' })).toContainText('When to use')
@@ -148,13 +148,13 @@ test("A skill's page: Try in a chat starts a chat holding the skill; one of ours
   await expect(rail).toContainText('Who can change itInhouse team')
   await expect(rail.getByRole('heading', { name: 'Versions' })).toHaveCount(0)
   await expect(page.getByRole('button', { name: 'Edit in a chat' })).toHaveCount(0)
-  await page.getByRole('button', { name: 'More for Reorder drafting' }).click()
+  await page.getByRole('button', { name: 'More for Reorder check' }).click()
   await expect(page.getByRole('menuitem', { name: 'Delete skill' })).toHaveCount(0)
   await page.keyboard.press('Escape')
 
   await page.getByRole('button', { name: 'Try in a chat', exact: true }).click()
   await expect(page).toHaveURL(/#\/chats\/new$/)
-  await expect(page.getByRole('textbox', { name: 'Message Inhouse' })).toHaveValue('Use the "Reorder drafting" skill: ')
+  await expect(page.getByRole('textbox', { name: 'Message Inhouse' })).toHaveValue('Use the "Reorder check" skill: ')
 })
 
 test('Brand skills: Create a skill starts a chat; a brand skill shows its maker, edits in a chat, and deletes after a confirmation in the page', async ({ fx, page }) => {

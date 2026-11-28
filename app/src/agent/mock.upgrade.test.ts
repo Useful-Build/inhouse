@@ -70,10 +70,10 @@ describe('an old value that cannot convert is dropped and reported (failure 2), 
     expect(warn).not.toHaveBeenCalled()
   })
 
-  test('the stored demo from before the seam loads with nothing dropped', () => {
+  test('the stored demo from before the seam loads with nothing dropped, except the reorder it approved: that is a finding now (#747), dropped without a warning', () => {
     const s = load({}).getSnapshot()
     expect(warn).not.toHaveBeenCalled()
-    expect(Object.keys(s.approved)).toEqual(['stock'])
+    expect(s.approved).toEqual({})
   })
 })
 
@@ -139,7 +139,7 @@ describe('loading an old shape does not write it back (failure 5)', () => {
     expect(store.get(STATE_KEY)).toBe(JSON.stringify({ ...fixtureState(), paused: '8:03 AM' }))
     await agent.resume()
     expect(writes).toEqual([STATE_KEY])
-    expect(JSON.parse(store.get(STATE_KEY)!).approved.stock.at).toEqual(agent.getSnapshot().approved.stock.at)
+    expect(JSON.parse(store.get(STATE_KEY)!).approved).toEqual({})
   })
 })
 
@@ -171,9 +171,9 @@ describe('a demo saved before C2 and C9 loads with ids, roles, photos and the gr
     expect(warned()).toContain('settings.a:2')
   })
 
-  test('the pre-seam fixture loads: its approval names the signed-in member, the grant is live and nothing is dropped', () => {
+  test('the pre-seam fixture loads: its old reorder approval is gone (#747), the grant is live and nothing is warned', () => {
     const agent = load({})
-    expect(agent.getSnapshot().approved.stock.by).toBe('m_sam')
+    expect(agent.getSnapshot().approved).toEqual({})
     expect(agent.read().people.supportGrant?.live).toBe(true)
     expect(agent.me()?.memberId).toBe('m_sam')
     expect(warn).not.toHaveBeenCalled()
@@ -181,12 +181,12 @@ describe('a demo saved before C2 and C9 loads with ids, roles, photos and the gr
 
   test('a name or id nobody has in a record becomes the signed-in member, with one warning each; an unknown approver id is dropped', () => {
     const agent = load({
-      approved: { stock: { at: '8:00 AM', atMin: 480, ms: 1, by: 'Nobody Known', title: 't', doneText: 'd' } },
+      approved: { returns: { at: '8:00 AM', atMin: 480, ms: 1, by: 'Nobody Known', title: 't', doneText: 'd' } },
       undone: { oversell: { at: '8:03 AM', atMin: 483, by: 'm_ghost' } },
       settings: { 'a:0': 'm_ghost', 'a:1': 'm_dana' },
     })
     const s = agent.getSnapshot()
-    expect(s.approved.stock.by).toBe('m_sam')
+    expect(s.approved.returns.by).toBe('m_sam')
     expect(s.undone.oversell.by).toBe('m_sam')
     expect(s.settings).toEqual({ 'a:1': 'm_dana' })
     expect(warned()).toContain('"Nobody Known"')
@@ -220,5 +220,24 @@ describe('a demo saved before C2 and C9 loads with ids, roles, photos and the gr
     expect(agent.read().people.members.find(m => m.id === 'm_sam')?.photo, 'the sample photo').not.toBeNull()
     await agent.setPhoto('m_sam', null)
     expect(new MockAgent().read().people.members.find(m => m.id === 'm_sam')?.photo).toBeNull()
+  })
+})
+
+describe('what the demo no longer offers is dropped from a saved demo (#747)', () => {
+  const at = { iso: '2026-11-16T07:03:00.000Z', ms: 1794812580000 }
+  const rec = { at, loggedAt: at, by: 'm_sam', title: 't', doneText: 'Reorder of 600 sent to Kestrel Supply', partial: false }
+  const saved = {
+    approved: { stock: rec, po: rec, oversell: rec, returns: rec },
+    sent: { stock: true, po: true, oversell: true, returns: true },
+    edits: { stock: 'note', payout: 'my own words', returns: 'a note' },
+  }
+  test('an approval, a send and a note on a finding (the reorder, the Kestrel chase, the customer emails) are gone, with no warning', () => {
+    const s = load(saved).getSnapshot()
+    expect(Object.keys(s.approved)).toEqual(['returns'])
+    expect(Object.keys(s.sent)).toEqual(['returns'])
+    expect(warn).not.toHaveBeenCalled()
+  })
+  test('a note on a Slack post is gone too (it has no Edit); a note on a real draft stays', () => {
+    expect(load(saved).getSnapshot().edits).toEqual({ returns: 'a note' })
   })
 })

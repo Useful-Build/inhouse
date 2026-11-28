@@ -1114,8 +1114,8 @@ describe.each(targets)('contract: $name', (t: ContractTarget) => {
         expect(await c.questions()).toEqual([])
         expect((await c.permissions()).map(p => p.title)).toEqual(['Post messages to a channel', 'Add stock'])
         expect((await c.actions()).map(a => [a.kind, a.state, a.approverKind, a.batch?.itemCount ?? null])).toEqual([
-          ['exact', 'waiting', 'person', 450], ['ask', 'waiting', 'person', null], ['ask', 'waiting', 'person', null], ['exact', 'waiting', 'person', 12],
-          ['ask', 'waiting', 'person', null], ['exact', 'waiting', 'admins', null], ['ask', 'sent', 'person', null], ['ask', 'needs_check', 'person', null],
+          ['exact', 'waiting', 'person', 450], ['exact', 'waiting', 'person', 12], ['ask', 'waiting', 'person', null], ['exact', 'waiting', 'admins', null],
+          ['ask', 'sent', 'person', null], ['ask', 'waiting', 'person', null], ['ask', 'waiting', 'person', null], ['ask', 'needs_check', 'person', null],
         ])
       }
       // Nothing a target doesn't have can be answered, read or removed: not found, on every target.
@@ -2048,11 +2048,13 @@ describe.each(targets)('contract: $name', (t: ContractTarget) => {
     const nth = <T,>(list: T[], n: number): T | undefined => list[n % Math.max(1, list.length)]
     const on = <T,>(list: T[], n: number, f: (x: T) => Promise<unknown>): Promise<unknown> => { const x = nth(list, n); return x === undefined ? Promise.resolve(SKIP) : f(x) }
     const step = (name: string, run: Op): Step => ({ name, run })
+    /** A Slack post (the product's post card): it takes no note, and no approval while the agent is paused. A refusal for either reason isn't a save, so `forSave` skips it. */
+    const isPost = (c: ContractTarget['client'], id: string) => c.read().problems.find(p => p.id === id)?.draft.kind === 'Slack post'
 
     /** Writes: each one saves, so with saves failing each one must reject. */
     const earlierWriteOps: fc.Arbitrary<Step>[] = [
-      fc.tuple(pick(50), fc.boolean()).map(([n, hold]) => step(`approve#${n}`, (c, i, forSave) => on(i.problems, n, id => (hold ? (c.getSnapshot().approved[id] ? Promise.resolve(SKIP) : c.approve(id)) : forSave && !c.getSnapshot().approved[id] ? Promise.resolve(SKIP) : c.undo(id))))),
-      fc.tuple(pick(50), fc.string()).map(([n, s]) => step('editDraft', (c, i) => on(i.problems, n, id => c.editDraft(id, s)))),
+      fc.tuple(pick(50), fc.boolean()).map(([n, hold]) => step(`approve#${n}`, (c, i, forSave) => on(i.problems, n, id => (hold ? (c.getSnapshot().approved[id] || (forSave && c.getSnapshot().paused !== null && isPost(c, id)) ? Promise.resolve(SKIP) : c.approve(id)) : forSave && !c.getSnapshot().approved[id] ? Promise.resolve(SKIP) : c.undo(id))))),
+      fc.tuple(pick(50), fc.string()).map(([n, s]) => step('editDraft', (c, i, forSave) => on(i.problems, n, id => (forSave && isPost(c, id) ? Promise.resolve(SKIP) : c.editDraft(id, s))))),
       fc.tuple(pick(50), fc.boolean()).map(([n, undo]) => step('undoHandled', (c, i) => on(i.problems, n, id => (undo ? c.undoHandled(id) : c.redoHandled(id))))),
       fc.boolean().map(p => step('pause', c => (p ? c.pause() : c.resume()))),
       // A switch is a routine or skill switch (`r:`, `s:`) or a registry switch; any other key is `invalid` (the tests below), not a save failure.

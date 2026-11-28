@@ -211,12 +211,16 @@ export class MockActions {
   private freshGrants(): Grant[] {
     return raw.permissions.map(p => ({ id: p.id, rev: 1, operation: p.operation, holder: this.h.memberId(p.holder), grantedBy: this.h.memberId(p.grantedBy), grantedAt: demoAt(p.grantedAt).ms }))
   }
+  /** The outbox's words for why an approval went back to waiting (a Pause, a removed permission, a channel that left the list). */
+  lapseText(why: 'paused' | 'channel'): string { return why === 'paused' ? raw.lapsed.paused : raw.lapsed.channel_not_listed }
   /** Reset demo: every card waits again, and only the seeded permissions stand. */
   reset() { this.rows = this.fresh(); this.grants = this.freshGrants(); this.granted = 0 }
 
   /** The row, sent once its hold has passed on the demo clock (the send itself takes no time here). */
   private settled(row: Row): Row {
     if (row.card.state === 'approved' && row.sendAtMs !== null && this.h.now() >= row.sendAtMs) {
+      // The claim checks the post's scope again (server/outbox/claim.ts): a channel that isn't listed lapses it, it doesn't go out.
+      if (row.operation && !this.listed(row.operation)) { this.sendBack(row, raw.lapsed.channel_not_listed); return row }
       const n = row.card.batch?.itemCount ?? 0
       row.items = row.items.map(i => (i.n <= n ? { ...i, state: 'sent' as const, result: 'Sent.' } : i))
       const result = row.card.batch ? raw.batchResult.replaceAll('{n}', String(n)) : row.card.id === raw.refund.id ? raw.refund.result : raw.resolved.sent
@@ -271,7 +275,8 @@ export class MockActions {
     } else {
       // Always allow grants the operation's permission to the asker, with its default limits (N10, N23), and the card goes
       // out under it.
-      const permissionId = choice === 'always' && row.operation ? this.grant(row.operation, c.askedBy) : undefined
+      // A channel that isn't listed gets no permission (one for it can't stand, #653): the answer goes through the hold and lapses at its end.
+      const permissionId = choice === 'always' && row.operation && this.listed(row.operation) ? this.grant(row.operation, c.askedBy) : undefined
       row.sendAtMs = this.h.now() + DEMO_HOLD_MS
       row.card = { ...rest, state: 'approved', rev: c.rev + 1, can: { ...NONE, undo: true }, ...(batch ? { batch } : {}), ...(permissionId ? { permissionId } : {}) }
     }

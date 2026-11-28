@@ -3,9 +3,10 @@
     "sev": "dot color: #b23c22 = urgent (red), #b97a14 = soon (amber)",
     "cost": "money figure shown on the card",
     "costNote": "label for the figure",
-    "next": "suggested next step (Watch)",
+    "next": "suggested next step",
     "found": "the finding as [text, sourceNumber] pairs; sourceNumber links to sources[].n",
-    "draft": "the drafted fix (Act and Run)",
+    "draftedAt": "when the agent made the problem's draft or finding, like \"0d 06:08\": what Approvals sorts by",
+    "draft": "the change the agent asks you to approve (a finding has none: its suggestion is `next`)",
     "draft.money / draft.customer": "sensitive: card shows Review, never one-tap Approve",
     "draft.rev": "reversible: Undo stays after approval; otherwise 10 s hold then final",
     "draft.cta": "label of the approve button",
@@ -18,14 +19,15 @@
     "doneText": "confirmation text after approval",
     "runDoneText": "confirmation text in Run for a partial draft",
     "facts": "up to 3 facts for the review panel's strip: label, value, note, source (a sources[].n), tone \"bad\" for the bad news; shortLabel and shortNote are the phone's wording",
-    "draft.kind / summary": "what the draft is (\"Purchase order\") and one sentence for the Today card's draft sheet",
+    "draft.kind / summary": "what the draft is (\"Slack post\") and one sentence for the Today card's draft sheet",
     "draft.amount": "the money approving it moves: { money, direction: spend | claim }, shown as \"Spends $9,600\" or \"Claims $1,240\"",
     "draft.destination / to": "a short name for where it goes (the panel's progress line), and who the document goes to (its From and To)",
-    "draft.items": "a purchase order's lines as { name, qty, each }: the panel draws them as a table"
+    "draft.items": "a draft with several lines, as { name, qty, each }: the panel draws them as a table"
   },
   "problems": [
     {
       "id": "oversell",
+      "draftedAt": "0d 06:07",
       "sev": "#b23c22",
       "area": "Orders",
       "title": "Trail Shell Jacket (M, Olive) is oversold by 5",
@@ -38,12 +40,7 @@
       "costNote": "in orders at risk",
       "next": "pause the Olive M variant on Shopify, then tell the 5 customers about the delay",
       "review": "Customers involved",
-      "done": { "text": "Paused the variant at {at:time}. Customer emails wait in Approvals", "times": { "at": "0d 06:04" } },
-      "doneText": "Variant paused, 5 customers emailed",
-      "wait": "5 customer emails",
-      "partial": true,
-      "partialShort": "Paused · emails wait for you",
-      "runDoneText": "Emails sent to 5 customers",
+      "doneText": "Nothing done yet",
       "found": [
         [
           "Shopify has 14 open orders for the Trail Shell Jacket in M, Olive",
@@ -101,6 +98,7 @@
     },
     {
       "id": "stock",
+      "draftedAt": "0d 06:08",
       "sev": "#b97a14",
       "area": "Stock",
       "title": "Ridge 30L Pack runs out in 9 days",
@@ -111,9 +109,7 @@
       "cost": { "minor": 840000, "currency": "USD" },
       "costNote": "in sales at risk",
       "next": "reorder 600 from Kestrel Supply today",
-      "isDraft": true,
-      "wait": "a $9,600 order",
-      "doneText": "Reorder of 600 sent to Kestrel Supply",
+      "doneText": "Nothing done yet",
       "found": [
         [
           "At the current rate the Ridge 30L sells out on Wed, Nov 25",
@@ -186,6 +182,7 @@
     },
     {
       "id": "payout",
+      "draftedAt": "0d 06:06",
       "sev": "#b23c22",
       "area": "Money",
       "title": "Amazon paid out $1,240 less than expected",
@@ -198,7 +195,6 @@
       "costNote": "missing from the payout",
       "next": "ask Dana to open a reimbursement case for 18 orders",
       "review": "18 orders to check",
-      "wait": "a $1,240 claim",
       "doneText": "Posted to #ops-alerts for Dana",
       "found": [
         [
@@ -274,6 +270,7 @@
     },
     {
       "id": "po",
+      "draftedAt": "0d 06:07",
       "sev": "#b97a14",
       "area": "Stock",
       "title": "PO-1187 from Kestrel is 6 days late",
@@ -282,9 +279,7 @@
       "cost": { "minor": 510000, "currency": "USD" },
       "costNote": "of stock on order",
       "next": "ask Kestrel for a new ship date",
-      "isDraft": true,
-      "done": { "text": "Chased Kestrel at {at:time}. New date: {newDate:weekday}", "times": { "at": "0d 06:08", "newDate": "+3d 12:00" } },
-      "doneText": "Chase sent to Mei at Kestrel",
+      "doneText": "Nothing done yet",
       "found": [
         [
           "PO-1187 for 420 Summit Fleece was due on Nov 10",
@@ -353,6 +348,7 @@
     },
     {
       "id": "returns",
+      "draftedAt": "0d 06:08",
       "sev": "#b97a14",
       "area": "Orders",
       "title": "11 returns are not restocked",
@@ -421,6 +417,7 @@
     },
     {
       "id": "stuck",
+      "draftedAt": "0d 06:08",
       "sev": "#b97a14",
       "area": "Orders",
       "title": "Order #4821 is stuck for 4 days",
@@ -433,7 +430,6 @@
       "costNote": "order value",
       "next": "ask the team to chase ShipBob",
       "isDraft": true,
-      "done": { "text": "Asked ShipBob at {at:time}. Picked at {picked:time}", "times": { "at": "0d 06:06", "picked": "0d 07:40" } },
       "doneText": "Posted to #ops-alerts about #4821",
       "found": [
         [

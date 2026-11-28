@@ -150,16 +150,15 @@ test('Opening a file shows the viewer, and its link goes back to the chat, routi
   await expect(page.getByText('3 orders · $556').first()).toBeVisible()
   await expect(page.getByRole('complementary', { name: 'Sidebar' }).getByRole('button', { name: 'Stuck orders over 3 days' })).toHaveAttribute('aria-current', 'page')
 
-  // A drafted document: first page in the viewer, link opens the approval panel.
+  // A document made for an approval: first page in the viewer, link opens the approval panel (the payout's Slack post).
   await page.getByRole('navigation', { name: 'Main' }).getByRole('button', { name: 'Library' }).click()
-  v = await open('PO-1188-ridge-30l-kestrel.pdf')
+  v = await open('amazon-fee-reimbursement-case.pdf')
   await expect(v).toContainText('PDF document')
-  await expect(v).toContainText('Today: Ridge 30L Pack runs out in 9 days')
-  await expect(v.getByText('$9,600').first()).toBeVisible()
+  await expect(v).toContainText('Today: Amazon paid out $1,240 less than expected')
+  await expect(v.getByText('$1,240 over').first()).toBeVisible()
   await shot(page, 'library-viewer-document')
   await v.getByRole('button', { name: 'Open the approval →' }).click()
-  // The reorder is a finding (#726): its window has the suggestion, no draft to approve.
-  await expect(page.getByRole('dialog')).toContainText('Your Inhouse agent suggests')
+  await expect(page.getByRole('dialog')).toContainText('Post to #ops-alerts in Slack')
   await page.keyboard.press('Escape')
 
   // Routine link.

@@ -140,7 +140,8 @@ export function ProblemPanel() {
     <article aria-label={`${dv.kind} draft`} className={sheet}>
       <div className="flex min-h-12 items-center gap-2.5 border-b border-divider py-2 pr-3 pl-5.5 text-sm text-muted-foreground">
         <span className="min-w-0 flex-1">{recipients}</span>
-        {dv.mode === 'waiting' && (
+        {/* A Slack post has no Edit: the product's card goes out as the agent wrote it, or not at all. */}
+        {dv.mode === 'waiting' && p.draft.kind !== 'Slack post' && (
           <Button variant="ghost" size="sm" className={cn('flex-none text-foreground', tap)} onClick={() => patch({ editing: isEditing ? null : openId })}>
             {isEditing ? 'Done' : 'Edit'}
           </Button>
@@ -292,6 +293,8 @@ export function ProblemPanel() {
           </div>
           <div className="flex min-w-0 flex-1 flex-col gap-3">
             {watch ? suggestion : draft}
+            {/* Why the approval went back to waiting, in the outbox's words (a Pause, or the channel left the list). */}
+            {p.lapsed && dv.mode !== 'approved' && <p className="m-0 px-1 text-sm text-warning-text">{p.lapsed}</p>}
             {dv.mode === 'waiting' && dv.doneNote && (
               <div className="flex items-start gap-2 rounded-lg bg-brand-tint px-3 py-2.5 text-sm text-brand-text"><Icon name="check_circle" size={16} weight={400} className="leading-icon" /><span>{dv.doneNote}</span></div>
             )}

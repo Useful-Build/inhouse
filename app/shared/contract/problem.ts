@@ -84,5 +84,7 @@ export const ProblemSchema = z.object({
   draft: DraftSchema,
   /** When the agent made this problem's draft (Activity, Approvals): what Approvals sorts by. */
   draftedAt: InstantSchema,
+  /** Why an approval of this problem's draft went back to waiting, in the outbox's words (the demo's Slack posts; the server sets none yet). */
+  lapsed: z.string().optional(),
 })
 export type Problem = z.infer<typeof ProblemSchema>

@@ -146,8 +146,8 @@ test('Phone: Library shows places as chips, one list, a filter sheet, and a view
   await page.screenshot({ path: test.info().outputPath('phone-library-select.png') })
   await page.getByRole('button', { name: 'Done', exact: true }).click()
   // The viewer.
-  await rows.filter({ hasText: 'PO-1188' }).click()
-  const v = page.getByRole('dialog', { name: /^File: PO-1188/ })
+  await rows.filter({ hasText: 'amazon-fee-reimbursement' }).click()
+  const v = page.getByRole('dialog', { name: /^File: amazon-fee-reimbursement/ })
   await expect(v).toBeVisible()
   const box = await v.boundingBox()
   expect(box!.x).toBeGreaterThanOrEqual(0)

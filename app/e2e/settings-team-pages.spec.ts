@@ -24,7 +24,7 @@ async function resetDemo(page: Page) {
 
 test('Team memory: the lines, rule switch and Teach are available', async ({ fx, page }) => {
   await start(page, fx, '#/settings/team-memory')
-  await expect(main(page).getByText('Kestrel Supply ships in 14 days and wants purchase orders as a PDF.')).toBeVisible()
+  await expect(main(page).getByText('Kestrel Supply ships in 14 days.')).toBeVisible()
   const forgets = main(page).getByRole('button', { name: 'Forget', exact: true })
   await expect(forgets).toHaveCount(7)
   for (const forget of await forgets.all()) await expect(forget).toBeEnabled()
@@ -34,7 +34,7 @@ test('Team memory: the lines, rule switch and Teach are available', async ({ fx,
 
 test('Team memory: Forget (with Undo) and the rule switch work, survive a reload and Reset demo clears them; Teach in a chat opens a chat', async ({ fx, page }) => {
   await start(page, fx, '#/settings/team-memory')
-  const first = 'Kestrel Supply ships in 14 days and wants purchase orders as a PDF.'
+  const first = 'Kestrel Supply ships in 14 days.'
   const forgets = main(page).getByRole('button', { name: 'Forget', exact: true })
   const ask = main(page).getByRole('switch', { name: 'Ask before saving a team rule' })
   await expect(forgets).toHaveCount(7)

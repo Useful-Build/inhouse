@@ -5,7 +5,7 @@
 //  - the page look changes how a chat answer renders (its `##` must stay an h3, its `---` a rule);
 //  - a sample skill is missing a section, names a tool the demo doesn't have or a routine that doesn't exist, or two
 //    skills share a link (`skillSlugs`), so one page can't be reached;
-//  - a team-made skill whose name makes a built-in's slug ("Reorder drafting") opens the built-in one.
+//  - a team-made skill whose name makes a built-in's slug ("Reorder check") opens the built-in one.
 import { createElement } from 'react'
 import { renderToStaticMarkup } from 'react-dom/server'
 import { beforeAll, describe, expect, test, vi } from 'vitest'
@@ -88,20 +88,20 @@ describe('the sample skills', () => {
   })
   test('a team-made skill named like a built-in gets its own link, the built-in keeps the plain one, and each link opens its own skill', () => {
     const data = agentMod.agent.read()
-    const builtIn = data.skills.find(s => s.n === 'Reorder drafting')!
+    const builtIn = data.skills.find(s => s.n === 'Reorder check')!
     expect(builtIn).toBeDefined()
-    const mine = { ...builtIn, n: 'Reorder  Drafting', mine: true, by: 'You, in a chat' }
-    const again = { ...builtIn, n: 'reorder drafting', mine: true, by: 'You, in a chat' }
+    const mine = { ...builtIn, n: 'Reorder  Check', mine: true, by: 'You, in a chat' }
+    const again = { ...builtIn, n: 'reorder check', mine: true, by: 'You, in a chat' }
     const state = { skillsExtra: [mine, again] }
     const slugs = store.skillSlugs(data, state)
-    expect(slugs.get(builtIn)).toBe('reorder-drafting')
-    expect(slugs.get(mine)).toBe('reorder-drafting-2')
-    expect(slugs.get(again)).toBe('reorder-drafting-3')
+    expect(slugs.get(builtIn)).toBe('reorder-check')
+    expect(slugs.get(mine)).toBe('reorder-check-2')
+    expect(slugs.get(again)).toBe('reorder-check-3')
     for (const [s, slug] of slugs) expect(store.skillBySlug(data, state, slug)).toBe(s)
   })
   test('every skill gets a link no other skill has, whatever the names', () => {
     const data = agentMod.agent.read()
-    fc.assert(fc.property(fc.array(fc.constantFrom('Reorder drafting', 'reorder-drafting', 'Reorder drafting 2', '!!', '', 'Morning check', 'x'), { maxLength: 8 }), names => {
+    fc.assert(fc.property(fc.array(fc.constantFrom('Reorder check', 'reorder-check', 'Reorder check 2', '!!', '', 'Morning check', 'x'), { maxLength: 8 }), names => {
       const state = { skillsExtra: names.map(n => ({ ...data.skills[0], n, mine: true })) }
       const slugs = [...store.skillSlugs(data, state).values()]
       expect(new Set(slugs).size).toBe(data.skills.length + names.length)

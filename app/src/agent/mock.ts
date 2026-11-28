@@ -6,13 +6,13 @@ import {
   problems, routines, scenarios, seedRoutine, seedTable, skillSuggestions, skillSuggestionsTitle, skills, traceDisconnectedVariant,
   traces, tools as sampleTools, usage, usageAtCap, usageHistory,
 } from './data'
-import { loadSkillBodies, routineIdOf, sampleAt, sampleRuns } from './data'
+import { draftTimes, loadSkillBodies, routineIdOf, sampleAt, sampleRuns } from './data'
 import type { ProblemSeed, TraceKey } from './data'
 import type {
   CreateChatInput, ApprovalRule, AuditLine, MemberRecord, MemberRole, Me, ResourceKey, ResourceStatus,
   AgentClient, AgentData, AgentErrorCode, AgentNotice, AgentNotification, AgentState, ApproveResult, ActiveRun, ChatList, ChatPage, ChatSendInput, ChatSummary, ChatThread, LinkState, RunFrame, SendTurnResult, StoredMessage, ClockTime, DemoContext,
   Instant, LibraryFile, MessagePart, NoticePage, RoutineCard, RoutineDef, RoutineRun, Scenario, SeedTurn, SetAsideReason, SetAsideRecord,
-  SkillDef, StageIndex, StampRecord, TablePart, TeamRequest, ToolSetup, ToolsData, Trace, UsageData, MemoryLine, WaitingMemory,
+  Problem, SkillDef, StageIndex, StampRecord, TablePart, TeamRequest, ToolSetup, ToolsData, Trace, UsageData, MemoryLine, WaitingMemory,
 } from './types'
 import { AgentError, CHAT_TITLE_MAX, STAGES } from './types'
 import type { BatchCovers } from './types'
@@ -35,7 +35,7 @@ import type { CeilingList, CeilingRow } from '../../shared/contract/ceiling'
 import type { Question } from '../../shared/contract/questions'
 import type { Job } from '../../shared/contract/jobs'
 import { MEMBER_ID_PATTERN, meetsRule, settingRow } from '../../shared/contract/settings-table'
-import { PRODUCT_STAGE, pendingIds } from '../state/derive'
+import { PRODUCT_STAGE, hasDraft, pendingIds } from '../state/derive'
 
 /**
  * Test hook: a brand other than the sample one. `localStorage['inhouse.demo.data.v1']` is `{ "brandName"?: string, "channels"?: false }`:
@@ -184,14 +184,6 @@ const chats = loadChats()
 // Every trace a scripted answer names exists, checked at load rather than when someone happens to ask.
 for (const t of [...chatScript.scripted.map(x => x.trace), chatScript.fallback.trace, chatScript.firstDayTrace, chatScript.loadingTrace, 'generic', 'stuck', 'query', 'morning', 'draft']) traceKey(t)
 
-/** When each draft was made: the time on its file in the Library's Approvals place. Every problem needs one. */
-function draftTimes(): Record<string, Instant> {
-  const out: Record<string, Instant> = {}
-  for (const f of library.files) if (f.link?.to === 'approval') out[f.link.id] = f.at
-  for (const p of problems) if (!out[p.id]) throw new Error(`Sample data: no draft file with a time for problem "${p.id}".`)
-  return out
-}
-
 /** The sample routines, each with its id, and the one the stuck orders chat set up. Ids must not repeat. */
 function routineDefs(): RoutineDef[] {
   const asked = (chatScript.seedThread.turns as RawTurn[]).find(t => t.user && /\bevery morning\b/.test(t.user))
@@ -206,20 +198,21 @@ function routineDefs(): RoutineDef[] {
   return out
 }
 
-const DRAFT_TIMES = draftTimes()
-/**
- * A brand with no Slack (the data override) has no Slack post to approve, as the product wouldn't draft one: such a problem
- * is a finding, its suggestion and no draft (the product's look card, server/today/problem.ts).
- */
-const withoutSlackPost = (p: ProblemSeed): ProblemSeed => (tools.channels.some(c => c.key === 'slack') || tools.connected.includes('slack') || p.draft.kind !== 'Slack post'
-  ? p : { ...p, draft: { title: p.next.charAt(0).toUpperCase() + p.next.slice(1), lines: [], cta: 'Approve' } })
+/** A Slack post: the product's `slack.channel.post` card, which goes to one listed channel and has no Edit. */
+const isSlackPost = (p: { draft: { kind?: string } }): boolean => p.draft.kind === 'Slack post'
+/** The channel a post goes to, by name ("ops-alerts"). */
+const channelOf = (p: { draft: { destination?: string } }): string => (p.draft.destination ?? '').replace(/^#/, '')
+/** A draft the product couldn't make, as the finding it is: its suggestion and no draft (the product's look card, server/today/problem.ts). */
+const asFinding = <T extends ProblemSeed>(p: T): T => ({ ...p, doneText: 'Nothing done yet', draft: { title: p.next.charAt(0).toUpperCase() + p.next.slice(1), lines: [], cta: 'Approve' } })
+/** A brand with no Slack (the data override) has no Slack post to approve: such a problem is a finding. */
+const withoutSlackPost = (p: ProblemSeed): ProblemSeed => (tools.channels.some(c => c.key === 'slack') || tools.connected.includes('slack') || !isSlackPost(p) ? p : asFinding(p))
 /** A problem's draft trace id: the recorded `draft` steps, titled for that problem (see `getTrace`). */
 const DRAFT_TRACE = 'draft:'
 /** Built once, so `read()` returns the same object every time. The data for the Normal scenario (and, with their changes below, the others). */
 const DATA: AgentData = {
   status: 'ready',
   meta,
-  problems: problems.map(p => ({ ...withoutSlackPost(p), trace: `${DRAFT_TRACE}${p.id}`, draftedAt: DRAFT_TIMES[p.id] })),
+  problems: problems.map(p => ({ ...withoutSlackPost(p), trace: `${DRAFT_TRACE}${p.id}`, draftedAt: draftTimes[p.id] })),
   tools,
   routines: routineDefs(),
   skills,
@@ -333,7 +326,7 @@ type RawNotification = { text?: string; drafts?: string; who: string; at: string
 const DEMO_VIEW = STAGES.indexOf(PRODUCT_STAGE) as StageIndex
 
 /** A card a Pause sent back to waiting, for its bell notice. */
-type SentBack = { id: string; actionId: string; rev: number; atMs: number }
+type SentBack = { id: string; actionId: string; rev: number; atMs: number; page?: 'approvals' | 'today' }
 /** The outbox's notice title for an approval a Pause sent back (server/notices/templates.ts, the lapsed approval's). */
 const APPROVAL_SENT_BACK = 'Approval sent back'
 
@@ -548,11 +541,18 @@ const sanitize = (raw: unknown): Loaded => {
   }
   const toggles = recOf(raw.toggles, (x): x is boolean => typeof x === 'boolean')
   delete toggles['d:support']
+  // What the demo once offered and no longer does (#747): a saved approval, send or note on a problem that has no draft
+  // (the reorder, the Kestrel chase and the customer emails are findings now), or a note on a Slack post (it has no edit),
+  // is dropped on purpose, so a reload doesn't say "Reorder of 600 sent to Kestrel Supply" to someone who approved it before.
+  const moved = (id: string) => { const p = DATA.problems.find(x => x.id === id); return !!p && !hasDraft(p) }
+  const noEdit = (id: string) => moved(id) || problems.some(x => x.id === id && isSlackPost(x))
+  for (const id of Object.keys(approved)) if (moved(id)) delete approved[id]
+  const kept = <T,>(v: Record<string, T>, ok: (id: string) => boolean = id => !moved(id)): Record<string, T> => Object.fromEntries(Object.entries(v).filter(([id]) => ok(id)))
   const state: AgentState = {
     approved,
-    sent: flagsOf(raw.sent),
+    sent: kept(flagsOf(raw.sent)),
     undone: recConv(raw.undone, x => savedStamp(x, byId), k => drop(`undone.${k}`)),
-    edits: recOf(raw.edits, str),
+    edits: kept(recOf(raw.edits, str), id => !noEdit(id)),
     paused,
     toggles,
     routinesExtra,
@@ -785,7 +785,7 @@ export class MockAgent implements AgentClient {
   read = (): AgentData => {
     const base = DATA_FOR[this.demo.scenario]
     // Whether the grant is live changes with the clock alone, so it is part of what a view is built from.
-    const key = [this.server, this.state.settings, this.failed, this.grantNow()?.live, this.skillBodies]
+    const key = [this.server, this.state.settings, this.failed, this.grantNow()?.live, this.skillBodies, this.slackListed, this.lapsed, this.state.sent]
     const hit = this.views.find(x => x.base === base && x.key.every((k, i) => k === key[i]))
     if (hit) return hit.v
     const v = this.overlay(base)
@@ -826,6 +826,7 @@ export class MockAgent implements AgentClient {
     const brandName = this.state.settings['b:name']?.trim() || base.meta.brand.name
     return {
       ...base,
+      problems: this.slackPosts(base.problems),
       ...(brandName === base.meta.brand.name ? {} : { meta: { ...base.meta, brand: { ...base.meta.brand, name: brandName } } }),
       // The sample's own skills (`mine`) as the demo's people left them: deleted ones gone, changed ones dated. Who may
       // change one: its maker or an admin, so the demo's admin may change them all.
@@ -865,6 +866,36 @@ export class MockAgent implements AgentClient {
     return saved === 'anyone' || (saved !== undefined && saved.startsWith('m_')) ? saved : sample
   }
 
+  /**
+   * The Slack posts as the product's post card allows them (#653): one to a channel that isn't listed is a finding, not
+   * offered (a post that already went out stays as it was); one that went back to waiting says why.
+   */
+  private slackPosts(list: Problem[]): Problem[] {
+    return list.map(p => {
+      if (!isSlackPost(p)) return p
+      const gone = !this.slackListed.includes(channelOf(p)) && !this.state.sent[p.id]
+      const lapsed = this.lapsed[p.id]
+      return gone || lapsed ? { ...(gone ? asFinding(p) : p), ...(lapsed ? { lapsed } : {}) } : p
+    })
+  }
+  /** Why each Slack post went back to waiting, by problem id, in the outbox's words (mock-actions.ts). In memory, like the cards. */
+  private lapsed: Readonly<Record<string, string>> = {}
+  /**
+   * Slack posts still in their hold go back to waiting (N12): no approval, no send, the outbox's words for why and a bell
+   * notice, as for an action card. `only` picks which (the ones to a channel that left the list). One that went out stays.
+   */
+  private lapsePosts(text: string, page: 'approvals' | 'today', only: (p: ProblemSeed) => boolean = () => true) {
+    const held = problems.filter(p => isSlackPost(p) && this.state.approved[p.id] && !this.state.sent[p.id] && only(p))
+    if (held.length === 0) return
+    const approved = { ...this.state.approved }
+    for (const p of held) { delete approved[p.id]; clearTimeout(this.holdTimers[p.id]); delete this.holdTimers[p.id] }
+    this.lapsed = { ...this.lapsed, ...Object.fromEntries(held.map(p => [p.id, text])) }
+    const atMs = demoNow(this.startedAt).getTime()
+    this.sentBack = [...held.map(p => ({ id: `n-sent-back-${p.id}-${++this.postLapses}`, actionId: p.id, rev: this.postLapses, atMs, page })), ...this.sentBack]
+    this.commit({ approved })
+  }
+  private postLapses = 0
+
   private meSnap: { key: unknown[]; me: Me } | null = null
   /** The signed-in person: the sample Admin. `can` follows the role (the demo's Admin may do everything, call 10). */
   me = (): Me | null => {
@@ -899,6 +930,7 @@ export class MockAgent implements AgentClient {
     // A demo whose actions loaded starts them again; one that never read them has nothing to reset.
     void this.demoActionsLoad?.then(a => a.reset())
     this.sentBack = []
+    this.lapsed = {}
     this.slackListed = ['ops-alerts']
     void this.notifyLoad?.then(m => m.demoNotify.reset())
     // A Pause sent just before (its cards' lapse still queued) belongs to the demo this reset ends.
@@ -938,6 +970,13 @@ export class MockAgent implements AgentClient {
     const held = !p.draft.rev
     const existing = this.state.approved[id]
     if (existing) return Promise.resolve({ record: existing, held, doneText: existing.doneText })
+    if (isSlackPost(p)) {
+      // The outbox's gate and the post's scope (server/outbox): no approval while paused, none for a channel that isn't listed.
+      if (this.state.paused !== null) return this.rejected('conflict', 'The agent is paused.', false, { reason: REASON.paused })
+      if (!this.slackListed.includes(channelOf(p))) return this.demoActions().then(a => this.rejected('conflict', a.lapseText('channel'), false))
+    }
+    // An approval moves the post past the lapse that sent it back.
+    if (this.lapsed[id] !== undefined) { const { [id]: _gone, ...rest } = this.lapsed; this.lapsed = rest }
     // Wording is fixed now, so history never rewrites itself when an undo changes later.
     const record = { ...this.stamp(), loggedAt: instantOf(Date.now()), title: p.draft.title, doneText: p.doneText, partial: false }
     // Approving a problem that was set aside brings it back as a normal approval everywhere.
@@ -959,7 +998,11 @@ export class MockAgent implements AgentClient {
     return ok
   }
 
-  editDraft(id: string, body: string) { return this.write({ edits: { ...this.state.edits, [id]: body } }) }
+  editDraft(id: string, body: string) {
+    // The product's Slack post card has no edit: it goes out as the agent wrote it.
+    if (isSlackPost(problemById(id))) return this.rejected('invalid', "A Slack post can't be edited.", true)
+    return this.write({ edits: { ...this.state.edits, [id]: body } })
+  }
 
   undoHandled(id: string): Promise<string> {
     const p = problemById(id)
@@ -978,7 +1021,8 @@ export class MockAgent implements AgentClient {
     if (this.state.paused === at) {
       this.engine?.fence(() => true, 'paused')
       const resets = this.resets
-      void this.demoActionsLoad?.then(a => { if (this.resets === resets) a.pause() })
+      // The cards and the Slack posts in their hold go back to waiting, with the outbox's words (mock-actions.ts holds them).
+      void this.demoActions().then(a => { if (this.resets !== resets) return; a.pause(); this.lapsePosts(a.lapseText('paused'), 'approvals') })
     }
     return done
   }
@@ -1203,7 +1247,7 @@ export class MockAgent implements AgentClient {
     const actions = scenario === 'Normal'
     // A Pause's notices, as the outbox sends them: "Approval sent back", to Approvals, waiting on this person again.
     const out: AgentNotification[] = !actions ? [] : this.sentBack.map(b => ({
-      id: b.id, icon: 'undo', text: APPROVAL_SENT_BACK, who: 'Inhouse', at: instantOf(b.atMs), unread: !st.readNotices[b.id], waiting: true, link: { to: 'page', page: 'approvals' },
+      id: b.id, icon: 'undo', text: APPROVAL_SENT_BACK, who: 'Inhouse', at: instantOf(b.atMs), unread: !st.readNotices[b.id], waiting: true, link: { to: 'page', page: b.page ?? 'approvals' },
     }))
     for (const n of notifications.notifications as RawNotification[]) {
       if (n.approval && !actions) continue
@@ -1417,7 +1461,9 @@ export class MockAgent implements AgentClient {
     const list = await m.demoNotify.save(input)
     // The demo's Slack cards and permissions follow the list (#653).
     this.slackListed = m.demoNotify.names()
-    void this.demoActionsLoad?.then(a => a.channelsChanged())
+    // A post to a channel that left the list is a finding now, and one in its hold goes back with the outbox's words.
+    void this.demoActions().then(a => { a.channelsChanged(); this.lapsePosts(a.lapseText('channel'), 'today', p => !this.slackListed.includes(channelOf(p))) })
+    this.listeners.forEach(l => l())
     return list
   })
   disconnect = (): void => undefined
@@ -1461,10 +1507,12 @@ export class MockAgent implements AgentClient {
   getTrace(id: string): Promise<Trace | null> { return Promise.resolve(this.traceOf(id)) }
   private traceOf(id: string): Trace | null {
     const problem = id.startsWith(DRAFT_TRACE) ? problems.find(p => p.id === id.slice(DRAFT_TRACE.length)) : undefined
-    const key = problem ? 'draft' : this.runInfo.get(id)?.trace ?? id
+    // A finding opens the routine run that found it (the morning check, as the product's does); a draft opens how it was made.
+    const finding = problem && !hasDraft(this.read().problems.find(p => p.id === problem.id) ?? { ...problem, draftedAt: draftTimes[problem.id] })
+    const key = finding ? 'morning' : problem ? 'draft' : this.runInfo.get(id)?.trace ?? id
     const found = Object.hasOwn(traces, key) ? traces[key] : undefined
     if (!found) return null
-    const base = problem ? { ...found, title: `Drafted a fix for ${problem.title}` } : found
+    const base = problem && !finding ? { ...found, title: `Drafted a fix for ${problem.title}` } : found
     let steps = base.steps
     if (key === 'morning' && this.demo.scenario === 'Tool disconnected') {
       const v = traceDisconnectedVariant

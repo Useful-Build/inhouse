@@ -51,7 +51,7 @@
       "opens": "chat: numbers"
     },
     {
-      "text": "Dana Kim approved the reorder of 300 Summit Fleece.",
+      "text": "Dana Kim approved the refund on order 4807.",
       "who": "Dana Kim",
       "at": "-4d 10:14",
       "unread": false,
@@ -95,7 +95,7 @@
       "at": "-12d 14:00",
       "status": "Declined",
       "closed": "declined",
-      "text": "Draft a reply to every comment on our posts so we can send them in one go."
+      "text": "Flag every comment on our posts that needs an answer, so we can reply to them in one go."
     }
   ]
 }

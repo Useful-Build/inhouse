@@ -14,7 +14,7 @@
 //  - a brand with no Slack still shows a Slack card or permission;
 //  - a card or a permission drifts from the contract's schema (the server's own words: server/outbox/demo-parity.test.ts).
 import { describe, expect, test } from 'vitest'
-import { FIRST_LINES, ITEMS_PAGE, MockActions } from './mock-actions'
+import { DEMO_HOLD_MS, FIRST_LINES, ITEMS_PAGE, MockActions } from './mock-actions'
 import { ACTION_ITEMS_PAGE, ActionCardSchema, BATCH_FIRST_LINES } from '../../shared/contract/actions'
 import { PermissionSchema } from '../../shared/contract/permissions'
 import { AgentError } from './types'
@@ -59,9 +59,9 @@ describe('the demo actions', () => {
   test('two batches (a list and a table), an admins card and the single cards, newest first; none where the scenario hides them', () => {
     const { a, hide } = world()
     expect(a.list().map(c => [c.title, c.approverKind, c.batch?.itemCount ?? null, c.state])).toEqual([
-      ['Tag 450 orders as VIP', 'person', 450, 'waiting'], [POST, 'person', null, 'waiting'], [WHOLESALE, 'person', null, 'waiting'],
-      ['Restock 12 items', 'person', 12, 'waiting'], [PRIYA, 'person', null, 'waiting'], ['Refund $238.00 (USD) on order 4838', 'admins', null, 'waiting'],
-      [SENT, 'person', null, 'sent'], [GIFT, 'person', null, 'needs_check'],
+      ['Tag 450 orders as VIP', 'person', 450, 'waiting'], ['Restock 12 items', 'person', 12, 'waiting'], [PRIYA, 'person', null, 'waiting'],
+      ['Refund $238.00 (USD) on order 4838', 'admins', null, 'waiting'], [SENT, 'person', null, 'sent'],
+      [POST, 'person', null, 'waiting'], [WHOLESALE, 'person', null, 'waiting'], [GIFT, 'person', null, 'needs_check'],
     ])
     for (const c of a.list()) ActionCardSchema.parse(c)
     expect(byTitle(a, 'Restock 12 items').batch).toMatchObject({ totals: { records: 12, units: 2400, unitsLabel: 'stock units' }, firstRows: [{ ref: 'Item 8001', change: 'Location 601 · stock received', amount: '+20' }, {}, {}, {}, {}, {}, {}, {}, {}, {}] })
@@ -108,7 +108,7 @@ describe('the demo actions', () => {
     expect(a.answer(card.id, card.rev, 'deny', { upTo: 450, totals: { records: 450, units: 450 } }).state).toBe('denied')
     expect(new Set(a.items(card.id, 0).items.map(i => i.state))).toEqual(new Set(['withdrawn']))
     a.reset()
-    expect(a.list().map(c => c.state)).toEqual(['waiting', 'waiting', 'waiting', 'waiting', 'waiting', 'waiting', 'sent', 'needs_check'])
+    expect(a.list().map(c => c.state)).toEqual(['waiting', 'waiting', 'waiting', 'waiting', 'sent', 'waiting', 'waiting', 'needs_check'])
   })
   test('the admins card: an admin answers it; a stale rev is a conflict with the card as it is now', () => {
     const { a } = world()
@@ -230,6 +230,28 @@ describe('asking first and Always allow (the demo catch-up, PR 1)', () => {
     list(['ops-alerts'])
     a.channelsChanged()
     expect(a.permissions().map(p => p.title)).toEqual(['Add stock'])
+  })
+
+  test('a waiting post answered after its channel left the list never goes out: its hold ends with it back to waiting, and Always allow makes no permission', () => {
+    const { a, list, tick, sentBack } = world()
+    const post = byTitle(a, POST)
+    list([])
+    a.channelsChanged()
+    expect(a.answer(post.id, post.rev, 'once').state).toBe('approved')
+    tick(DEMO_HOLD_MS)
+    const back = a.get(post.id)
+    expect(back).toMatchObject({ state: 'waiting', lapsed: LAPSE_TEXT.channel_not_listed })
+    expect(back.result).toBeUndefined()
+    expect(sentBack.map(u => u.actionId)).toEqual([post.id])
+    expect(a.answer(post.id, back.rev, 'always').permissionId).toBeUndefined()
+    tick(DEMO_HOLD_MS)
+    expect(a.get(post.id)).toMatchObject({ state: 'waiting', lapsed: LAPSE_TEXT.channel_not_listed })
+    expect(a.permissions().map(p => p.title)).toEqual(['Add stock'])
+    // Listed again, the same card goes out.
+    list(['ops-alerts'])
+    a.answer(post.id, a.get(post.id).rev, 'once')
+    tick(DEMO_HOLD_MS)
+    expect(a.get(post.id).state).toBe('sent')
   })
 
   test('a brand with no Slack has no Slack card or permission, and answers for neither', () => {

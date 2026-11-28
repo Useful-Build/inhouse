@@ -293,7 +293,10 @@ test('the C1 formatters write exactly the golden strings for every time, amount,
     // `@watch.firstDay` variants, the Watch-only trace) and added 37: the order-tags chat, its three traces and the
     // bell's three approval notices. The stuck chat's routine card moved from turn 4 to turn 3 (the Watch turn before
     // it is gone), its strings unchanged.
-    expect(Object.keys(out).length).toBe(694)
+    // 688: the review's High 1 (#726) took the agent-made PO, customer email and ShipBob note out of the Library (3 files, 6
+    // strings), moved the PO-1187 file to Dana's uploads (its date is now Nov 2) and reworded the Monday reorder routine's
+    // last run and the approval notice in the bell (the Summit Fleece reorder became a refund); one key renamed.
+    expect(Object.keys(out).length).toBe(688)
     expect(out).toEqual(golden)
   } finally {
     vi.useRealTimers()

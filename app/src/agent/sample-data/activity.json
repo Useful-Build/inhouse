@@ -20,10 +20,10 @@
     {
       "at": "0d 07:00",
       "kind": "read",
-      "text": "Monday reorder list: nothing beyond the Ridge 30L draft",
+      "text": "Monday reorder list: nothing beyond Ridge 30L",
       "who": "Read only",
       "why": "Scheduled routine, every Monday at 7:00 AM.",
-      "result": "The Ridge 30L Pack's reorder was already drafted at the morning check, so there was nothing new to draft. Nothing was changed in any tool.",
+      "result": "The Ridge 30L Pack's low stock was already flagged at the morning check, so there was nothing new to flag. Nothing was changed in any tool.",
       "by": { "text": "Inhouse agent, on schedule.", "times": {} }
     },
     {
@@ -32,7 +32,7 @@
       "text": "Amazon payout check: found a $1,240 gap",
       "who": "Read only",
       "why": "Scheduled routine, every day at 6:00 AM.",
-      "result": "Amazon paid out $1,240 less than Xero expected. It's on Today with a drafted post asking Dana to open a reimbursement case. Nothing was changed in any tool.",
+      "result": "Amazon paid out $1,240 less than Xero expected. It's on Today, with a Slack post to #ops-alerts asking Dana to open a reimbursement case. Nothing was changed in any tool.",
       "by": { "text": "Inhouse agent, on schedule.", "times": {} }
     }
   ],
@@ -60,10 +60,10 @@
     {
       "at": "-4d 10:12",
       "kind": "change",
-      "text": "Reorder of 300 Summit Fleece sent to Kestrel Supply",
+      "text": "Refund of $64.00 on order 4807",
       "who": "Dana approved",
-      "why": "Summit Fleece had 16 days of stock left.",
-      "result": "A $3,660 purchase order went to Kestrel as a PDF. It has gone out, so it can no longer be undone.",
+      "why": "The jacket arrived with a torn seam.",
+      "result": "$64.00 went back to the customer on Shopify. It has gone out, so it can no longer be undone.",
       "by": { "text": "Drafted by Inhouse agent, approved by Dana Kim at {at:time}.", "times": { "at": "-4d 10:12" } },
       "trace": "draft"
     },

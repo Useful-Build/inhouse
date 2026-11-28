@@ -228,7 +228,7 @@ test('Usage: the daily bars are one tab stop; arrows, Home and End move between 
 const go = (page: Page, hash: string) => page.evaluate(h => { location.hash = h }, hash)
 const actRow = (page: Page, text: string | RegExp) => page.locator('button[data-activity-row]').filter({ hasText: text })
 
-test('A set-aside problem approved from the chat card or the Library\'s approval link is a normal approval everywhere; Activity logs each set-aside with Undo', async ({ fx, page }) => {
+test('A set-aside problem approved from the chat card is a normal approval everywhere; Activity logs each set-aside with Undo', async ({ fx, page }) => {
   await start(page, fx, 'Normal', '#/approvals')
 
   // Don't send the ShipBob draft: Activity logs it, and its detail is searchable.
@@ -265,8 +265,7 @@ test('A set-aside problem approved from the chat card or the Library\'s approval
   await expect(actRow(page, 'Not sent:')).toHaveCount(0)
   await expect(actRow(page, 'Approved: post to #ops-alerts in Slack')).toBeVisible()
 
-  // Snooze the Kestrel card on Today (a finding, #726: it counts for no approval), then its file's "Open the approval" in
-  // the Library opens its window with the suggestion and no draft to approve.
+  // Snooze the Kestrel card on Today (a finding, #726: it counts for no approval).
   await go(page, '#/today')
   await card(page, 'PO-1187 from Kestrel is 6 days late').getByRole('button', { name: 'More' }).click()
   await page.getByRole('menu', { name: 'Card actions' }).getByRole('menuitem', { name: 'Snooze until tomorrow' }).click()
@@ -274,16 +273,6 @@ test('A set-aside problem approved from the chat card or the Library\'s approval
   await expect(badge(page)).toContainText(String(2 + ASKS))
   await go(page, '#/activity')
   await expect(actRow(page, 'Snoozed: PO-1187 from Kestrel is 6 days late')).toBeVisible()
-  await go(page, '#/library')
-  const file = page.getByRole('list', { name: 'Files' }).getByRole('listitem').filter({ hasText: 'PO-1187-kestrel-summit-fleece.pdf' })
-  await file.hover()
-  await file.getByRole('button', { name: 'Actions for PO-1187-kestrel-summit-fleece.pdf' }).click()
-  await page.getByRole('menu', { name: 'File actions' }).getByRole('menuitem', { name: 'Open the approval' }).click()
-  const panel = page.getByRole('dialog')
-  await expect(panel).toContainText('Your Inhouse agent suggests')
-  await expect(panel.getByRole('button', { name: /^Approve/ })).toHaveCount(0)
-  await page.keyboard.press('Escape')
-  await expect(panel).toHaveCount(0)
 
   // Dismiss a card; Activity's Undo brings it back to Today.
   await go(page, '#/today')

@@ -174,10 +174,10 @@ test('The viewer\'s link to a chat, Routines or an approval leaves no dead histo
   // An approval opens over the list: the viewer closes, the approval panel is up, and the first Back leaves the Library.
   await page.evaluate(() => { location.hash = '#/library' })
   await expect(page.getByRole('heading', { level: 1 })).toHaveText('All files')
-  await items(page).filter({ hasText: 'PO-1188-ridge-30l-kestrel.pdf' }).first().click()
+  await items(page).filter({ hasText: 'amazon-fee-reimbursement-case.pdf' }).first().click()
   await page.getByRole('dialog').getByRole('button', { name: 'Open the approval →' }).click()
-  // A finding's window (#726: the reorder is a suggestion, with no draft).
-  await expect(page.getByRole('dialog')).toContainText('Your Inhouse agent suggests')
+  // The payout's Slack post.
+  await expect(page.getByRole('dialog')).toContainText('Post to #ops-alerts in Slack')
   await expect(page.getByRole('dialog', { name: /^File: / })).toHaveCount(0)
   expect(hash(page)).toBe('#/library')
   await page.keyboard.press('Escape')
@@ -310,8 +310,8 @@ test('Phone: a long file name shows whole in the viewer, and a code file scrolls
   await expect(viewer).toHaveCount(0)
 
   // Code keeps its lines: the block scrolls sideways inside itself, the page doesn't.
-  await box(page).fill('shipbob-ticket') // a file with a 150 character line
-  await items(page).filter({ hasText: 'shipbob-ticket-order-4821.md' }).first().click()
+  await box(page).fill('restock-returns') // a file with a 70 character line
+  await items(page).filter({ hasText: 'restock-returns.py' }).first().click()
   const code = page.getByRole('dialog', { name: /^File: / }).locator('pre')
   await expect(code).toBeVisible()
   const c = await code.evaluate(e => ({ ws: getComputedStyle(e).whiteSpace, ox: getComputedStyle(e).overflowX }))

@@ -27,7 +27,7 @@ async function resetDemo(page: Page) {
 const PERSONAL = [
   'You like numbers in a table, most urgent first.',
   'You want short answers, with the source for each number.',
-  'You handle supplier emails yourself. Dana handles money.',
+  'You handle supplier questions yourself. Dana handles money.',
 ]
 
 test('Memory: the lines, Forget and the learn switch are available, and privacy is said as a fact', async ({ fx, page }) => {

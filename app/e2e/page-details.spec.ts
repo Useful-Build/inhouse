@@ -101,17 +101,17 @@ test('Routines: no routine is locked by a stage; each has its actions and Run no
 
 test("Skills: a skill's page, turning it off from its More menu and back on", async ({ fx, page }) => {
   await start(page, fx, '#/skills')
-  const name = 'Reorder drafting'
+  const name = 'Reorder check'
   await page.getByRole('button', { name, exact: true }).click()
   // The row opens the skill's own page, with a link the app keeps.
-  await expect(page).toHaveURL(/#\/skills\/reorder-drafting$/)
+  await expect(page).toHaveURL(/#\/skills\/reorder-check$/)
   await expect(page.getByRole('heading', { level: 1, name })).toBeVisible()
-  await expect(page.getByRole('main')).toContainText("Works out how much to reorder and drafts the PO in the supplier's format.")
+  await expect(page.getByRole('main')).toContainText("Works out how much to reorder and flags what runs out before a delivery lands.")
   await expect(page.getByRole('complementary', { name: 'About this skill' })).toContainText('12 times')
   // The instructions read as a document: its sections are headings, the frontmatter isn't shown.
   const instructions = page.getByRole('article', { name: 'Instructions' })
   await expect(instructions.getByRole('heading', { level: 2, name: 'Ground rules' })).toBeVisible()
-  await expect(instructions).not.toContainText('name: reorder-drafting')
+  await expect(instructions).not.toContainText('name: reorder-check')
   await page.getByRole('button', { name: `More for ${name}` }).click()
   await page.getByRole('menuitem', { name: 'Turn off' }).click()
   await expect(toast(page, `${name} is off`)).toBeVisible()

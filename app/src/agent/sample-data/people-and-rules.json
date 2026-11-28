@@ -36,32 +36,27 @@
   "approvalRules": [
     {
       "what": "Orders over $5,000",
-      "detail": "Purchase orders and reorders.",
+      "detail": "Refunds and draft orders.",
       "approver": "Dana Kim"
     },
     {
-      "what": "Customer emails",
-      "detail": "Replies, refunds and apologies.",
+      "what": "Customer orders",
+      "detail": "Tags and refunds on an order.",
       "approver": "Leo Park"
     },
     {
-      "what": "Supplier emails",
-      "detail": "Chases and questions to suppliers.",
+      "what": "Team posts",
+      "detail": "Posts to a listed Slack channel.",
       "approver": "Anyone who approves"
     },
     {
       "what": "Everything else",
-      "detail": "Restocks, updates and small fixes.",
+      "detail": "Stock changes and small fixes.",
       "approver": "Anyone who approves"
     }
   ],
   "runLimits": {
-    "jobsAgentMayFinish": [
-      { "id": "returns", "name": "Restock returns", "desc": "When ShipBob marks a return as sellable." },
-      { "id": "chase", "name": "Chase late suppliers", "desc": "One polite chase per purchase order." },
-      { "id": "nudge", "name": "Nudge ShipBob on stuck orders", "desc": "After 3 days without a pick." },
-      { "id": "pause", "name": "Pause oversold variants", "desc": "Pauses the variant. Customer emails still wait." }
-    ],
+    "jobsAgentMayFinish": [],
     "alwaysWaitsForAPerson": [
       "Money",
       "Customers"

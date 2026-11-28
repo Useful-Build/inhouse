@@ -129,6 +129,7 @@ export function Approvals() {
                       {dv.body}
                     </div>
                   )}
+                  {p.lapsed && <p className="m-0 mx-4.5 mt-3 text-sm text-warning-text">{p.lapsed}</p>}
                   {approver && (
                     <div className="mx-4.5 mt-3.5 flex items-center gap-2 text-sm text-muted-foreground">
                       {named ? <Avatar who={named} size={24} fontSize={9} /> : <Icon name="person" size={16} />}
@@ -155,9 +156,12 @@ export function Approvals() {
                             <Icon name="visibility" size={18} /><span className="flex-1">Review</span>
                           </MenuItem>
                         )}
-                        <MenuItem onSelect={() => edit(id)}>
-                          <Icon name="edit" size={18} /><span className="flex-1">Edit</span>
-                        </MenuItem>
+                        {/* A Slack post has no Edit (the product's card goes out as written). */}
+                        {p.draft.kind !== 'Slack post' && (
+                          <MenuItem onSelect={() => edit(id)}>
+                            <Icon name="edit" size={18} /><span className="flex-1">Edit</span>
+                          </MenuItem>
+                        )}
                       </DropdownMenuContent>
                     </DropdownMenu>
                     {!phone && <span className="ml-auto flex min-w-0 justify-end pl-2">{sources}</span>}

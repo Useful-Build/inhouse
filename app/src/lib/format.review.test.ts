@@ -83,11 +83,9 @@ describe('item 7: what the agent did, its note and Activity\'s "by" are sentence
   })
 
   // What the screens showed before the split (the sample prose as it was, with the no-break space before AM).
+  // Only the restock is left (the variant pause, the Kestrel chase and the ShipBob ask are acts the product can't take, #726).
   const BEFORE = {
-    oversell: 'Paused the variant at 6:04\u00a0AM. Customer emails wait in Approvals',
-    po: 'Chased Kestrel at 6:08\u00a0AM. New date: Thu, Nov 19',
     returns: 'Restocked 11 units at 6:10\u00a0AM',
-    stuck: 'Asked ShipBob at 6:06\u00a0AM. Picked at 7:40\u00a0AM',
   }
   // The demo no longer shows Run (decision A13), but derive.ts still words what the agent did by itself at S 2.
   test('the sentences read as they did, in Run', () => {
@@ -99,9 +97,9 @@ describe('item 7: what the agent did, its note and Activity\'s "by" are sentence
     const ctx = { S: 2 as const, scenario: 'Normal' as const, agent: agent.getSnapshot(), data }
     // The oversell is a finding since #726 (the agent never pauses a variant), so no draft carries a Run note any more.
     for (const p of data.problems) expect(draftView(ctx, p.id).doneNote, p.id).toBeNull()
-    expect(handled(ctx).summary).toContain('Paused the variant')
+    expect(handled(ctx).summary.replace(/\s/g, ' ')).toContain('Restocked 11 units')
     const rows = activityRows(ctx)
-    expect(rows.find(r => r.text === 'Paused the variant')?.t).toBe('6:04\u00a0AM')
-    expect(rows.find(r => r.text.startsWith('Reorder of 300 Summit Fleece'))?.by).toBe('Drafted by Inhouse agent, approved by Dana Kim at 10:12\u00a0AM.')
+    expect(rows.find(r => r.text.replace(/\s/g, ' ') === 'Restocked 11 units')?.t).toBe('6:10\u00a0AM')
+    expect(rows.find(r => r.text.startsWith('Refund of $64.00 on order 4807'))?.by).toBe('Drafted by Inhouse agent, approved by Dana Kim at 10:12\u00a0AM.')
   })
 })
