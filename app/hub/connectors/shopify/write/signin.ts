@@ -2,7 +2,8 @@
 // app, so its token never shares storage or credentials with the read app's SignIn DO.
 // Re-exported from hub/index/index.ts and bound as `SHOPIFY_WRITE_SIGNIN` in wrangler.hub*.jsonc.
 import { DurableObject } from 'cloudflare:workers'
-import type { AccountStatus, HubResult, WriteResult } from '../../../index/contract'
+import type { AccountStatus, CardFacts, CardFactsRequest, HubResult, WriteResult } from '../../../index/contract'
+import { err } from '../../../index/errors'
 import { log } from '../../../index/log'
 import { keyRingFor } from '../../../crypto/keyring'
 import type { SyncStore } from '../../../signin/core'
@@ -69,6 +70,23 @@ export class ShopifyWriteSignIn extends DurableObject<Env> {
     } catch {
       log('hub_internal', { code: 'internal' })
       return null
+    } finally {
+      await flushTestLogs(this.env)
+    }
+  }
+
+  /**
+   * Stage 1 M3 (card details, #488): an approval card's facts (core.ts `cardFacts`), read with the write token. Gated as
+   * `runWrite` is: the deployable build answers `not_configured` and reads nothing.
+   */
+  async cardFacts(req: CardFactsRequest): Promise<HubResult<CardFacts>> {
+    try {
+      const hubEnv: HubWriteEnv = this.env
+      if (!(__INHOUSE_HUB_TEST__ && hubEnv.INHOUSE_TEST_BUILD === '1')) return err('not_configured', 'shopify_write')
+      return await this.#core.cardFacts(req)
+    } catch {
+      log('hub_internal', { code: 'internal' })
+      return err('internal')
     } finally {
       await flushTestLogs(this.env)
     }

@@ -40,7 +40,7 @@ const loopWrites = async (request: APIRequestContext): Promise<number> => {
 
 interface BatchCard {
   id: string; rev: number; state: string; kind: string; result?: string
-  batch?: { itemCount: number; firstLines: string[]; totals: { records: number; units: number; unitsLabel: string } }
+  batch?: { itemCount: number; firstLines: string[]; totals: { records: number; units: number; unitsLabel: string }; firstDetails?: unknown[] }
 }
 const card = async (request: APIRequestContext, id: string): Promise<BatchCard> => {
   const r = await call(request, dana, 'GET', `/api/actions/${id}`)
@@ -103,6 +103,13 @@ test('a loop of 500 allowed writes stops at the limit and becomes one card; appr
   const batch = await card(request, batchId)
   expect(batch).toMatchObject({ kind: 'exact', state: 'waiting', batch: { itemCount: 450, totals: { records: 450, units: 450, unitsLabel: 'orders' } } })
   expect(batch.batch!.firstLines).toHaveLength(10)
+  // Stage 1 M3 (card details, #488): each row names its order's customer and total from the hub's fake write store (order
+  // 9001: Alex Moore; 9002: a guest order).
+  expect(batch.batch!.firstDetails).toHaveLength(10)
+  expect(batch.batch!.firstDetails!.slice(0, 2)).toEqual([
+    { rows: [{ ref: 'Order 9001', order: '#9001', customer: 'Alex Moore', amount: '$642.10', currency: 'USD' }] },
+    { rows: [{ ref: 'Order 9002', order: '#9002', amount: '$10.00', currency: 'USD' }] },
+  ])
   // No other card: the chat's waiting cards are the batch alone.
   const waiting = await call(request, dana, 'GET', `/api/actions?states=waiting&chatId=${chatId}`)
   expect((waiting.json.items as { id: string }[]).map(c => c.id)).toEqual([batchId])
@@ -116,6 +123,7 @@ test('a loop of 500 allowed writes stops at the limit and becomes one card; appr
   expect(page1.json.items).toHaveLength(100)
   expect(page1.json.next).toBe(100)
   expect(page1.json.items[0]).toMatchObject({ n: 1, state: 'pending', line: expect.stringContaining(`add ${LOOP_TAG}-51`) })
+  expect(page1.json.items[2]).toMatchObject({ n: 3, detail: { rows: [{ ref: 'Order 9003', order: '#9003', customer: 'Priya Shah', amount: '$1,208.00', currency: 'USD' }] } })
 
   // Approve what was seen, the first 200; the 250 after move to a new collecting card.
   const approved = await call(request, dana, 'POST', `/api/actions/${batchId}/answer`, {

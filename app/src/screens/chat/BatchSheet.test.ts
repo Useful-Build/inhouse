@@ -238,3 +238,25 @@ describe('the full list', () => {
     expect(fake.actionItems.mock.calls.length).toBe(reads)
   })
 })
+
+describe('card details in the full list (Stage 1 M3 card details, PR 555, issue 578)', () => {
+  test('each row reads the order\'s name, customer and total, and the search finds a customer', async () => {
+    serve(12, 'pending')
+    fake.actionItems.mockImplementation(async () => ({
+      items: Array.from({ length: 12 }, (_, i) => ({
+        n: i + 1, line: lineOf(i + 1), row: { ref: `Order ${9001 + i}`, change: 'add VIP' }, state: 'pending' as const,
+        detail: { rows: [{ ref: `Order ${9001 + i}`, order: `#${3901 + i}`, customer: i === 4 ? 'Sam Okafor' : `Customer ${i}`, amount: '$642.10', currency: 'USD' }] },
+      })),
+    }))
+    await show({ card: batch(12) })
+    expect(rows()[0]!.textContent).toBe(`#${3901}Customer 0add VIP$642.10`)
+    const input = document.querySelector<HTMLInputElement>('input[type="search"]')!
+    await act(async () => {
+      const set = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value')!.set!
+      set.call(input, 'okafor')
+      input.dispatchEvent(new Event('input', { bubbles: true }))
+    })
+    await flush()
+    expect(rows().map(r => r.getAttribute('data-item'))).toEqual(['5'])
+  })
+})

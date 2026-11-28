@@ -24,6 +24,7 @@ import { display } from '../../state/display'
 import { buttonsOf, coversText, footerTotal, isTable, itemStatus, moreArrivedText, refusalOf, searchLabel, subtitleOf } from './ask-card'
 import type { CardButton, Whose } from './ask-card'
 import { ItemRowView } from './ItemRow'
+import { detailWords } from './item-detail'
 
 export interface BatchSheetProps {
   /** The card as it is now. */
@@ -56,8 +57,8 @@ function merged(items: readonly ActionItem[], page: readonly ActionItem[]): Acti
   return [...byN.values()].sort((a, b) => a.n - b.n)
 }
 
-/** A search over a row's own words: its record, its change, its amount and its full line. */
-const matches = (it: ActionItem, q: string) => [it.row.ref, it.row.change, it.row.amount ?? '', it.line].some(t => t.toLowerCase().includes(q))
+/** A search over a row's own words: its record, its change, its amount, its full line and the store's facts on it (#578). */
+const matches = (it: ActionItem, q: string) => [it.row.ref, it.row.change, it.row.amount ?? '', it.line, ...detailWords(it.detail)].some(t => t.toLowerCase().includes(q))
 
 export function BatchSheet({ card, opened, whose, busy, refusal, onClose, onSawTip, onAnswer, onResolve }: BatchSheetProps) {
   const phone = useUi(s => s.phone)
@@ -168,7 +169,7 @@ export function BatchSheet({ card, opened, whose, busy, refusal, onClose, onSawT
             {rows.map(it => {
               const status = itemStatus(it)
               return (
-                <ItemRowView key={it.n} row={it.row} data-item={it.n} data-item-state={it.state}>
+                <ItemRowView key={it.n} row={it.row} detail={it.detail} data-item={it.n} data-item-state={it.state}>
                   {status && (
                     <div className={cn('mt-0.5 text-xs wrap-anywhere', it.state === 'failed' || it.state === NEEDS_CHECK ? 'font-medium text-warning-text' : 'text-muted-foreground')}>
                       {it.result ? `${status}. ${it.result}` : status}

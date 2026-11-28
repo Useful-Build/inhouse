@@ -3,6 +3,7 @@
 // discount, invoice or held stock, so it reaches no customer and moves no money: no effect flag, one record, one unit.
 // The hub checks the arguments again, strictly, and sends nothing else (hub/connectors/shopify/write/ops/draft-order-create.ts).
 import { z } from 'zod'
+import { detailOf, PRODUCTS_UNREAD_TEXT, variantRow } from '../detail.ts'
 import { shopScope, TagsSchema } from './shopify-order-tags.ts'
 import type { OperationEntry } from './types.ts'
 import { countOf } from './count-words.ts'
@@ -42,6 +43,11 @@ export const shopifyDraftOrderCreate: OperationEntry<DraftOrderArgs> & { key: 's
       ...(a.tags !== undefined ? [`tags: ${a.tags.join(', ')}`] : []),
     ].join('; ')
   },
+  // Stage 1 M3 (card details, #488): each line's product, variant and SKU from the store, beside its variant id.
+  facts: a => ({ orderIds: [], variantIds: a.lines.map(l => l.variantId) }),
+  detail: (a, f) => detailOf(a.lines.map(l => variantRow(f, l.variantId, l.quantity))),
+  // #575: when the product names couldn't be read, the card says so rather than show bare variant ids alone.
+  unreadNote: PRODUCTS_UNREAD_TEXT,
   // Stage 1 M3-U (N33): a draft as a row: its products and quantities, the note and the tags (the title says they're drafts).
   itemRow: a => ({
     ref: '',

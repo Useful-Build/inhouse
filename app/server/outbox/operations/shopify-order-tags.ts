@@ -4,8 +4,11 @@
 // item, so its line names every order in it (at most the bulk threshold, 5). The hub checks the arguments again,
 // strictly, and takes at most 5 orders in one call (hub/connectors/shopify/write/ops/tags.ts).
 import { z } from 'zod'
+import type { ActionDetail } from '../../../shared/contract/actions.ts'
 import { andList, countOf } from './count-words.ts'
 import type { ResolveFacts } from '../../permissions/types.ts'
+import { detailOf, orderRow } from '../detail.ts'
+import type { CardFactsView, FactsWanted } from '../detail.ts'
 
 /** A Shopify order's GraphQL id, the form the read tools return. */
 const ORDER_ID = /^gid:\/\/shopify\/Order\/[1-9][0-9]{0,19}$/
@@ -45,9 +48,13 @@ export function tagsItemLine(verb: 'add' | 'remove', a: OrderTagsArgs, f: Resolv
   return `${a.orderIds.length === 1 ? 'Order' : 'Orders'} ${orders}${shop ? ` (${shop})` : ''}: ${verb} ${a.tags.join(', ')}`
 }
 
-/** Stage 1 M3-U (N33): an item as a row: its orders ("#1042", "#1042, #1043") and the change ("add VIP, rush"). */
+/**
+ * Stage 1 M3-U (N33): an item as a row: its orders ("Order 1042", "Orders 1042, 1043") and the change ("add VIP, rush").
+ * The number is the order's id, not its name, so it never wears the shop's `#` (#578); the screen shows the order's own
+ * name ("#3901") from the item's detail when the store gave it.
+ */
 export const tagsItemRow = (verb: 'add' | 'remove', a: OrderTagsArgs) =>
-  ({ ref: a.orderIds.map(id => `#${orderNumber(id)}`).join(', '), change: `${verb} ${a.tags.join(', ')}` })
+  ({ ref: `${a.orderIds.length === 1 ? 'Order' : 'Orders'} ${a.orderIds.map(orderNumber).join(', ')}`, change: `${verb} ${a.tags.join(', ')}` })
 
 /**
  * Stage 1 M3-U (N33): a batch's title. Every item with the same tags: "Tag 450 orders as VIP" ("Remove VIP from 450
@@ -67,3 +74,10 @@ export function tagsCard(verb: 'Add' | 'Remove', a: OrderTagsArgs): { title: str
   if (a.orderIds.length > 1) lines.push(`Orders: ${a.orderIds.map(orderNumber).join(', ')}`)
   return { title: `${verb} ${tags} ${verb === 'Add' ? 'to' : 'from'} ${where}`, lines }
 }
+
+/** Stage 1 M3 (card details): the orders, for their names, customers and totals. */
+export const tagsFacts = (a: OrderTagsArgs): FactsWanted => ({ orderIds: [...a.orderIds], variantIds: [] })
+
+/** Stage 1 M3 (card details): one row per order, "#3901 · Alex Moore · $642.10". */
+export const tagsDetail = (a: OrderTagsArgs, f: CardFactsView): ActionDetail | null => detailOf(a.orderIds.map(id => orderRow(f, id)))
+

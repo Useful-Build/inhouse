@@ -6,6 +6,8 @@ import type {
   SubmitTurn,
 } from '../ports.ts'
 import type { HubAccountFacts } from '../../../outbox/facts.ts'
+import type { CleanCardFacts } from '../../../outbox/detail.ts'
+import type { CardFactsRequest } from '../../../../hub/index/contract.ts'
 import type { EgressRoute, RunGrant, RunTokens, TokenRefusal } from '../tokens.ts'
 import type { AuditEntry, PushAck, RunEvent } from '../../../../shared/protocol/index.ts'
 import type { ActiveRun, PauseState, SendTurnResult } from '../../../../shared/contract/runs.ts'
@@ -131,6 +133,14 @@ export class FakeBrandAgentRpc implements BrandAgentRpc {
     return typeof this.askTurnLiveAnswer === 'function' ? this.askTurnLiveAnswer(turnId) : this.askTurnLiveAnswer
   }
   async actionChanged(actionId: string): Promise<void> { this.log('actionChanged', actionId) }
+  /** Stage 1 M3 (card details): `cardFacts`'s answer, and the requests it was asked. */
+  cardFactsAnswer: CleanCardFacts | null = null
+  cardFactsAsked: CardFactsRequest[] = []
+  async cardFacts(req: CardFactsRequest): Promise<CleanCardFacts | null> {
+    this.log('cardFacts')
+    this.cardFactsAsked.push(req)
+    return this.cardFactsAnswer
+  }
   hubAccountsAnswer: HubAccountFacts[] = []
   async hubAccounts(): Promise<HubAccountFacts[]> {
     this.log('hubAccounts')
