@@ -197,6 +197,32 @@ export class MockJobs {
     return updated
   }
 
+  endWhere(
+    chatIds: string[] | undefined,
+    outcome: JobOutcome,
+    opts?: { notify?: boolean; excludeChatIds?: ReadonlySet<string> },
+  ): Job[] {
+    if (!this.h.shown()) return []
+    const wanted = chatIds ? new Set(chatIds) : null
+    const excluded = opts?.excludeChatIds
+    const targetChats = new Set<string>()
+    for (const [chatId, j] of [...this.live.entries(), ...this.seeded.entries()]) {
+      if (j.state === 'ended') continue
+      if (wanted && !wanted.has(chatId)) continue
+      if (excluded?.has(chatId)) continue
+      targetChats.add(chatId)
+    }
+    const ended: Job[] = []
+    for (const chatId of targetChats) {
+      const cur = this.currentForChat(chatId)
+      if (!cur || cur.state === 'ended') continue
+      this.abortByJob.get(cur.jobId)?.abort()
+      const res = this.endJob(chatId, cur.jobId, outcome, cur.cost?.minor ?? 120, opts)
+      if (res) ended.push(res)
+    }
+    return ended
+  }
+
   cancelJob(jobId: string): Job {
     if (!this.h.shown()) throw new AgentError(NOT_FOUND, "That job isn't here.")
     const hit = [...this.live.entries(), ...this.seeded.entries()].find(([, j]) => j.jobId === jobId)

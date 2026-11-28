@@ -171,6 +171,10 @@ describe('typed long tasks, Follow-up during running job, and Job budget (J1, J5
     await run(60_000)
     off()
 
+    const contTurnId = events.find((e): e is Extract<RunEvent, { type: 'turn.queued' }> => e.type === 'turn.queued' && e.source === 'job')?.turnId
+    expect(contTurnId).toBeDefined()
+    expect(events.some(e => e.type === 'part' && e.turnId === contTurnId)).toBe(false)
+    expect((await l.mock.getChat('cap-job')).messages.some(m => m.turnId === contTurnId && m.role === 'agent')).toBe(false)
     expect(events.find(e => e.type === 'job.ended')).toMatchObject({ outcome: 'budget' })
     expect(await l.mock.job('cap-job')).toMatchObject({ state: 'ended', outcome: 'budget' })
     expect(l.mock.listNotifications()[0]).toMatchObject({ icon: 'error', text: 'A long job stopped' })
@@ -307,7 +311,7 @@ describe('helper traces and web switches (J6, J7, J8)', () => {
     expect(tr!.steps.filter(s => s.kind === 'model').at(-1)?.detail.startsWith('Opus 5.5')).toBe(true)
   })
 
-  test('Search the web, Read web pages, and Websites it may open change live answers', async () => {
+  test('Search the web, Read web pages, and Websites it may open change live answers and trace steps (J7, J8, H2)', async () => {
     const l = await load()
     await l.mock.createChat({ id: 'web-test', title: 'Web test' })
     const ask = async (key: string, text: string) => {
@@ -316,24 +320,146 @@ describe('helper traces and web switches (J6, J7, J8)', () => {
       const off = l.mock.attach(s.runId, f => evs.push(f.event))
       await run(20_000)
       off()
-      return evs.filter(e => e.type === 'part').map(e => (e.type === 'part' && e.part.type === 'text' ? e.part.text : '')).join('\n')
+      const tr = await l.mock.getTrace(s.turnId)
+      const labels = tr?.steps.map(st => st.label) ?? []
+      return {
+        text: evs.filter(e => e.type === 'part').map(e => (e.type === 'part' && e.part.type === 'text' ? e.part.text : '')).join('\n'),
+        labels,
+      }
     }
 
-    // Search the web defaults to off.
-    expect(await ask('web-key-01', 'Search the web for competitor prices on insulated bottles')).toContain('Search the web is turned off in Settings')
+    // Search the web defaults to off -> refuses without Searching or Reading steps.
+    const offSearch = await ask('web-key-01', 'Search the web for competitor prices on insulated bottles')
+    expect(offSearch.text).toContain('Search the web is turned off in Settings')
+    expect(offSearch.labels).not.toContain('Searching the web')
+    expect(offSearch.labels).not.toContain('Reading a web page')
 
-    // Turn on Search the web, with empty allowed hosts -> snippets only.
+    // With Search the web still off, a direct URL for an allowed host reads the page without Searching steps.
+    await l.mock.setSetting('t:webfetch', 'trailgear.example.test')
+    const urlFetch = await ask('web-key-url-01', 'Check https://trailgear.example.test/bottles')
+    expect(urlFetch.text).toContain('[trailgear.example.test](https://trailgear.example.test)')
+    expect(urlFetch.labels).toContain('Reading a web page')
+    expect(urlFetch.labels).not.toContain('Searching the web')
+
+    // Clear allowed websites and turn on Search the web -> snippets only, Searching step and no Reading step.
+    await l.mock.setSetting('t:webfetch', '')
     await l.mock.setToggle('t:websearch', true)
-    expect(await ask('web-key-02', 'Search the web for competitor prices on insulated bottles')).toContain('Websites it may open is empty')
+    const emptyHosts = await ask('web-key-02', 'Search the web for competitor prices on insulated bottles')
+    expect(emptyHosts.text).toContain('Websites it may open is empty')
+    expect(emptyHosts.labels).toContain('Searching the web')
+    expect(emptyHosts.labels).not.toContain('Reading a web page')
 
-    // Add allowed host and ask -> checks the listed host and links it.
+    // Add allowed host with Read web pages ON -> both Searching and Reading steps.
     await l.mock.setSetting('t:webfetch', 'trailgear.example.test')
     const ok = await ask('web-key-03', 'Search the web for competitor prices on insulated bottles')
-    expect(ok).toContain('[trailgear.example.test](https://trailgear.example.test/)')
+    expect(ok.text).toContain('[trailgear.example.test](https://trailgear.example.test/)')
+    expect(ok.labels).toContain('Searching the web')
+    expect(ok.labels).toContain('Reading a web page')
 
-    // Turn off Read web pages -> blocks direct URL fetch.
+    // Turn off Read web pages -> snippet search skips Reading steps, and direct URL fetch refuses with neither step.
     await l.mock.setToggle('t:webfetch_on', false)
-    expect(await ask('web-key-04', 'Check https://trailgear.example.test/bottles')).toContain('Read web pages is turned off in Settings')
+    const fetchOffSearch = await ask('web-key-03b', 'Search the web for competitor prices on insulated bottles')
+    expect(fetchOffSearch.text).toContain('Read web pages is turned off')
+    expect(fetchOffSearch.labels).toContain('Searching the web')
+    expect(fetchOffSearch.labels).not.toContain('Reading a web page')
+
+    const urlBlocked = await ask('web-key-04', 'Check https://trailgear.example.test/bottles')
+    expect(urlBlocked.text).toContain('Read web pages is turned off in Settings')
+    expect(urlBlocked.labels).not.toContain('Searching the web')
+    expect(urlBlocked.labels).not.toContain('Reading a web page')
+  })
+})
+
+describe('round 3 parity and plant regression tests (H1, H2, issue 707)', () => {
+  test('Pause ends the seeded catalog-audit job too, whether jobs were loaded first or not (H1)', async () => {
+    const cold = await load()
+    await cold.mock.pause()
+    expect(await cold.mock.job('catalog-audit')).toMatchObject({ state: 'ended', outcome: 'cancelled', progress: null })
+    expect(cold.mock.listNotifications()[0]).toMatchObject({ icon: 'error', text: 'A long job stopped', unread: true, link: { to: 'chat', id: 'catalog-audit' } })
+    await cold.mock.resume()
+    expect(await cold.mock.job('catalog-audit')).toMatchObject({ state: 'ended', outcome: 'cancelled' })
+
+    const warm = await load()
+    expect(await warm.mock.job('catalog-audit')).toMatchObject({ state: 'running', outcome: null })
+    await warm.mock.pause()
+    expect(await warm.mock.job('catalog-audit')).toMatchObject({ state: 'ended', outcome: 'cancelled', progress: null })
+    expect(warm.mock.listNotifications()[0]).toMatchObject({ icon: 'error', text: 'A long job stopped', unread: true, link: { to: 'chat', id: 'catalog-audit' } })
+  })
+
+  test('Delete then Undo ends catalog-audit cancelled without resurrecting a running job (H1)', async () => {
+    for (const warmFirst of [false, true]) {
+      const l = await load()
+      if (warmFirst) expect(await l.mock.job('catalog-audit')).toMatchObject({ state: 'running' })
+      const before = l.mock.listNotifications().length
+      await l.mock.deleteChats(['catalog-audit'])
+      await l.mock.restoreChats(['catalog-audit'])
+      expect(await l.mock.job('catalog-audit')).toMatchObject({ state: 'ended', outcome: 'cancelled', progress: null })
+      expect(l.mock.listNotifications().length).toBe(before)
+    }
+  })
+
+  test('Pause ends a live long job both mid-step and in the first 4s, with one notice and nothing after (issue 707)', async () => {
+    for (const [chatId, pauseAtMs] of [['pause-live-mid', 12_000], ['pause-live-gap', 4_000]] as const) {
+      const l = await load()
+      const events: RunEvent[] = []
+      const beforeNotices = l.mock.listNotifications().length
+      await l.mock.createChat({ id: chatId, title: chatId })
+      const sent = await l.mock.send(chatId, { clientTurnKey: `${chatId}-key`, text: 'Run a full catalog audit across every SKU', model: 'opus' })
+      const off = l.mock.attach(sent.runId, f => events.push(f.event))
+      await run(pauseAtMs)
+      expect(events.some(e => e.type === 'job.started')).toBe(true)
+      if (chatId === 'pause-live-gap') {
+        expect(events.some(e => e.type === 'turn.queued' && e.source === 'job')).toBe(false)
+      }
+      await l.mock.pause()
+      await settle()
+
+      const endedEvents = events.filter(e => e.type === 'job.ended')
+      expect(endedEvents).toHaveLength(1)
+      expect(endedEvents[0]).toMatchObject({ outcome: 'cancelled' })
+      expect(await l.mock.job(chatId)).toMatchObject({ state: 'ended', outcome: 'cancelled' })
+      const forChat = () => l.mock.listNotifications().filter(n => n.link.to === 'chat' && n.link.id === chatId)
+      expect(forChat()).toHaveLength(1)
+      expect(forChat()[0]).toMatchObject({ icon: 'error', text: 'A long job stopped', unread: true })
+      // Pause ends both the live job and the seeded catalog-audit job (1 notice each).
+      expect(l.mock.listNotifications()).toHaveLength(beforeNotices + 2)
+
+      const countAtPause = events.length
+      await l.mock.resume()
+      await run(60_000)
+      off()
+      expect(events).toHaveLength(countAtPause)
+      expect(forChat()).toHaveLength(1)
+      expect(l.mock.listNotifications()).toHaveLength(beforeNotices + 2)
+    }
+  })
+
+  test('typed long task, scripted limit turns, and long-job-run trace never narrate limits or budgets (issue 707)', async () => {
+    const l = await load()
+    const checkParts = async (chatId: string, key: string, text: string, scripted?: 'maxTurns' | 'turnBudget') => {
+      await l.mock.createChat({ id: chatId, title: chatId })
+      if (scripted) l.mock.scriptNextTurn(scripted)
+      const events: RunEvent[] = []
+      const sent = await l.mock.send(chatId, { clientTurnKey: key, text, model: 'opus' })
+      const off = l.mock.attach(sent.runId, f => events.push(f.event))
+      await run(60_000)
+      off()
+      const allText = events
+        .filter((e): e is Extract<RunEvent, { type: 'part' }> => e.type === 'part')
+        .map(e => (e.part.type === 'text' ? e.part.text : ''))
+        .join('\n')
+      expect(allText.length).toBeGreaterThan(0)
+      expect(allText).not.toMatch(/step limit|spend budget/i)
+    }
+
+    await checkParts('words-typed', 'words-typed-01', 'Run a full catalog audit across every SKU')
+    await checkParts('words-maxturns', 'words-maxturns1', 'Which orders are stuck over 3 days?', 'maxTurns')
+    await checkParts('words-budget', 'words-budget-01', 'Which orders are stuck over 3 days?', 'turnBudget')
+
+    const tr = await l.mock.getTrace('long-job-run')
+    expect(tr).not.toBeNull()
+    const labels = tr!.steps.map(s => `${s.label} ${s.detail}`).join('\n')
+    expect(labels).not.toMatch(/step limit|spend budget/i)
   })
 })
 

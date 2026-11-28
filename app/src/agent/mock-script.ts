@@ -346,7 +346,7 @@ const webScript = (h: ScriptHost, q: string): Script | null => {
     return {
       thinking: ['Reading a web page…', 'Writing the answer…'],
       delayMs: 1200,
-      trace: h.k.traceKey('web-lookup'),
+      trace: h.k.traceKey('web-fetch'),
       parts: [
         {
           type: 'table',
@@ -380,7 +380,7 @@ const webScript = (h: ScriptHost, q: string): Script | null => {
     return {
       thinking: ['Searching the web…', 'Checking snippet results…'],
       delayMs: 1200,
-      trace: h.k.traceKey('web-lookup'),
+      trace: h.k.traceKey('web-search'),
       parts: [{
         type: 'text',
         text: `Searched the web for 750ml insulated bottles. Search results show $32 to $38 against our $34 Cairn Insulated Bottle, and I skipped opening full pages because ${reason} in Settings > Inhouse agent.`,

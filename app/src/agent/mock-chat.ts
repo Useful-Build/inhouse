@@ -634,6 +634,10 @@ export class ChatEngine {
     return () => { run.subs.delete(onFrame) }
   }
 
+  activeJobChatIds(): Set<string> {
+    return new Set([...this.activeJobRuns.values()].map(e => e.run.chatId))
+  }
+
   /** Everything live ends: queued turns are cancelled with `why`, live ones are stopped (pause, delete). */
   fence(match: (run: MockRun) => boolean, why: 'paused' | 'deleted') {
     for (const run of this.h.mockRuns.values()) {

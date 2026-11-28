@@ -287,8 +287,8 @@ test('the C1 formatters write exactly the golden strings for every time, amount,
   vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout', 'setInterval', 'clearInterval', 'Date'] })
   try {
     const out = await capture()
-    // 806: added the 4 job/web chats (8), 2 job bell notices (2) and 10 job/helper/web traces (103) to the 693 prior strings.
-    expect(Object.keys(out).length).toBe(806)
+    // 824: added the 4 job/web chats (8), 2 job bell notices (2) and 12 job/helper/web traces (121) to the 693 prior strings.
+    expect(Object.keys(out).length).toBe(824)
     expect(out).toEqual(golden)
   } finally {
     vi.useRealTimers()

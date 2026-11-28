@@ -1846,6 +1846,102 @@
         }
       ]
     },
+    "web-fetch": {
+      "title": "Read a listed website",
+      "durationSeconds": 8.4,
+      "cost": { "minor": 4, "currency": "USD" },
+      "tokens": "14.2k",
+      "steps": [
+        {
+          "label": "Inhouse agent",
+          "kind": "root",
+          "startSeconds": 0,
+          "endSeconds": 8.4,
+          "depth": 0,
+          "detail": "Question in Chats"
+        },
+        {
+          "label": "Shopify · Cairn Insulated Bottle price",
+          "kind": "tool",
+          "startSeconds": 0.4,
+          "endSeconds": 2.3,
+          "depth": 1,
+          "detail": "Output: $34 retail price"
+        },
+        {
+          "label": "Reading a web page",
+          "kind": "tool",
+          "startSeconds": 2.4,
+          "endSeconds": 5.9,
+          "depth": 1,
+          "detail": "WebFetch · checked listed storefront page"
+        },
+        {
+          "label": "Wrote the answer",
+          "kind": "model",
+          "startSeconds": 6.0,
+          "endSeconds": 8.2,
+          "depth": 1,
+          "detail": "Opus 5.5"
+        },
+        {
+          "label": "Answer",
+          "kind": "answer",
+          "startSeconds": 8.2,
+          "endSeconds": 8.4,
+          "depth": 1,
+          "detail": "Sent to Chats"
+        }
+      ]
+    },
+    "web-search": {
+      "title": "Web search snippets",
+      "durationSeconds": 8.6,
+      "cost": { "minor": 4, "currency": "USD" },
+      "tokens": "14.8k",
+      "steps": [
+        {
+          "label": "Inhouse agent",
+          "kind": "root",
+          "startSeconds": 0,
+          "endSeconds": 8.6,
+          "depth": 0,
+          "detail": "Question in Chats"
+        },
+        {
+          "label": "Shopify · Cairn Insulated Bottle price",
+          "kind": "tool",
+          "startSeconds": 0.4,
+          "endSeconds": 2.3,
+          "depth": 1,
+          "detail": "Output: $34 retail price"
+        },
+        {
+          "label": "Searching the web",
+          "kind": "tool",
+          "startSeconds": 2.4,
+          "endSeconds": 6.1,
+          "depth": 1,
+          "detail": "WebSearch · competitor retail prices"
+        },
+        {
+          "label": "Wrote the answer",
+          "kind": "model",
+          "startSeconds": 6.2,
+          "endSeconds": 8.4,
+          "depth": 1,
+          "detail": "Opus 5.5"
+        },
+        {
+          "label": "Answer",
+          "kind": "answer",
+          "startSeconds": 8.4,
+          "endSeconds": 8.6,
+          "depth": 1,
+          "detail": "Sent to Chats"
+        }
+      ]
+    },
     "web-lookup": {
       "title": "Web pricing check",
       "durationSeconds": 10.4,

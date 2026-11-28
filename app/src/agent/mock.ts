@@ -185,7 +185,7 @@ function loadChats(): ChatThread[] {
 }
 const chats = loadChats()
 // Every trace a scripted answer names exists, checked at load rather than when someone happens to ask.
-for (const t of [...chatScript.scripted.map(x => x.trace), chatScript.fallback.trace, chatScript.firstDayTrace, chatScript.loadingTrace, 'generic', 'stuck', 'query', 'morning', 'draft']) traceKey(t)
+for (const t of [...chatScript.scripted.map(x => x.trace), chatScript.fallback.trace, chatScript.firstDayTrace, chatScript.loadingTrace, 'generic', 'stuck', 'query', 'morning', 'draft', 'web-fetch', 'web-search', 'web-lookup']) traceKey(t)
 
 /** When each draft was made: the time on its file in the Library's Approvals place. Every problem needs one. */
 function draftTimes(): Record<string, Instant> {
@@ -885,6 +885,7 @@ export class MockAgent implements AgentClient {
     this.created.clear(); this.createdInfo.clear()
     this.runInfo.clear()
     // A demo whose actions or jobs loaded starts them again; one that never read them has nothing to reset.
+    this.jobsResetEpoch++
     void this.demoActionsLoad?.then(a => a.reset())
     if (this.jobsInstance) {
       this.jobsInstance.reset()
@@ -974,8 +975,12 @@ export class MockAgent implements AgentClient {
   pause(): Promise<Instant> {
     const { at } = this.stamp()
     const done = this.writeThen({ paused: at }, at)
-    // A paused agent ends what is running and cancels what waits (the server's fence).
-    if (this.state.paused === at) this.engine?.fence(() => true, 'paused')
+    // A paused agent ends every running job and cancels what waits (the server's fence + idle/seeded jobs).
+    if (this.state.paused === at) {
+      this.engine?.fence(() => true, 'paused')
+      const pending = this.endUnboundJobs(undefined, true)
+      if (pending) return pending.then(() => done)
+    }
     return done
   }
   resume() { return this.write({ paused: null }) }
@@ -1051,6 +1056,7 @@ export class MockAgent implements AgentClient {
   private demoJobsLoad: Promise<MockJobs> | null = null
   private jobsInstance: MockJobs | null = null
   private jobRev = 0
+  private jobsResetEpoch = 0
   private demoJobs(): Promise<MockJobs> {
     return this.demoJobsLoad ??= import('./mock-jobs').then(m => {
       const j = new m.MockJobs({
@@ -1066,6 +1072,18 @@ export class MockAgent implements AgentClient {
   }
   loadJobs(): Promise<MockJobs> { return this.demoJobs() }
   loadedJobs(): MockJobs | null { return this.jobsInstance }
+  private endUnboundJobs(chatIds: string[] | undefined, notify: boolean): Promise<void> | null {
+    const excluded = this.engine?.activeJobChatIds()
+    if (this.jobsInstance) {
+      this.jobsInstance.endWhere(chatIds, 'cancelled', { notify, excludeChatIds: excluded })
+      return null
+    }
+    const epoch = this.jobsResetEpoch
+    return this.demoJobs().then(j => {
+      if (this.jobsResetEpoch !== epoch) return
+      j.endWhere(chatIds, 'cancelled', { notify, excludeChatIds: excluded })
+    })
+  }
   async job(chatId: string): Promise<Job | null> { return (await this.demoJobs()).job(chatId) }
   async cancelJob(jobId: string): Promise<Job> {
     const jobs = await this.demoJobs()
@@ -1658,8 +1676,12 @@ export class MockAgent implements AgentClient {
     const chatDeleted = { ...this.state.chatDeleted }
     for (const id of ids) chatDeleted[id] = true
     const done = this.writeRecs(ids.map(id => [`chat:${id}`, 1] as [string, number]), { chatDeleted })
-    // Their queued turns are cancelled and their live one stopped, once the delete is saved.
-    if (this.state.chatDeleted === chatDeleted) this.engine?.fence(run => ids.includes(run.chatId), 'deleted')
+    // Their queued turns are cancelled and their live/seeded jobs ended, once the delete is saved.
+    if (this.state.chatDeleted === chatDeleted) {
+      this.engine?.fence(run => ids.includes(run.chatId), 'deleted')
+      const pending = this.endUnboundJobs(ids, false)
+      if (pending) return pending.then(() => done)
+    }
     return done
   }
   restoreChats(ids: string[]) {
