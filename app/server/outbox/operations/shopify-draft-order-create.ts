@@ -3,8 +3,7 @@
 // discount, invoice or held stock, so it reaches no customer and moves no money: no effect flag, one record, one unit.
 // The hub checks the arguments again, strictly, and sends nothing else (hub/connectors/shopify/write/ops/draft-order-create.ts).
 import { z } from 'zod'
-import { detailOf, variantRow } from '../detail.ts'
-import { PRODUCTS_UNREAD_TEXT } from '../words.ts'
+import { detailOf, PRODUCTS_UNREAD_TEXT, variantRow } from '../detail.ts'
 import { shopScope, TagsSchema } from './shopify-order-tags.ts'
 import type { OperationEntry } from './types.ts'
 

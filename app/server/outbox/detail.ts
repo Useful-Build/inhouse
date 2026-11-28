@@ -52,6 +52,13 @@ export function factsView(c: CleanCardFacts): CardFactsView {
   return { order: id => orders.get(id), variant: id => variants.get(id) }
 }
 
+/**
+ * Stage 1 M3 (#575): a draft-order card's note when the store couldn't be read for its products. Here, not in words.ts:
+ * the operation files import it, and they stay free of modules that need the Worker's types (tsconfig.node.json reads
+ * them through evals/).
+ */
+export const PRODUCTS_UNREAD_TEXT = 'Product names couldn’t be read.'
+
 /** Markup and quoting characters a card never shows from a store: `<`, `>` and the backtick. */
 const MARKUP = /[<>`]/g
 

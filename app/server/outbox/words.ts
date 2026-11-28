@@ -114,6 +114,3 @@ export function batchStoppedText(p: { sent: number; total: number; left: number;
     : `The other ${p.left} ${p.left === 1 ? 'was' : 'were'} withdrawn.`
   return `${p.sent} of ${p.total} went out before this stopped. ${rest} ${p.why}`
 }
-
-/** Stage 1 M3 (#575): a draft-order card's note when the store couldn't be read for its products. */
-export const PRODUCTS_UNREAD_TEXT = 'Product names couldn’t be read.'
