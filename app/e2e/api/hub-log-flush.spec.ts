@@ -7,7 +7,7 @@
 // The calls below are a wave of hook ops at once: each is its own request into the hub Worker, and the ones that reach an
 // account run inside its SignIn object. Every one must answer 200, and the lines the connect left must be there.
 import { expect, test } from '@playwright/test'
-import { ensureDisconnected, fakeReset, fakeState, freshConnect, hook, NOTES_ACCOUNT, readTools, SLACK_ACCOUNT, workerLogs } from './fakes-kit.ts'
+import { ensureDisconnected, fakeReset, fakeSet, fakeState, freshConnect, hook, NOTES_ACCOUNT, readTools, SLACK_ACCOUNT, workerLogs } from './fakes-kit.ts'
 
 test.describe.configure({ mode: 'serial' })
 test.beforeAll(async ({ request }) => { await fakeReset(request); await ensureDisconnected(request) })
@@ -35,4 +35,21 @@ test('hub calls made at once all answer, and the lines of the calls that ended a
   }
   const lines = await workerLogs(request)
   expect(lines.some(l => l.includes('connect_complete')), 'the connect left its line in the hub log').toBe(true)
+})
+
+test('alarms fired at once on a due account all answer, and one refresh goes out per due token (#530)', async ({ request }) => {
+  // A 1-second token lifetime makes the refresh due at half of it; at the fake's 12 hours nothing would ever be due.
+  await fakeSet(request, { mcp: { rotation: true, expiresInS: 1 } })
+  try {
+    await ensureDisconnected(request)
+    await freshConnect(request)
+    const sendsBefore = (await fakeState(request)).mcp.refreshSends.length
+    await expect.poll(async () => {
+      const alarms = await Promise.all([1, 2, 3, 4].map(() => hook(request, { op: 'alarm', accountId: SLACK_ACCOUNT })))
+      for (const [i, r] of alarms.entries()) expect(r.status, `alarm ${i}: ${r.text}`).toBe(200)
+      return (await fakeState(request)).mcp.refreshSends.length
+    }, { message: 'alarms fired together on a due account send a refresh', timeout: 15_000 }).toBeGreaterThan(sendsBefore)
+  } finally {
+    await fakeSet(request, { mcp: { rotation: false, expiresInS: 43_200 } })
+  }
 })
