@@ -6,7 +6,7 @@ import { expect, test, type Fx } from './support/fx.js'
 import type { Page } from '@playwright/test'
 
 async function start(page: Page, fx: Fx, hash: string) {
-  await fx.seed({ stage: 'Act', demo: { ambient: 'Always' } })
+  await fx.seed({ demo: { ambient: 'Always' } })
   await page.goto('/?demo' + hash)
   await expect(page.getByRole('heading', { level: 1 }).first()).toBeVisible()
 }
@@ -27,7 +27,7 @@ test('Review window: Previous and Next step through the cards that need you, in 
   const cards = page.getByRole('main').getByRole('article')
   const titles = await cards.evaluateAll(els => els.map(e => e.getAttribute('aria-label') ?? ''))
   expect(titles.length, 'Act has several cards waiting').toBeGreaterThan(2)
-  await cards.first().getByRole('button', { name: /^Review/ }).first().click()
+  await cards.first().getByRole('button', { name: titles[0], exact: true }).click()
   const win = page.getByRole('dialog')
   const title = win.getByRole('heading', { level: 2 })
   await expect(title).toHaveText(titles[0])
@@ -62,7 +62,9 @@ test('At 800 wide with the sidebar open, the review window stacks its brief over
   await page.setViewportSize({ width: 800, height: 900 })
   await start(page, fx, '#/today')
   const sidebarRight = async () => { const b = (await page.locator('#sidebar').boundingBox())!; return b.x + b.width }
-  await page.getByRole('main').getByRole('article').first().getByRole('button', { name: /^Review/ }).first().click()
+  // The payout's post: a card with a draft (the first card is a finding since #726).
+  const payout = 'Amazon paid out $1,240 less than expected'
+  await page.getByRole('main').getByRole('article', { name: payout, exact: true }).getByRole('button', { name: payout, exact: true }).click()
   const win = page.getByRole('dialog')
   const draft = win.getByRole('article', { name: /draft$/ })
   await expect(draft).toBeVisible()
@@ -137,8 +139,8 @@ test('Team window: Withdraw moves your open request to Closed with an Undo, and 
 })
 
 test("A skill's page: Try in a chat starts a chat holding the skill; one of ours has no Edit, Delete or Versions", async ({ fx, page }) => {
-  await start(page, fx, '#/skills/reorder-drafting')
-  await expect(page.getByRole('heading', { level: 1, name: 'Reorder drafting' })).toBeVisible()
+  await start(page, fx, '#/skills/reorder-check')
+  await expect(page.getByRole('heading', { level: 1, name: 'Reorder check' })).toBeVisible()
   // Skills stays the selected sidebar row on a skill's page.
   await expect(side(page).getByRole('button', { name: 'Skills', exact: true })).toHaveAttribute('aria-current', 'page')
   await expect(page.getByRole('article', { name: 'Instructions' })).toContainText('When to use')
@@ -146,13 +148,13 @@ test("A skill's page: Try in a chat starts a chat holding the skill; one of ours
   await expect(rail).toContainText('Who can change itInhouse team')
   await expect(rail.getByRole('heading', { name: 'Versions' })).toHaveCount(0)
   await expect(page.getByRole('button', { name: 'Edit in a chat' })).toHaveCount(0)
-  await page.getByRole('button', { name: 'More for Reorder drafting' }).click()
+  await page.getByRole('button', { name: 'More for Reorder check' }).click()
   await expect(page.getByRole('menuitem', { name: 'Delete skill' })).toHaveCount(0)
   await page.keyboard.press('Escape')
 
   await page.getByRole('button', { name: 'Try in a chat', exact: true }).click()
   await expect(page).toHaveURL(/#\/chats\/new$/)
-  await expect(page.getByRole('textbox', { name: 'Message Inhouse' })).toHaveValue('Use the "Reorder drafting" skill: ')
+  await expect(page.getByRole('textbox', { name: 'Message Inhouse' })).toHaveValue('Use the "Reorder check" skill: ')
 })
 
 test('Brand skills: Create a skill starts a chat; a brand skill shows its maker, edits in a chat, and deletes after a confirmation in the page', async ({ fx, page }) => {
@@ -203,11 +205,13 @@ test('Settings: five sections in order, each announced, and no lock for an Admin
   const groups = nav.getByRole('group')
   await expect(groups).toHaveCount(5)
   const sections: [string, string[]][] = [
-    ['You', ['General', 'Notifications', 'Memory']],
+    // The demo's own pages (Notifications, Who approves what, Run limits, Stage and plan) left with its stages (decision
+    // A13); Always allowed came in with its permissions. What the agent can do is the product's only (no ceiling here yet).
+    ['You', ['General', 'Memory', 'Always allowed']],
     ['Agent', ['Inhouse agent', 'Models', 'Team memory']],
-    ['Approvals and limits', ['Who approves what', 'Run limits', 'Spending cap']],
+    ['Spending', ['Spending cap']],
     ['Team', ['Members', 'Slack notices']],
-    ['Workspace', ['Stage and plan', 'Data and access', 'Audit log']],
+    ['Workspace', ['Data and access', 'Audit log']],
   ]
   for (const [i, [label, pages]] of sections.entries()) {
     const group = groups.nth(i)

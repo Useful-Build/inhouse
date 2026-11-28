@@ -243,8 +243,8 @@ describe('Settings: Always allowed', () => {
 })
 
 describe('Activity: Stop allowing this', () => {
-  test('offered where one removable permission covers the action, removing that one; elsewhere not', async () => {
-    fake.actions.mockResolvedValue([card({ state: 'sent', result: 'Sent.', can: NONE }), card({ id: 'ac_FFFFFFFFFFFFFFFFFFFFFF', state: 'denied', title: 'Post in #ops', tool: { accountId: 'slack:workspace', label: 'Slack' }, can: NONE })])
+  test('offered on an action that ran under a removable permission, removing that one; elsewhere not (issue 655)', async () => {
+    fake.actions.mockResolvedValue([card({ state: 'sent', result: 'Sent.', can: NONE, permissionId: 'pg_BBBBBBBBBBBBBBBBBBBBBB' }), card({ id: 'ac_FFFFFFFFFFFFFFFFFFFFFF', state: 'denied', title: 'Post in #ops', tool: { accountId: 'slack:workspace', label: 'Slack' }, can: NONE })])
     fake.permissions.mockResolvedValue([permission()])
     fake.removePermission.mockResolvedValue([])
     await show(createElement(ActionRows, { needle: '' }))
@@ -258,16 +258,23 @@ describe('Activity: Stop allowing this', () => {
     expect(buttons()).toEqual([])
   })
   test("a member's action, seen by an admin: says whose, and offers only that member's permission, naming them", async () => {
-    fake.actions.mockResolvedValue([card({ state: 'denied', askedBy: 'm_Dana', can: NONE })])
-    // The admin's own permission on the same account isn't the one behind Dana's action.
+    fake.actions.mockResolvedValue([card({ state: 'sent', result: 'Sent.', askedBy: 'm_Dana', can: NONE, permissionId: 'pg_DDDDDDDDDDDDDDDDDDDDDD' })])
+    // The admin's own permission on the same account isn't the one behind Dana's action: the card names Dana's.
     fake.permissions.mockResolvedValue([permission(), permission({ id: 'pg_DDDDDDDDDDDDDDDDDDDDDD', rev: 2, holder: { kind: 'member', memberId: 'm_Dana' } })])
     fake.removePermission.mockResolvedValue([permission()])
     await show(createElement(ActionRows, { needle: '' }))
-    expect(host.textContent).toContain('Add a tag to order 9001. Dana Kim said no. Nothing went out.')
+    expect(host.textContent).toContain('Add a tag to order 9001. Sent.')
     await press('Stop allowing this: Add a tag to order 9001', host)
     expect(document.body.textContent).toContain('Add tags to orders, for Dana Kim. Your Inhouse agent will ask Dana Kim before it does this again.')
     await press('Remove', document.body.querySelector('[role="alertdialog"], [role="dialog"]') ?? document.body)
     expect(fake.removePermission).toHaveBeenCalledWith('pg_DDDDDDDDDDDDDDDDDDDDDD', 2)
+  })
+  test("a member's action an admin sees that a person answered: says whose, and offers no permission to stop (issue 727)", async () => {
+    fake.actions.mockResolvedValue([card({ state: 'denied', askedBy: 'm_Dana', can: NONE })])
+    fake.permissions.mockResolvedValue([permission({ id: 'pg_DDDDDDDDDDDDDDDDDDDDDD', rev: 2, holder: { kind: 'member', memberId: 'm_Dana' } })])
+    await show(createElement(ActionRows, { needle: '' }))
+    expect(host.textContent).toContain('Add a tag to order 9001. Dana Kim said no. Nothing went out.')
+    expect(buttons()).toEqual([])
   })
   test("a read that fails shows nothing, and says so in the console", async () => {
     const warn = vi.spyOn(console, 'warn').mockImplementation(() => undefined)
@@ -277,12 +284,14 @@ describe('Activity: Stop allowing this', () => {
     expect(warn).toHaveBeenCalledTimes(2)
     warn.mockRestore()
   })
-  test('two permissions on the tool: the row points to Settings instead; the search narrows the rows', async () => {
-    fake.actions.mockResolvedValue([card({ state: 'sent', result: 'Sent.', can: NONE })])
+  test('two permissions on the tool: the row names the one its action ran under; an answered action offers none; the search narrows the rows (issue 655)', async () => {
+    fake.actions.mockResolvedValue([card({ state: 'sent', result: 'Sent.', can: NONE, permissionId: 'pg_DDDDDDDDDDDDDDDDDDDDDD' }), card({ id: 'ac_FFFFFFFFFFFFFFFFFFFFFF', state: 'sent', result: 'Sent.', title: 'Add a tag to order 9002', can: NONE })])
     fake.permissions.mockResolvedValue([permission(), permission({ id: 'pg_DDDDDDDDDDDDDDDDDDDDDD', title: 'Cancel orders' })])
     await show(createElement(ActionRows, { needle: '' }))
+    expect(buttons()).toEqual(['Stop allowing this: Add a tag to order 9001'])
     await press('Stop allowing this: Add a tag to order 9001', host)
-    expect(fake.settings).toEqual(['you-permissions'])
+    expect(document.body.textContent).toContain('Cancel orders. Your Inhouse agent will ask before it does this again.')
+    expect(fake.settings).toEqual([])
     expect(fake.removePermission).not.toHaveBeenCalled()
     await show(createElement(ActionRows, { needle: 'nothing like it' }))
     expect(host.innerHTML).toBe('')

@@ -25,7 +25,7 @@ export interface StartInput {
   effort: RunStart['effort']
   maxTurns: number
   /**
-   * null: any public host (M3-F, N29: `t:webfetch_mode` is `open`), sent as null. A turn stored before P8a S (SQL NULL)
+   * null: any public host (M3-F, N29: open mode, set by the Inhouse team or the default with no host listed, M3-J), sent as null. A turn stored before P8a S (SQL NULL)
    * reaches here as `[]` (`webFetchOf`). The egress decides every request by the brand's live mode and list.
    */
   webFetchDomains: string[] | null

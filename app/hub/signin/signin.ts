@@ -329,7 +329,9 @@ export class SignIn extends DurableObject<Env> {
   override async fetch(request: Request): Promise<Response> {
     if (__INHOUSE_HUB_TEST__ && (this.env as HubEnv).INHOUSE_TEST_BUILD === '1') {
       if (!this.ctx.id.equals(this.env.SIGNIN.idFromName(TEST_FAKES_DO_NAME))) return new Response('not found', { status: 404 })
-      const { testUpstreamFetch } = await import('../testing/index')
+      const { attachFakeStorage, testUpstreamFetch } = await import('../testing/index')
+      // #619: the fake write store's state lives in this DO's storage, so a restart of this isolate keeps its tokens.
+      attachFakeStorage(this.ctx.storage)
       try {
         // The hub's env: on the eval hub it binds the eval D1, whose workspace the Slack fake serves (testing/eval-slack.ts).
         return await testUpstreamFetch(request, this.env)
@@ -350,7 +352,7 @@ export class SignIn extends DurableObject<Env> {
     if (__INHOUSE_HUB_TEST__ && (this.env as HubEnv).INHOUSE_TEST_BUILD === '1') {
       if (!this.ctx.id.equals(this.env.SIGNIN.idFromName(TEST_FAKES_DO_NAME))) return err('not_configured', 'testFakesOp')
       const { runHubFakesInDo } = await import('../testing/fakes')
-      return runHubFakesInDo(this.ctx.storage.kv, op)
+      return runHubFakesInDo(this.ctx.storage, op)
     }
     return err('not_configured', 'testFakesOp')
   }

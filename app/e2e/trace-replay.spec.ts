@@ -15,7 +15,7 @@ test.afterEach(async ({ page }) => { await page.clock.resume() })
 test('Trace window: Replay, Pause replay, the speed, the replay result, Restart and Stop and show everything', async ({ page }) => {
   await page.setViewportSize({ width: 1440, height: 900 })
   await page.clock.install()
-  await fxFor(page, undefined).seed({ stage: 'Act', scenario: 'Normal', demo: { ambient: 'Always' } })
+  await fxFor(page, undefined).seed({ scenario: 'Normal', demo: { ambient: 'Always' } })
   await page.goto('/?demo#/chats/stuck')
   const first = page.getByRole('log', { name: 'Conversation' }).locator('[data-answer]').first()
   await first.getByRole('button', { name: /\d+ steps/ }).click()

@@ -4,7 +4,7 @@ import { expect, fxFor, test } from './support/fx.js'
 import type { Page } from '@playwright/test'
 
 async function start(page: Page, hash = '#/today') {
-  await fxFor(page, undefined).seed({ stage: 'Act', demo: { ambient: 'Always' } })
+  await fxFor(page, undefined).seed({ demo: { ambient: 'Always' } })
   await page.goto('/?demo' + hash)
 }
 

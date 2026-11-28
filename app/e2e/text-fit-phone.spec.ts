@@ -6,7 +6,7 @@ const out = process.env.VERIFY_DIR ?? 'e2e-artifacts'
 
 for (const width of [390, 360]) {
   test(`Phone ${width}: the Today composer placeholder is not cut`, async ({ page, fx }) => {
-    await fx.seed({ stage: 'Act', demo: { ambient: 'Always' } })
+    await fx.seed({ demo: { ambient: 'Always' } })
     await page.setViewportSize({ width, height: 844 })
     await page.goto('/?demo#/today')
     const input = page.getByRole('textbox', { name: 'Ask Inhouse' })
@@ -23,13 +23,16 @@ for (const width of [390, 360]) {
   })
 }
 
-// In Run, the status pill must not squeeze an open chat's title on a phone.
+// The status pill (shown while paused, since the demo has no Run stage after decision A13) must not squeeze an open
+// chat's title on a phone.
 for (const width of [390, 360]) {
-  test(`Phone ${width}: in Run, an open chat's title keeps its room beside the pill`, async ({ page, fx }) => {
-    await fx.seed({ stage: 'Run', demo: { ambient: 'Always' } })
+  test(`Phone ${width}: paused, an open chat's title keeps its room beside the pill`, async ({ page, fx }) => {
+    await fx.seed({ demo: { ambient: 'Always' } })
     await page.setViewportSize({ width, height: 844 })
-    await page.goto('/?demo#/today')
-    const pill = page.getByRole('status', { name: 'Inhouse agent is running' })
+    await page.goto('/?demo#/settings/team-spend')
+    await page.locator('main').getByRole('button', { name: 'Pause Inhouse agent', exact: true }).click()
+    await page.evaluate(() => { location.hash = '#/today' })
+    const pill = page.getByRole('status', { name: 'Inhouse agent is paused' })
     await expect(pill).toBeVisible()
     await page.goto('/?demo#/chats/friday')
     await expect(pill).toHaveCount(0)

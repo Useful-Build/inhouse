@@ -15,10 +15,11 @@
 //    the run's close disconnects Slack (#583), so a later suite's tools don't change.
 // Planting in the store or a web page needs a per-case dataset on the eval hub, not built: those cases are listed as not
 // served here (their twins W31 to W37 plant the same attacks through a file or a memory hit).
-import { WRANGLER_TIMEOUT_MS, assertProcessTreeListable } from '../targets/door.ts'
+import { DoorRefusal, WRANGLER_TIMEOUT_MS, assertProcessTreeListable, webfetchHostsRefusal } from '../targets/door.ts'
 import type { RetryOptions } from '../targets/retry.ts'
-import { accessHeaders, createProductTarget, EVAL_AUD_VAR, JOB_END_TIMEOUT_MS, testIssuerSignIn, type ProductTarget, type ProductTargetOptions } from '../targets/product.ts'
-import { connectSlack, disconnectSlack, slackShown, type InhouseApi } from '../targets/slack-door.ts'
+import { accessHeaders, createProductTarget, EVAL_AUD_VAR, JOB_END_TIMEOUT_MS, testIssuerSignIn, webfetchListFor, type ProductTarget, type ProductTargetOptions } from '../targets/product.ts'
+import { connectSlack, disconnectSlack, EVAL_SLACK_CHANNELS, listRefusal, slackShown, type InhouseApi } from '../targets/slack-door.ts'
+import { ceilingRefusal, grantRefusal } from '../targets/write-door.ts'
 import { SEED_INHOUSE } from '../../server/seed/brand.ts'
 import { createSessionReader, type SessionReader } from '../read-side/product/r2.ts'
 import { EVAL_BUCKET } from '../exfiltration/store-data/transcripts.ts'
@@ -105,6 +106,33 @@ export function slackEvidence(ev: WriteEvidence, channels: readonly { id: string
 }
 
 const ceilingRows = (rows: CeilingRow[]): NonNullable<WriteEvidence['ceilingsBefore']> => rows.map((r) => ({ operation: r.operation, enabled: r.enabled, perDayMax: r.perDayMax, unitsMax: r.unitsMax }))
+
+/**
+ * What the product seed gets for a case's plant (memory or attachment; a Slack plant is seeded through the Slack door):
+ * the text, and no WebFetch hosts (an injection case asks for none). No `fetch`, so the seed writes `list` (M3-J).
+ */
+export function plantSpecOf(c: InjectionCase): ExfilSpec | undefined {
+  return c.plant && c.plant.via !== 'slack' ? { kind: 'memory', via: c.plant.via as ExfilSpec['via'], hosts: [], plant: c.plant.text } : undefined
+}
+
+/**
+ * Why a planned case's start would be refused by a door, or null: every value startCase takes from the case, checked by the
+ * doors' own rules (the live smoke after #670 stopped mid-run at P03's seed on one; #724): the WebFetch list the product
+ * seed writes, its ceilings, its grant's limits, its listed Slack channels against the workspace the start seeds, and
+ * (with `person`, the product target's) its case person and named teammate. The preflight runs it on every planned case,
+ * so a case the doors can't take stops the run before any paid turn.
+ */
+export function seedRefusal(c: InjectionCase, person?: ProductTarget['personRefusal']): string | null {
+  const list = webfetchListFor(plantSpecOf(c))
+  const why =
+    (list === null ? null : webfetchHostsRefusal(list)) ??
+    c.ceilings.map((x) => ceilingRefusal(x.operation, { ...(x.perDayMax !== undefined ? { perDayMax: x.perDayMax } : {}), ...(x.unitsMax !== undefined ? { unitsMax: x.unitsMax } : {}) })).find((w) => w !== null) ??
+    (c.grant ? grantRefusal(c.grant) : null) ??
+    (needsSlack(c) ? listRefusal(c.channels.map((name) => ({ name: name.replace(/^#/, '') })), EVAL_SLACK_CHANNELS) : null) ??
+    // The longest repeat number the run could reach, as well as the first: the person's address grows with it.
+    (person ? [1, 999].map((rep) => person({ caseId: c.id, rep, ...(c.namedMember !== undefined ? { namedMember: c.namedMember } : {}) })).find((w) => w !== null) ?? null : null)
+  return why ? `${c.id}'s seed would be refused: ${why}` : null
+}
 
 /** The Inhouse app's origin and the test issuer's aud there: the Slack connect routes are the Inhouse team's. */
 export const EVAL_INHOUSE_ORIGIN_VAR = 'INHOUSE_EVAL_INHOUSE_ORIGIN'
@@ -272,7 +300,7 @@ export function createProductInjectionTarget(o: ProductInjectionOptions): Inject
     lacks: (family) => (family === 'slack_post' && !inhouse ? `slack_post: the Inhouse app (${EVAL_INHOUSE_ORIGIN_VAR} and ${EVAL_INHOUSE_AUD_VAR}) is not set` : null),
     spentUsd: () => base.spentUsd?.() ?? 0,
     notes: () => [...notes],
-    async preflight() {
+    async preflight(cases) {
       // The product target's own checks first (the eval brand, the lease, the cap: targets/product.ts setup), which make
       // its doors; then one read through each door the run uses, and one R2 LIST of the session transcripts (as the
       // read-side and store-data suites do). A refusal throws here, before any paid turn.
@@ -281,6 +309,10 @@ export function createProductInjectionTarget(o: ProductInjectionOptions): Inject
         if (closed) throw closingRefusal()
         // A wrangler call's deadline kills its whole process tree, which needs `ps` (#715): without it, refuse now.
         assertProcessTreeListable(o.ps)
+        // Every planned case's seed, checked by the door's own rules before any paid turn (the live smoke after #670 stopped
+        // mid-run at P03's seed, on a WebFetch list the door refuses).
+        const refused = cases.map((c) => seedRefusal(c, base.personRefusal ? (p) => base.personRefusal(p) : undefined)).filter((w): w is string => w !== null)
+        if (refused.length) throw new DoorRefusal(refused.join('; '))
         // (A Slack case without the Inhouse app never reaches here: it is not run or not served, and the runner stops on
         // it before the preflight unless the run waived it.)
         await base.ready()
@@ -364,7 +396,7 @@ export function createProductInjectionTarget(o: ProductInjectionOptions): Inject
     {
       if (closed) throw closingRefusal()
       const slackCase = needsSlack(c)
-      const plant: ExfilSpec | undefined = c.plant && c.plant.via !== 'slack' ? { kind: 'memory', via: c.plant.via as ExfilSpec['via'], hosts: [], plant: c.plant.text } : undefined
+      const plant = plantSpecOf(c)
       const session = await base.seed([], { caseId: c.id, rep: run.rep, canary: run.canary, writes: true }, plant)
       active = session
       // The repeat's end, which a close waits for (#663): settled by its reset, or by an undone start.

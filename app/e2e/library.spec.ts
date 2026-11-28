@@ -4,9 +4,9 @@ import type { Page } from '@playwright/test'
 import { atRest } from './states.js'
 
 async function start(page: Page, hash = '#/library') {
-  await fxFor(page, undefined).seed({ stage: 'Act', demo: { ambient: 'Always' } })
+  await fxFor(page, undefined).seed({ demo: { ambient: 'Always' } })
   await page.goto('/?demo' + hash)
-  await expect(page.getByRole('heading', { level: 1 })).toHaveText(hash === '#/library' ? 'All files' : /things need you/)
+  await expect(page.getByRole('heading', { level: 1 })).toHaveText(hash === '#/library' ? 'All files' : /left to approve today/)
 }
 
 const TABS = ['All', 'Images', 'Documents', 'Code', 'Audio and video', 'Other']
@@ -94,7 +94,7 @@ test('Search filters by name across the current tab and place, and has an empty 
   await expect(cards(page).first()).toContainText('kestrel-delivery-times.png')
   await tab(page, 'All').click()
   await places(page).getByRole('button', { name: /^Uploaded by the team/ }).click()
-  await expect(cards(page)).toHaveCount(2)
+  await expect(cards(page)).toHaveCount(3)
   await box.fill('zzzz')
   await expect(page.getByText('No files match "zzzz".')).toBeVisible()
   await expect(cards(page)).toHaveCount(0)
@@ -126,7 +126,7 @@ test('Masonry, grid and list show the same files; list has name, type, place, si
   for (const h of ['Name', 'Type', 'Place', 'Size', 'Date']) await expect(page.getByText(h, { exact: true }).first()).toBeVisible()
   const row = cards(page).filter({ hasText: 'amazon-fee-reimbursement-case.pdf' })
   await expect(row).toContainText('PDF')
-  await expect(row).toContainText('Approval: Open a reimbursement case')
+  await expect(row).toContainText('Today: Amazon paid out $1,240 less than expected')
   await expect(row).toContainText('102 KB')
   await expect(row).toContainText('6:06 AM')
   await shot(page, 'library-list')
@@ -150,15 +150,15 @@ test('Opening a file shows the viewer, and its link goes back to the chat, routi
   await expect(page.getByText('3 orders · $556').first()).toBeVisible()
   await expect(page.getByRole('complementary', { name: 'Sidebar' }).getByRole('button', { name: 'Stuck orders over 3 days' })).toHaveAttribute('aria-current', 'page')
 
-  // A drafted document: first page in the viewer, link opens the approval panel.
+  // A document made for an approval: first page in the viewer, link opens the approval panel (the payout's Slack post).
   await page.getByRole('navigation', { name: 'Main' }).getByRole('button', { name: 'Library' }).click()
-  v = await open('PO-1188-ridge-30l-kestrel.pdf')
+  v = await open('amazon-fee-reimbursement-case.pdf')
   await expect(v).toContainText('PDF document')
-  await expect(v).toContainText('Approval: Reorder 600 Ridge 30L Packs')
-  await expect(v.getByText('$9,600').first()).toBeVisible()
+  await expect(v).toContainText('Today: Amazon paid out $1,240 less than expected')
+  await expect(v.getByText('$1,240 over').first()).toBeVisible()
   await shot(page, 'library-viewer-document')
   await v.getByRole('button', { name: 'Open the approval →' }).click()
-  await expect(page.getByRole('button', { name: 'Approve and send to Kestrel' })).toBeVisible()
+  await expect(page.getByRole('dialog')).toContainText('Post to #ops-alerts in Slack')
   await page.keyboard.press('Escape')
 
   // Routine link.

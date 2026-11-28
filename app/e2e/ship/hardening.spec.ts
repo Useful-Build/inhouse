@@ -7,7 +7,7 @@ const phone = () => test.info().project.name === 'ship-phone'
 
 /** Seeds the demo once per browser session, then loads `url` as a first visit (a full load, not a hash change). */
 async function start(page: Page, fx: Fx, url: string, heading: string | RegExp) {
-  await fx.seed({ stage: 'Act', demo: { ambient: 'Always' } })
+  await fx.seed({ demo: { ambient: 'Always' } })
   await page.goto(url)
   if (heading) await expect(h1(page, heading)).toBeVisible()
 }

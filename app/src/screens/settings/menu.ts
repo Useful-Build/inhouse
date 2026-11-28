@@ -21,7 +21,6 @@ export interface SettingsSection {
 export const SECTIONS: SettingsSection[] = [
   { id: 'you', label: 'You', team: false, pages: [
     { id: 'you-general', icon: 'person', label: 'General' },
-    { id: 'you-notif', icon: 'notifications', label: 'Notifications' },
     { id: 'you-memory', icon: 'person_book', label: 'Memory' },
     { id: 'you-permissions', icon: 'task_alt', label: 'Always allowed' },
   ] },
@@ -31,9 +30,7 @@ export const SECTIONS: SettingsSection[] = [
     { id: 'team-memory', icon: 'bookmarks', label: 'Team memory' },
     { id: 'team-ceiling', icon: 'tune', label: 'What the agent can do' },
   ] },
-  { id: 'limits', label: 'Approvals and limits', team: true, pages: [
-    { id: 'team-approvals', icon: 'task_alt', label: 'Who approves what' },
-    { id: 'team-limits', icon: 'tune', label: 'Run limits' },
+  { id: 'limits', label: 'Spending', team: true, pages: [
     { id: 'team-spend', icon: 'account_balance_wallet', label: 'Spending cap' },
   ] },
   { id: 'team', label: 'Team', team: true, pages: [
@@ -41,7 +38,6 @@ export const SECTIONS: SettingsSection[] = [
     { id: 'team-slack', icon: 'campaign', label: 'Slack notices' },
   ] },
   { id: 'workspace', label: 'Workspace', team: true, pages: [
-    { id: 'team-plan', icon: 'stairs', label: 'Stage and plan' },
     { id: 'team-data', icon: 'shield_lock', label: 'Data and access' },
     { id: 'team-audit', icon: 'receipt_long', label: 'Audit log' },
   ] },
@@ -57,21 +53,16 @@ type SlackSignals = { connected: readonly string[]; channels: readonly { key: st
 export const hasSlack = (tools: SlackSignals): boolean => tools.connected.includes('slack') || tools.channels.some(c => c.key === 'slack')
 
 /**
- * The pages only the demo offers. The product has no approval rules or run limits to show yet (the stored `a:<n>` and `l:*`
- * settings and their server checks stay), and every Notifications row is work nothing sends yet, so it hides those pages,
- * their menu entries and their deep links. Stage 1 M2-I: the product has no stages (decision "Master plan: one agent"), so
- * Stage and plan goes too; the technical `stage` setting stays, unread.
+ * The pages only the product offers. Stage 1 M3-C: the demo has no ceiling yet, so What the agent can do would be empty.
+ * The demo has no pages of its own: since decision A13 (option B) it shows what the product does, so Who approves what,
+ * Run limits, Notifications and Stage and plan are gone from both (the stored `a:<n>`, `l:*` and `stage` settings stay,
+ * unread by any page).
  */
-const DEMO_ONLY_PAGES: readonly string[] = ['team-approvals', 'team-limits', 'you-notif', 'team-plan']
-/**
- * Stage 1 M2-H: the pages only the product offers. The demo has no permissions, so Always allowed would always be empty.
- * Stage 1 M3-C: nor a ceiling, so What the agent can do would too.
- */
-const PRODUCT_ONLY_PAGES: readonly string[] = ['you-permissions', 'team-ceiling']
-/** Whether a page is offered: the demo leaves out the product-only pages, the product the demo-only ones. */
-export const pageShown = (id: string, product: boolean): boolean => (product ? !DEMO_ONLY_PAGES.includes(id) : !PRODUCT_ONLY_PAGES.includes(id))
-/** Where the account menu's Team settings opens: Stage and plan in the demo, the first team page in the product (M2-I). */
-export const teamSettingsTab = (product: boolean): string => (product ? 'team-agent' : 'team-plan')
+const PRODUCT_ONLY_PAGES: readonly string[] = ['team-ceiling']
+/** Whether a page is offered: the demo leaves out the product-only pages. */
+export const pageShown = (id: string, product: boolean): boolean => product || !PRODUCT_ONLY_PAGES.includes(id)
+/** Where the account menu's Team settings opens: the first team page (M2-I). */
+export const TEAM_SETTINGS_TAB = 'team-agent'
 /** The ids a `#/settings/<id>` link may name. */
 export const settingsTabs = (product: boolean): string[] => SETTINGS_PAGES.filter(p => pageShown(p.id, product)).map(p => p.id)
 
@@ -79,8 +70,8 @@ export const settingsTabs = (product: boolean): string[] => SETTINGS_PAGES.filte
 const BRAND_PERSON_PAGES: readonly string[] = ['you-permissions']
 
 /**
- * The menu as this brand sees it: Slack notices only with Slack connected, and in the product (`product`: the build has no
- * demo) no demo-only pages. What stays of the limits section is the Spending cap and Pause, so the product calls it "Spending".
+ * The menu as this brand sees it: Slack notices only with Slack connected, and in the demo (`product` false) no
+ * product-only pages.
  * `role`: the viewer's (unknown while signing in): the Inhouse team has no Always allowed page, and (Stage 1 M3-C) a member
  * no What the agent can do (route 150 lets only admins and the Inhouse team read it).
  */
@@ -89,6 +80,6 @@ export const menuFor = (tools: SlackSignals, product = false, role?: string | nu
   return SECTIONS.map(s => {
     const pages = s.pages.filter(p => (slack || p.id !== 'team-slack') && pageShown(p.id, product) && !(role === 'inhouse' && BRAND_PERSON_PAGES.includes(p.id))
       && !(role === 'member' && p.id === 'team-ceiling'))
-    return { ...s, pages, ...(product && s.id === 'limits' ? { label: 'Spending' } : {}) }
+    return { ...s, pages }
   })
 }

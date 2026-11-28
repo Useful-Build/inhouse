@@ -4,7 +4,7 @@
 // the list without a test changing.
 //
 // Ways a client can break the contract, written down before the tests:
-//  - a read() value, a state, a file, a notification, a notice or a trace that doesn't parse through its schema, in some stage or scenario;
+//  - a read() value, a state, a file, a notification, a notice or a trace that doesn't parse through its schema, in some scenario;
 //  - a run event that doesn't parse, a run that doesn't begin with run.started or doesn't end in one terminal event;
 //  - a write that returns something its schema rejects, or leaves state that doesn't parse;
 //  - a snapshot that changes identity with nothing changed (React re-renders forever), or keeps it after a change (it never updates);
@@ -28,8 +28,8 @@ import {
   ActiveRunSchema, ChatListSchema, ChatPageSchema, ChatSummarySchema, LibraryFileSchema, MeSchema, MemberRecordSchema, MessageIdSchema, RoutineRunSchema, RunEventSchema, RunFrameSchema, SendTurnResultSchema, SettingRecordSchema, SupportGrantSchema, ToolSetupSchema, TraceSchema,
 } from '../../../shared/contract'
 import { ActionCardSchema, ActionItemsPageSchema, JobSchema, PermissionSchema, QuestionSchema } from '../../../shared/contract'
-import type { AgentClient, AgentNotice, AgentState, RunEvent, RunFrame, Scenario, SendPriority, SendTurnResult, Stage } from '../types'
-import { AgentError, SCENARIOS, STAGES } from '../types'
+import type { AgentClient, AgentNotice, AgentState, RunEvent, RunFrame, Scenario, SendPriority, SendTurnResult } from '../types'
+import { AgentError, SCENARIOS } from '../types'
 import type { ContractTarget, WriteMethod } from './targets'
 import { targets } from './targets'
 
@@ -62,7 +62,7 @@ describe.each(targets)('contract: $name', (t: ContractTarget) => {
   const fx = t.fixtures
   /**
    * A case that needs a client method runs only on a target that serves it (`serves`): the real target serves the P2 methods
-   * and nothing else until its phase, so what needs a run, an approval, a routine, the library or a stage's sample data
+   * and nothing else until its phase, so what needs a run, an approval, a routine, the library or the sample data
    * belongs to the targets that have them.
    */
   const lacks = (...methods: (keyof AgentClient)[]) => !methods.every(m => t.serves(m))
@@ -86,12 +86,12 @@ describe.each(targets)('contract: $name', (t: ContractTarget) => {
   }
   const dropListeners = () => { const all = offs; offs = []; all.forEach(off => off()) }
 
-  /** A first-run client in a stage and scenario, with the notice collector listening (a reset replaces the client). */
-  const fresh = async (stage: Stage = 'Act', scenario: Scenario = 'Normal') => {
+  /** A first-run client in a scenario, with the notice collector listening (a reset replaces the client). */
+  const fresh = async (scenario: Scenario = 'Normal') => {
     unsubscribe?.()
     dropListeners()
     await t.reset()
-    await t.seed({ stage, scenario })
+    await t.seed({ scenario })
     notices = []
     unsubscribe = t.client.onNotice(n => notices.push(n))
   }
@@ -194,18 +194,18 @@ describe.each(targets)('contract: $name', (t: ContractTarget) => {
   /** The first problem whose approval is held before it goes out, and the first reversible one (no hold). */
   const heldProblem = () => {
     const p = t.client.read().problems.find(x => !x.draft.rev)
-    if (!p) throw new Error('no problem with a held approval in this stage and scenario')
+    if (!p) throw new Error('no problem with a held approval in this scenario')
     return p.id
   }
   const reversibleProblem = () => t.client.read().problems.find(p => p.draft.rev)?.id
   const firstRoutine = () => {
     const r = t.client.read().routines[0]
-    if (!r) throw new Error('no routine in this stage and scenario')
+    if (!r) throw new Error('no routine in this scenario')
     return r.id
   }
   const firstFile = () => {
     const f = t.client.listFiles()[0]
-    if (!f) throw new Error('no library file in this stage and scenario')
+    if (!f) throw new Error('no library file in this scenario')
     return f.id
   }
   /** Moves the clock on until `cond` holds: for what the client does by itself (a hold ending, a save failing late). */
@@ -219,12 +219,11 @@ describe.each(targets)('contract: $name', (t: ContractTarget) => {
   }
   const errorOf = async (p: Promise<unknown>): Promise<unknown> => p.then(() => undefined, (e: unknown) => e)
 
-  const stageAndScenario = STAGES.flatMap(stage => SCENARIOS.map(scenario => [stage, scenario] as [Stage, Scenario]))
 
   // ---------- reads ----------
   describe('reads parse through their schema', () => {
-    only('send').each(stageAndScenario)('every read in %s, %s', async (stage, scenario) => {
-      await t.seed({ stage, scenario })
+    only('send').each(SCENARIOS)('every read in %s', async scenario => {
+      await t.seed({ scenario })
       const c = t.client
       const data = parse(AgentDataSchema, c.read(), 'read()')
       parse(AgentStateSchema, c.getSnapshot(), 'getSnapshot()')
@@ -246,7 +245,7 @@ describe.each(targets)('contract: $name', (t: ContractTarget) => {
 
     test('Loading reports loading; every other scenario reports ready', async () => {
       for (const scenario of SCENARIOS) {
-        await t.seed({ stage: 'Act', scenario })
+        await t.seed({ scenario })
         expect(t.client.read().status, scenario).toBe(scenario === 'Loading' ? 'loading' : 'ready')
       }
     })
@@ -255,7 +254,7 @@ describe.each(targets)('contract: $name', (t: ContractTarget) => {
     // never from a scenario name: these hold for whatever a client serves.
     test('tool connection, setup and read progress name known tools and agree with what is connected, in every scenario', async () => {
       for (const scenario of SCENARIOS) {
-        await t.seed({ stage: 'Act', scenario })
+        await t.seed({ scenario })
         const data = parse(AgentDataSchema, t.client.read(), 'read()')
         const { tools } = data
         for (const key of Object.keys(tools.connection)) {
@@ -275,9 +274,9 @@ describe.each(targets)('contract: $name', (t: ContractTarget) => {
     })
 
     only('send')('a tool whose login failed reads as disconnected since an instant; with every login working, none does', async () => {
-      await fresh('Act', 'Normal')
+      await fresh('Normal')
       expect(t.client.read().tools.connection).toEqual({})
-      await fresh('Act', 'Tool disconnected')
+      await fresh('Tool disconnected')
       const lost = Object.values(t.client.read().tools.connection)
       expect(lost).toHaveLength(1)
       expect(lost[0].status).toBe('disconnected')
@@ -285,7 +284,7 @@ describe.each(targets)('contract: $name', (t: ContractTarget) => {
     })
 
     only('send')('before the first tool is live the setup list names tools being connected; once tools read, it is empty', async () => {
-      await fresh('Act', 'First day')
+      await fresh('First day')
       const first = t.client.read().tools
       expect(first.connected).toEqual([])
       expect(Object.keys(first.setup).length).toBeGreaterThan(0)
@@ -293,15 +292,15 @@ describe.each(targets)('contract: $name', (t: ContractTarget) => {
         expect(first.beingConnected, `setup lists "${key}", which isn't being connected`).toContain(key)
         parse(ToolSetupSchema, s, `tools.setup["${key}"]`)
       }
-      await fresh('Act', 'Normal')
+      await fresh('Normal')
       expect(t.client.read().tools.setup).toEqual({})
     })
   })
 
   // ---------- run events ----------
   describeIf('send')('send() starts a run whose events parse', () => {
-    test.each(STAGES)('every suggested question, in %s', async stage => {
-      await fresh(stage)
+    test('every suggested question', async () => {
+      await fresh()
       const questions = t.client.read().chat.suggestions
       expect(questions.length).toBeGreaterThan(0)
       for (const q of questions) {
@@ -346,24 +345,19 @@ describe.each(targets)('contract: $name', (t: ContractTarget) => {
       expect(await t.client.getTrace(fx.unknownTraceId), 'an id the agent never made').toBeNull()
     })
 
-    test('a question with a table answers with a table part, in every stage', async () => {
-      for (const stage of STAGES) {
-        await fresh(stage)
-        const parts = (await drain(fx.questions.table)).flatMap(e => (e.type === 'part' ? [e.part] : []))
-        expect(parts.some(p => p.type === 'table'), `a table in ${stage}`).toBe(true)
-      }
+    test('a question with a table answers with a table part', async () => {
+      await fresh()
+      const parts = (await drain(fx.questions.table)).flatMap(e => (e.type === 'part' ? [e.part] : []))
+      expect(parts.some(p => p.type === 'table'), 'a table').toBe(true)
     })
 
-    test('a request that needs an approval: an approval part in Act, a refusal in Watch', async () => {
+    // The demo has no stages since decision A13 (option B): the Watch refusal this test also checked is gone with them.
+    test('a request that needs an approval: an approval part', async () => {
       const act = checkRun(await drain(fx.questions.approval))
       const part = act.flatMap(e => (e.type === 'part' ? [e.part] : [])).find(p => p.type === 'approval')
       expect(part, 'an approval part').toBeDefined()
       expect(t.client.read().problems.some(p => p.id === (part && part.type === 'approval' ? part.problemId : ''))).toBe(true)
 
-      await fresh('Watch')
-      const watch = checkRun(await drain(fx.questions.approval))
-      expect(watch.flatMap(e => (e.type === 'part' ? [e.part] : [])).some(p => p.type === 'notInThisStage'), 'notInThisStage in Watch').toBe(true)
-      expect(watch.flatMap(e => (e.type === 'part' ? [e.part] : [])).some(p => p.type === 'approval')).toBe(false)
     })
 
     test('a routine request makes a routine that is saved in state', async () => {
@@ -386,7 +380,7 @@ describe.each(targets)('contract: $name', (t: ContractTarget) => {
     })
 
     test('a question with a disconnected tool answers with an error part, and its turn still opens its trace', async () => {
-      await fresh('Act', 'Tool disconnected')
+      await fresh('Tool disconnected')
       const run = startRun(fx.questions.disconnectedTool)
       const events = checkRun(await run.toEnd())
       expect(events.some(e => e.type === 'part' && e.part.type === 'error')).toBe(true)
@@ -394,7 +388,7 @@ describe.each(targets)('contract: $name', (t: ContractTarget) => {
     })
 
     test.each(['First day', 'Loading'] as const)('%s answers that it has nothing to read yet', async scenario => {
-      await fresh('Act', scenario)
+      await fresh(scenario)
       const events = checkRun(await drain(fx.questions.table))
       expect(events.some(e => e.type === 'part' && e.part.type === 'text')).toBe(true)
     })
@@ -934,7 +928,7 @@ describe.each(targets)('contract: $name', (t: ContractTarget) => {
     })
 
     only('runRoutine')('run a routine now: the result parses and heads the list of runs', async () => {
-      await fresh('Run')
+      await fresh()
       const routines = t.client.read().routines
       expect(routines.length).toBeGreaterThan(0)
       for (const r of routines) {
@@ -976,7 +970,7 @@ describe.each(targets)('contract: $name', (t: ContractTarget) => {
     })
 
     only('undoHandled')('undo what the agent handled, then redo it', async () => {
-      await fresh('Run')
+      await fresh()
       const id = heldProblem()
       const toast = parse(z.string(), await t.client.undoHandled(id), 'undoHandled()')
       expect(toast.length).toBeGreaterThan(0)
@@ -1107,24 +1101,36 @@ describe.each(targets)('contract: $name', (t: ContractTarget) => {
     // own `sendAt` and `serverNow`; Undo after the hold, or no Undo in it; Always allow that leaves no permission, or a
     // permission that a stale Remove takes away; a "Needs a check" that can't be resolved by its approver.
     const ACTIONS = ['actions', 'action', 'answerAction', 'undoAction', 'resolveAction', 'withdrawAction', 'actionItems', 'permissions', 'removePermission', 'questions', 'answerQuestion'] as const
-    only(...ACTIONS)('actions, permissions and questions: every list parses; with nothing seeded an answer is refused', async () => {
+    only(...ACTIONS)('actions, permissions and questions: every list parses, the demo lists its sample ones, and an unknown id is refused on every target', async () => {
       const c = t.client
       for (const a of await c.actions()) parse(ActionCardSchema, a, 'an action')
       for (const p of await c.permissions()) parse(PermissionSchema, p, 'a permission')
       for (const q of await c.questions()) parse(QuestionSchema, q, 'a question')
-      if (!t.seedAction) {
-        // The demo: no permission or question to list; its actions are its sample cards (Stage 1 M3-U: a batch and a
-        // restock and a teammate's refund), and nothing it doesn't have can be answered.
-        expect([await c.permissions(), await c.questions()]).toEqual([[], []])
-        expect((await c.actions()).map(a => [a.approverKind, a.batch?.itemCount ?? null])).toEqual([['person', 450], ['person', 12], ['admins', null]])
-        for (const refused of [c.action('ac_AAAAAAAAAAAAAAAAAAAAAA'), c.answerAction('ac_AAAAAAAAAAAAAAAAAAAAAA', 1, 'once'), c.undoAction('ac_AAAAAAAAAAAAAAAAAAAAAA', 1),
-          c.resolveAction('ac_AAAAAAAAAAAAAAAAAAAAAA', 1, 'sent'), c.withdrawAction('ac_AAAAAAAAAAAAAAAAAAAAAA', 1), c.actionItems('ac_AAAAAAAAAAAAAAAAAAAAAA', 0),
-          c.removePermission('pg_AAAAAAAAAAAAAAAAAAAAAA', 1)]) {
-          const e = await refused.then(() => null, (x: unknown) => x)
-          expect(e).toBeInstanceOf(AgentError)
-          expect(e).toMatchObject({ code: 'not_found' })
-        }
+      // The demo's lists are its sample data, so only its target knows them: no question; its actions and permissions are
+      // its sample ones (Stage 1 M3-U: a batch, a restock and a teammate's refund; the demo catch-up's PR 1: two ask cards,
+      // a teammate's, one that went out under a permission and one that needs a check; two permissions). Keyed on the
+      // target's name: since the demo seeds an action too, `seedAction` no longer tells the targets apart.
+      if (t.name === 'mock') {
+        expect(await c.questions()).toEqual([])
+        expect((await c.permissions()).map(p => p.title)).toEqual(['Post messages to a channel', 'Add stock'])
+        expect((await c.actions()).map(a => [a.kind, a.state, a.approverKind, a.batch?.itemCount ?? null])).toEqual([
+          ['exact', 'waiting', 'person', 450], ['exact', 'waiting', 'person', 12], ['ask', 'waiting', 'person', null], ['exact', 'waiting', 'admins', null],
+          ['ask', 'sent', 'person', null], ['ask', 'waiting', 'person', null], ['ask', 'waiting', 'person', null], ['ask', 'needs_check', 'person', null],
+        ])
       }
+      // Nothing a target doesn't have can be answered, read or removed: not found, on every target.
+      let refusedCount = 0
+      // One call at a time, each awaited as it starts: a call started early and refused before its handler is attached would
+      // be an unhandled rejection on a slower target.
+      for (const refused of [() => c.action('ac_AAAAAAAAAAAAAAAAAAAAAA'), () => c.answerAction('ac_AAAAAAAAAAAAAAAAAAAAAA', 1, 'once'), () => c.undoAction('ac_AAAAAAAAAAAAAAAAAAAAAA', 1),
+        () => c.resolveAction('ac_AAAAAAAAAAAAAAAAAAAAAA', 1, 'sent'), () => c.withdrawAction('ac_AAAAAAAAAAAAAAAAAAAAAA', 1), () => c.actionItems('ac_AAAAAAAAAAAAAAAAAAAAAA', 0),
+        () => c.removePermission('pg_AAAAAAAAAAAAAAAAAAAAAA', 1)]) {
+        const e = await refused().then(() => null, (x: unknown) => x)
+        expect(e).toBeInstanceOf(AgentError)
+        expect(e).toMatchObject({ code: 'not_found' })
+        refusedCount++
+      }
+      expect(refusedCount, 'every unknown id was tried').toBe(7)
       // A question nobody asked: not found, on every target.
       const e = await c.answerQuestion('q_AAAAAAAAAAAAAAAAAAAAAA', 'Yes').then(() => null, (x: unknown) => x)
       expect(e).toBeInstanceOf(AgentError)
@@ -1339,8 +1345,8 @@ describe.each(targets)('contract: $name', (t: ContractTarget) => {
 
   // ---------- snapshots ----------
   describe('snapshots keep their identity until something changes', () => {
-    test.each(stageAndScenario)('nothing changed: every read returns the same object in %s, %s', async (stage, scenario) => {
-      await t.seed({ stage, scenario })
+    test.each(SCENARIOS)('nothing changed: every read returns the same object in %s', async scenario => {
+      await t.seed({ scenario })
       const c = t.client
       expect(c.getSnapshot()).toBe(c.getSnapshot())
       expect(c.read()).toBe(c.read())
@@ -1370,7 +1376,7 @@ describe.each(targets)('contract: $name', (t: ContractTarget) => {
       expect(t.client.listNotifications()).not.toBe(notes)
 
       const data = t.client.read()
-      await t.seed({ stage: 'Act', scenario: 'Cap reached' })
+      await t.seed({ scenario: 'Cap reached' })
       expect(t.client.read()).not.toBe(data)
     })
 
@@ -1388,7 +1394,7 @@ describe.each(targets)('contract: $name', (t: ContractTarget) => {
       // A scenario change is the demo's (a target with no scenarios has no data to change).
       if (t.serves('send')) {
         const data = t.client.read()
-        await t.seed({ stage: 'Act', scenario: 'Cap reached' })
+        await t.seed({ scenario: 'Cap reached' })
         expect(calls.mock.calls.length, 'a scenario change tells the listener').toBeGreaterThan(afterWrite)
         expect(t.client.read()).not.toBe(data)
       }
@@ -1457,7 +1463,7 @@ describe.each(targets)('contract: $name', (t: ContractTarget) => {
 
     /** The client in the scenario, the write's prerequisite done, listeners and notices fresh. */
     const arm = async (scenario: Scenario, w: WriteCase) => {
-      await fresh('Act', scenario)
+      await fresh(scenario)
       await (w.prepare ?? noop)(t.client)
       await t.settle()
       clearNotices()
@@ -1593,7 +1599,7 @@ describe.each(targets)('contract: $name', (t: ContractTarget) => {
       const normal = parse(AgentDataSchema, t.client.read(), 'read()').usage
       expect(normal.total.currency, 'spend and cap share a currency').toBe(normal.cap.currency)
       expect(normal.total.minor, 'a normal month is under the cap').toBeLessThan(normal.cap.minor)
-      await fresh('Act', 'Cap reached')
+      await fresh('Cap reached')
       const data = parse(AgentDataSchema, t.client.read(), 'read()')
       expect(data.usage.total.currency, 'spend and cap share a currency').toBe(data.usage.cap.currency)
       expect(data.usage.total.minor, 'spend is at or over the cap').toBeGreaterThanOrEqual(data.usage.cap.minor)
@@ -1655,7 +1661,7 @@ describe.each(targets)('contract: $name', (t: ContractTarget) => {
       expect(me.role).toBe(fx.me.role)
       expect(member(me.memberId), 'the signed-in person is on the team list').toBeDefined()
       expect(t.client.me(), 'a snapshot keeps its identity until something changes').toBe(t.client.me())
-      await fresh('Act', 'Loading')
+      await fresh('Loading')
       expect(t.client.me()).toBeNull()
     })
 
@@ -1946,9 +1952,9 @@ describe.each(targets)('contract: $name', (t: ContractTarget) => {
     })
 
     test('Loading reports every resource loading, and the rest report ready', async () => {
-      await fresh('Act', 'Loading')
+      await fresh('Loading')
       for (const r of Object.values(t.client.read().resources)) expect(r.status).toBe('loading')
-      await fresh('Act', 'First day')
+      await fresh('First day')
       for (const r of Object.values(t.client.read().resources)) expect(r.status).toBe('ready')
     })
 
@@ -2042,11 +2048,13 @@ describe.each(targets)('contract: $name', (t: ContractTarget) => {
     const nth = <T,>(list: T[], n: number): T | undefined => list[n % Math.max(1, list.length)]
     const on = <T,>(list: T[], n: number, f: (x: T) => Promise<unknown>): Promise<unknown> => { const x = nth(list, n); return x === undefined ? Promise.resolve(SKIP) : f(x) }
     const step = (name: string, run: Op): Step => ({ name, run })
+    /** A Slack post (the product's post card): it takes no note, and no approval while the agent is paused. A refusal for either reason isn't a save, so `forSave` skips it. */
+    const isPost = (c: ContractTarget['client'], id: string) => c.read().problems.find(p => p.id === id)?.draft.kind === 'Slack post'
 
     /** Writes: each one saves, so with saves failing each one must reject. */
     const earlierWriteOps: fc.Arbitrary<Step>[] = [
-      fc.tuple(pick(50), fc.boolean()).map(([n, hold]) => step(`approve#${n}`, (c, i, forSave) => on(i.problems, n, id => (hold ? (c.getSnapshot().approved[id] ? Promise.resolve(SKIP) : c.approve(id)) : forSave && !c.getSnapshot().approved[id] ? Promise.resolve(SKIP) : c.undo(id))))),
-      fc.tuple(pick(50), fc.string()).map(([n, s]) => step('editDraft', (c, i) => on(i.problems, n, id => c.editDraft(id, s)))),
+      fc.tuple(pick(50), fc.boolean()).map(([n, hold]) => step(`approve#${n}`, (c, i, forSave) => on(i.problems, n, id => (hold ? (c.getSnapshot().approved[id] || (forSave && c.getSnapshot().paused !== null && isPost(c, id)) ? Promise.resolve(SKIP) : c.approve(id)) : forSave && !c.getSnapshot().approved[id] ? Promise.resolve(SKIP) : c.undo(id))))),
+      fc.tuple(pick(50), fc.string()).map(([n, s]) => step('editDraft', (c, i, forSave) => on(i.problems, n, id => (forSave && isPost(c, id) ? Promise.resolve(SKIP) : c.editDraft(id, s))))),
       fc.tuple(pick(50), fc.boolean()).map(([n, undo]) => step('undoHandled', (c, i) => on(i.problems, n, id => (undo ? c.undoHandled(id) : c.redoHandled(id))))),
       fc.boolean().map(p => step('pause', c => (p ? c.pause() : c.resume()))),
       // A switch is a routine or skill switch (`r:`, `s:`) or a registry switch; any other key is `invalid` (the tests below), not a save failure.
@@ -2111,7 +2119,7 @@ describe.each(targets)('contract: $name', (t: ContractTarget) => {
         checkRun(await run.toEnd())
       })),
     ]
-    const seedOp: fc.Arbitrary<Step> = fc.tuple(fc.constantFrom(...STAGES), fc.constantFrom(...SCENARIOS)).map(([stage, scenario]) => step(`seed ${stage}/${scenario}`, async () => t.seed({ stage, scenario })))
+    const seedOp: fc.Arbitrary<Step> = fc.constantFrom(...SCENARIOS).map(scenario => step(`seed ${scenario}`, async () => t.seed({ scenario })))
     // A target that serves no runs (the real one, in P2) takes the P2 writes only: a seed there is a client that never heard back.
     const op = lacks('send') ? fc.oneof(...p2WriteOps) : fc.oneof(...writeOps, ...runOps, seedOp)
     const writeOp = fc.oneof(...(lacks('send') ? p2WriteOps : writeOps))

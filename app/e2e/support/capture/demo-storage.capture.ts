@@ -21,7 +21,8 @@ const Q = 'Which orders are stuck over 3 days?'
 const A = '3 orders · $556'
 const SECOND_CHAT = 'Why did refunds jump?'
 const DRAFT = 'A draft I have not sent yet'
-const KESTREL = 'Ridge 30L Pack runs out in 9 days'
+// The payout's post to #ops-alerts in Slack, held 10 s before it goes out (#726: the Kestrel reorder is a finding now).
+const KESTREL = 'Amazon paid out $1,240 less than expected'
 
 type Violation = { directive: string; blocked: string; source: string; page: string }
 declare global {
@@ -69,7 +70,7 @@ try {
   await page.addInitScript(() => {
     if (sessionStorage.getItem('capture-seeded')) return
     localStorage.clear()
-    localStorage.setItem('inhouse.demo.switches.v1', JSON.stringify({ stage: 'Act', scenario: 'Normal', ambient: 'Off', animateMark: false }))
+    localStorage.setItem('inhouse.demo.switches.v1', JSON.stringify({ scenario: 'Normal', ambient: 'Off', animateMark: false }))
     sessionStorage.setItem('capture-seeded', '1')
   })
   await step('open Today', () => page.goto('/?demo#/today'))
@@ -101,10 +102,8 @@ try {
   // Approve the Kestrel reorder on Today: it's held for 10 s before it goes out.
   await step('approve the Kestrel reorder', async () => {
     await side.getByRole('button', { name: 'Today', exact: true }).click()
-    await page.getByRole('article').filter({ hasText: KESTREL }).getByRole('button', { name: 'Review' }).click()
-    await page.getByRole('dialog').getByRole('button', { name: 'Approve and send to Kestrel' }).click()
+    await page.getByRole('article').filter({ hasText: KESTREL }).getByRole('button', { name: 'Approve and post', exact: true }).click()
     await expect(page.getByRole('status').filter({ hasText: 'Approved. It goes out in 10 seconds.' })).toBeVisible()
-    await page.keyboard.press('Escape')
   })
 
   // Stop app time just ahead, then run past the session save (debounced 300 ms): the hold is still pending.

@@ -6,7 +6,7 @@ import { expect, fxFor, test } from './support/fx.js'
 import type { Locator, Page } from '@playwright/test'
 
 async function start(page: Page, scenario: string, hash: string) {
-  await fxFor(page, undefined).seed({ stage: 'Act', scenario, demo: { ambient: 'Always' } })
+  await fxFor(page, undefined).seed({ scenario, demo: { ambient: 'Always' } })
   await page.goto('/?demo' + hash)
 }
 
@@ -295,7 +295,22 @@ test('Conversation: the steps line expands and collapses and opens the trace, so
   await steps.click()
   // The opening list is clipped, not a scroll box (overflow: clip): nothing can scroll Details up into the clip, where the
   // growing list would pull it out from under a click (#607).
-  await expect(first.locator('[data-steps] > [data-slot=trace-collapsible-content]')).toHaveCSS('overflow-y', 'clip')
+  const list = first.locator('[data-steps] > [data-slot=trace-collapsible-content]')
+  await expect(list).toHaveCSS('overflow-y', 'clip')
+  // Before its opening animation starts, the list holds the animation's first frame (height 0), not its full height:
+  // Chrome can start that animation later than the frame that opened the list, and Details must not be there to press
+  // and then drop out from under the pointer (#607). The opening animation again, held 60 s before its start.
+  await expect(list).toHaveCSS('animation-fill-mode', 'backwards')
+  expect(await list.evaluate(el => {
+    el.style.animationName = 'none'
+    el.getBoundingClientRect()
+    el.style.animationName = ''
+    const opening = el.getAnimations()[0]
+    opening.startTime = Number(document.timeline.currentTime) + 60_000
+    const height = el.getBoundingClientRect().height
+    opening.finish()
+    return height
+  })).toBe(0)
   await first.getByRole('button', { name: 'Details', exact: true }).click()
   await expect(page.getByRole('dialog', { name: 'What your Inhouse agent did' })).toBeVisible()
   await page.keyboard.press('Escape')

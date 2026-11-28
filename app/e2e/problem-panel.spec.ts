@@ -5,9 +5,9 @@ import { expect, test, type Fx } from './support/fx.js'
 import type { Page } from '@playwright/test'
 
 async function start(page: Page, fx: Fx) {
-  await fx.seed({ stage: 'Act' })
+  await fx.seed({})
   await page.goto('/?demo#/today')
-  await expect(page.getByRole('heading', { level: 1 })).toContainText('things need you')
+  await expect(page.getByRole('heading', { level: 1 })).toContainText('left to approve today')
 }
 
 const card = (page: Page, title: string) => page.getByRole('article', { name: title })
@@ -16,7 +16,8 @@ const panel = (page: Page) => page.getByRole('dialog')
 const sent = (page: Page, text: string) =>
   page.getByRole('log', { name: 'Conversation' }).locator('[data-chat-msg]:not([data-answer])').filter({ hasText: text })
 const STUCK = 'Order #4821 is stuck for 4 days'
-const JACKET = 'Trail Shell Jacket (M, Olive) is oversold by 5'
+/** The payout's post leans on team memory (its rate card); the oversell is a finding since #726. */
+const PAYOUT = 'Amazon paid out $1,240 less than expected'
 
 test('Problem panel: Ask starts a chat with the question, the panel closes, and a reload keeps the chat', async ({ fx, page }) => {
   await start(page, fx)
@@ -56,8 +57,8 @@ test("Card menu: Ask Inhouse starts the same chat without opening the panel; the
   // A drafted fix that leans on memory opens without the memory line or its Manage button: the review window leaves
   // mechanics out (UI plan 3, round 4). Team memory stays one click away in Settings.
   await page.evaluate(() => { location.hash = '#/today' })
-  await card(page, JACKET).click({ position: { x: 12, y: 12 } })
-  await expect(panel(page).getByRole('heading', { level: 2, name: JACKET })).toBeVisible()
+  await card(page, PAYOUT).click({ position: { x: 12, y: 12 } })
+  await expect(panel(page).getByRole('heading', { level: 2, name: PAYOUT })).toBeVisible()
   await expect(panel(page)).not.toContainText('Remembered')
   await expect(panel(page).getByRole('button', { name: 'Manage', exact: true })).toHaveCount(0)
 })

@@ -55,9 +55,10 @@ export interface ResolvedTurn {
   sideModel: string
   maxTurns: number
   /**
-   * The hosts WebFetch may reach: exactly `t:webfetch`'s list, so empty (the default) is none (P8a S); null (any public
-   * host) when the Inhouse team set `t:webfetch_mode` to `open` (M3-F, N29: the egress keeps every other check and decides
-   * by the live mode); none at all while an Admin has reading web pages off (`t:webfetch_on`, M1-F).
+   * The hosts WebFetch may reach: exactly `t:webfetch`'s list in `list` mode; null (any public host) in `open` mode, the
+   * default for a brand with no host list since M3-J or the Inhouse team's `t:webfetch_mode` (M3-F, N29: the egress
+   * keeps every other check and decides by the live mode); none at all while an Admin has reading web pages off
+   * (`t:webfetch_on`, M1-F).
    */
   webFetchDomains: string[] | null
   /** Web search: only with the brand's `t:websearch` switch set to true (an Admin's, M1-F); off by default. */
@@ -85,9 +86,9 @@ export function pickSubagentModel(turn: CatalogModel, settings: SettingsView, ca
 /**
  * Route 29's model and settings resolution (design 4.9; PR 5, ask F), the one function the route and a due-task handler
  * call: unknown model → `invalid`; switched off or unpriced → `forbidden`/`model_off`; the effort and side model from
- * the catalogue and `tm:<id>:*`; `maxTurns` from `t:max_turns` (else 25); WebFetch's hosts from `t:webfetch` (empty or
- * missing: none; a stored value that breaks the rule: none, fail closed; any public host, null, when `t:webfetch_mode`
- * is `open`; none while `t:webfetch_on` is off); web search on
+ * the catalogue and `tm:<id>:*`; `maxTurns` from `t:max_turns` (else 25); WebFetch's hosts from `t:webfetch` in `list` mode (a
+ * stored value that breaks the rule: none, fail closed); any public host, null, in `open` mode (`webFetchMode`: set so,
+ * or no mode set and no host listed, M3-J); none while `t:webfetch_on` is off); web search on
  * only when `t:websearch` is true; the helpers' model (`pickSubagentModel`, N6). The web switches are brand settings (an
  * Admin's, M1-F) and the rest technical, so both scopes are read.
  */
@@ -103,7 +104,7 @@ export async function resolveTurnSettings(
   const maxTurns = typeof maxTurnsSetting === 'string' && (MAX_TURNS as readonly string[]).includes(maxTurnsSetting) ? Number(maxTurnsSetting) : 25
   const hostSetting = settings['t:webfetch']
   const hosts = typeof hostSetting === 'string' ? parseHostlist(hostSetting) : []
-  const webFetchDomains = !webFetchOn(settings['t:webfetch_on']) ? [] : webFetchMode(settings['t:webfetch_mode']) === 'open' ? null : (hosts ?? [])
+  const webFetchDomains = !webFetchOn(settings['t:webfetch_on']) ? [] : webFetchMode(settings['t:webfetch_mode'], hostSetting) === 'open' ? null : (hosts ?? [])
   const webSearch = webSearchOn(settings['t:websearch'])
   const subagentModel = pickSubagentModel(resolved.model, settings as SettingsView, catalog)
   return { model: resolved.model.apiId, pickerId: resolved.model.id, effort: resolved.effort, sideModel: resolved.sideApiId, maxTurns, webFetchDomains, webSearch, subagentModel }

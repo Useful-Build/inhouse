@@ -22,7 +22,7 @@
         "amazon",
         "xero"
       ],
-      "example": "Run it now and tell me what changed since yesterday.",
+      "example": "Check everything now and tell me what changed since yesterday.",
       "routines": [
         "Morning check"
       ],
@@ -89,8 +89,8 @@
       ]
     },
     {
-      "n": "Reorder drafting",
-      "d": "Works out how much to reorder and drafts the PO in the supplier's format.",
+      "n": "Reorder check",
+      "d": "Works out how much to reorder and flags what runs out before a delivery lands.",
       "icon": "inventory_2",
       "need": 1,
       "by": "Inhouse team",
@@ -118,28 +118,28 @@
       ]
     },
     {
-      "n": "Supplier chase",
-      "d": "Writes a short, polite chase when a purchase order is late.",
-      "icon": "forward_to_inbox",
+      "n": "Late order check",
+      "d": "Finds purchase orders that are late and suggests asking the supplier for a new date.",
+      "icon": "schedule",
       "need": 1,
       "by": "Inhouse team",
       "used": "7 times",
       "tools": [
         "shipbob"
       ],
-      "example": "Is PO-1187 from Kestrel late? Draft a chase if it is.",
+      "example": "Is PO-1187 from Kestrel late, and what should I do?",
       "updatedAt": "-14d 16:10",
       "versions": [
         {
           "by": "Inhouse team",
           "at": "-14d 16:10",
-          "note": "Never chases twice in 3 days."
+          "note": "Counts the days of stock left on the order."
         }
       ]
     },
     {
       "n": "Stuck order nudge",
-      "d": "Asks ShipBob about orders not picked after 3 days.",
+      "d": "Flags orders not picked after 3 days and asks the team to chase ShipBob.",
       "icon": "local_shipping",
       "need": 1,
       "by": "Sam Mercer, in a chat",
@@ -163,8 +163,8 @@
       ]
     },
     {
-      "n": "Customer reply drafts",
-      "d": "Drafts replies to tickets in your tone, for a person to send.",
+      "n": "Ticket review",
+      "d": "Reads new tickets and says who needs to hear from you first, and what to tell them.",
       "icon": "support_agent",
       "need": 1,
       "by": "Inhouse team",
@@ -174,7 +174,7 @@
         "shopify",
         "shipbob"
       ],
-      "example": "Draft a reply to the newest ticket about a late order.",
+      "example": "What should I tell the customer on the newest ticket about a late order?",
       "updatedAt": "-6d 13:45",
       "versions": [
         {
@@ -195,7 +195,7 @@
       "icon": "assignment_return",
       "need": 2,
       "by": "Inhouse team",
-      "used": "Runs by itself",
+      "used": "11 times this week",
       "tools": [
         "shopify",
         "shipbob"
@@ -212,11 +212,11 @@
     },
     {
       "n": "Oversell guard",
-      "d": "Pauses a variant when orders pass the stock on hand.",
+      "d": "Flags a variant when orders pass the stock on hand.",
       "icon": "block",
       "need": 2,
       "by": "Inhouse team",
-      "used": "Runs by itself",
+      "used": "Today",
       "tools": [
         "shopify",
         "shipbob"
@@ -236,12 +236,12 @@
   "suggested": [
     {
       "n": "Black Friday stock plan",
-      "d": "Finds products that will run out during the sale and drafts reorders.",
+      "d": "Finds products that will run out during the sale and suggests reorders.",
       "icon": "local_fire_department"
     },
     {
-      "n": "Review replies",
-      "d": "Drafts replies to new product reviews in your tone.",
+      "n": "Review check",
+      "d": "Finds new product reviews that need an answer, and says why.",
       "icon": "reviews"
     },
     {

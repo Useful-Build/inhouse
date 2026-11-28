@@ -14,7 +14,7 @@ function rows() {
   const noop = () => {}
   const notify: Env['notify'] = { status: 'idle', list: null, available: null, pickerError: null, pickerLoading: false, truncated: false, canEdit: false, busy: false, add: noop, remove: noop, setAlerts: noop, retry: noop }
   const env: Env = {
-    S: 2, stage: 'Run', agent: agent.getSnapshot(), data, spent: data.usage.total, phone: false,
+    agent: agent.getSnapshot(), data, spent: data.usage.total, phone: false,
     openTeam: noop, openPop: noop, openSettings: noop, newChat: noop, goSkills: noop, togglePause: noop,
     theme: 'system', setTheme: noop, toast: noop, forget: noop, download: noop, setRole: noop, setSupport: noop,
     me: agent.me(), invite: noop, removeMember: noop, grantUi: false, product: false, showGrant: true, loadingMore: false, loadMore: noop, exportFromServer: null, exportDataFromServer: null, notify,
@@ -34,22 +34,9 @@ it('the five memory rows need no stage', () => {
 
 it('exactly these rows still need Act or Run', () => {
   const needing = rows().filter(r => r.need > 0).map(r => `${r.need}:${r.key ?? r.title}`)
+  // The Notifications, Who approves what and Run limits rows left with their pages (decision A13).
   expect(needing).toMatchInlineSnapshot(`
     [
-      "1:n:wait",
-      "1:n:channel",
-      "1:n:slack",
-      "1:n:weekly",
-      "1:a:0",
-      "1:a:1",
-      "1:a:2",
-      "1:a:3",
-      "2:l:returns",
-      "2:l:chase",
-      "2:l:nudge",
-      "2:l:pause",
-      "2:l:daily",
-      "2:l:restock",
       "1:Pause Inhouse agent",
     ]
   `)

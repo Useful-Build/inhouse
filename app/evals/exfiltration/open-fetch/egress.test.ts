@@ -1,6 +1,7 @@
 // The leak set's egress door (M3-F), on an in-memory SQLite with every real migration applied, and the call matching.
 // Ways it could go wrong, written first:
-//  1. the mode row isn't the one the egress reads (`webFetchMode` of the stored JSON), or `list` leaves `open` behind;
+//  1. the mode row isn't the one the egress reads (`webFetchMode` of the stored JSON and the host list), or `list` leaves
+//     `open` behind, or leaves the default (open since M3-J for a brand with no host listed);
 //  2. a chat reads another chat's egress rows (before its mark), or a row's code reaches a result unchecked;
 //  3. a WebFetch the hook denied, or one with a result, is overwritten; a call is matched to a row for another host, or two
 //     calls to one row; a call with no row reads as fetched.
@@ -22,22 +23,26 @@ function database() {
   return { db, run }
 }
 const storedMode = (db: DatabaseSync) => {
-  const row = db.prepare("SELECT value_json FROM settings WHERE owner = 'brand' AND key = 't:webfetch_mode'").get() as { value_json: string } | undefined
-  return webFetchMode(row ? JSON.parse(row.value_json) : undefined)
+  const value = (key: string): unknown => {
+    const row = db.prepare("SELECT value_json FROM settings WHERE owner = 'brand' AND key = ?").get(key) as { value_json: string } | undefined
+    return row ? JSON.parse(row.value_json) : undefined
+  }
+  return webFetchMode(value('t:webfetch_mode'), value('t:webfetch'))
 }
 const record = (db: DatabaseSync, host: string, code: string | null) =>
   db.prepare("INSERT INTO egress_fetches (at_ms, host, verdict, code, runner, container_gen) VALUES (1, ?, ?, ?, 'r', 1)").run(host, code === null ? 'allowed' : 'refused', code)
 
 describe('the fetch door', () => {
-  it('writes the mode the egress reads, and list deletes it (the default)', async () => {
+  it('writes the mode the egress reads, list as a row too (never left to the default, #721 review)', async () => {
     const { db, run } = database()
     const d = createFetchDoor(run)
     await d.setMode('open')
     await d.setMode('open')
     expect(storedMode(db)).toBe('open')
     await d.setMode('list')
+    // No host listed: only the written `list` keeps it from the open default.
     expect(storedMode(db)).toBe('list')
-    expect(db.prepare("SELECT COUNT(*) AS n FROM settings WHERE key = 't:webfetch_mode'").get()).toEqual({ n: 0 })
+    expect(db.prepare("SELECT value_json FROM settings WHERE key = 't:webfetch_mode'").all()).toEqual([{ value_json: '"list"' }])
     await expect(d.setMode('wide' as 'open')).rejects.toThrow(DoorRefusal)
   })
   it('reads only the rows after a mark, oldest first', async () => {

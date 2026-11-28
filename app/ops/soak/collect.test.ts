@@ -300,14 +300,69 @@ describe('guards', () => {
     egress('evil.example.org', 'allowed')
     expect(runChecks(await collectDay(db, DAY, NOW, planted)).guards).toMatchObject({ status: 'unclean', detail: expect.stringContaining('evil.example.org') })
   })
-  it('an empty or missing list allows no host: any allowed fetch is off it; a refused fetch is never a bypass', async () => {
+  const mode = (value: unknown, updatedAt = T - HOUR) =>
+    run(`INSERT INTO settings (owner, key, value_json, rev, updated_at_ms, updated_by, req_id) VALUES ('brand', 't:webfetch_mode', ?, 1, ?, 'm_a', 'r')`, JSON.stringify(value), updatedAt)
+  const rawList = (valueJson: string) =>
+    run(`INSERT INTO settings (owner, key, value_json, rev, updated_at_ms, updated_by, req_id) VALUES ('brand', 't:webfetch', ?, 1, ?, 'm_a', 'r')`, valueJson, T - HOUR)
+  const guardsOf = async () => runChecks(await collectDay(db, DAY, NOW, planted)).guards
+  it('a saved empty list allows no host: any allowed fetch is off it; a refused fetch is never a bypass', async () => {
     egress('evil.example.org', 'refused')
-    expect(runChecks(await collectDay(db, DAY, NOW, planted)).guards.status).toBe('clean')
+    list('')
+    expect((await guardsOf()).status).toBe('clean')
     egress('example.com', 'allowed')
-    expect(runChecks(await collectDay(db, DAY, NOW, planted)).guards.status).toBe('unclean')
-    sqlite.exec('DELETE FROM egress_fetches'); list('')
-    egress('example.com', 'allowed')
-    expect(runChecks(await collectDay(db, DAY, NOW, planted)).guards.status).toBe('unclean')
+    expect(await guardsOf()).toMatchObject({ status: 'unclean', detail: expect.stringContaining('example.com') })
+  })
+
+  // M3-J: the day's rule is the server's `webFetchMode`, so the collector and the egress can't disagree. Every combination of the
+  // two rows (no row, an empty row, hosts; no mode, `list`, `open`, an invalid mode) with one allowed fetch to a host the
+  // listed hosts don't hold: a bypass only where the server reads `list`.
+  it.each([
+    ['no mode, no list (a brand that never set one)', undefined, undefined, 'clean'],
+    ['no mode, a reset (JSON null) list', undefined, null, 'clean'],
+    ['no mode, a reset mode and a reset list', null, null, 'clean'],
+    ['no mode, a saved empty list (#744: blocked)', undefined, '', 'unclean'],
+    ['no mode, a list of other hosts', undefined, 'docs.example.com', 'unclean'],
+    ['`list`, no list', 'list', undefined, 'unclean'],
+    ['`list`, an empty list', 'list', '', 'unclean'],
+    ['`list`, a list of other hosts', 'list', 'docs.example.com', 'unclean'],
+    ['`open`, no list', 'open', undefined, 'clean'],
+    ['`open`, an empty list', 'open', '', 'clean'],
+    ['`open`, a list of other hosts', 'open', 'docs.example.com', 'clean'],
+    ['an invalid mode, no list (read as `list`)', 'any', undefined, 'unclean'],
+    ['an invalid mode, a list of other hosts', 'OPEN', 'docs.example.com', 'unclean'],
+    ['a mode that is not text, no list', true, undefined, 'unclean'],
+    ['no mode, a list that breaks the rule (read as `list`)', undefined, 'not a list!', 'unclean'],
+    ['no mode, a list that is not text', undefined, 7, 'unclean'],
+  ] as const)('the mode and list as stored: %s', async (_name, modeValue, listValue, status) => {
+    if (modeValue !== undefined) mode(modeValue)
+    if (listValue !== undefined) list(listValue as string)
+    egress('news.example.org', 'allowed')
+    const g = await guardsOf()
+    expect(g.status).toBe(status)
+    if (status === 'clean') expect(g.detail).not.toMatch(/off the day/)
+    else expect(g.detail).toContain('news.example.org')
+  })
+  it('a list the value of which is not JSON is read as `list`, not as no list', async () => {
+    rawList('{not json')
+    egress('news.example.org', 'allowed')
+    expect(await guardsOf()).toMatchObject({ status: 'unclean', detail: expect.stringContaining('news.example.org') })
+  })
+  it('a listed host stays clean in `list`, and `open` still leaves the leak scan to decide', async () => {
+    mode('list'); list('news.example.org')
+    egress('news.example.org', 'allowed')
+    expect((await guardsOf()).status).toBe('clean')
+    sqlite.exec('DELETE FROM settings'); mode('open')
+    egress('anything.example.net', 'allowed')
+    expect((await guardsOf()).status).toBe('clean')
+    notice('n1', 'routine_failed', T + HOUR, 'text with PLANTED-1 inside')
+    expect(runChecks(await collectDay(db, DAY, NOW, { canaries: ['PLANTED-1'] })).guards).toMatchObject({ status: 'unclean', detail: expect.stringContaining('1 leak') })
+  })
+  it("the mode's row changed on or after the day began makes the day unreadable, as the list's does", async () => {
+    mode('open', T + HOUR)
+    egress('news.example.org', 'allowed')
+    expect(await guardsOf()).toMatchObject({ status: 'missing', detail: expect.stringContaining('changed') })
+    sqlite.exec('DELETE FROM settings'); mode('list'); list('news.example.org', T)
+    expect(await guardsOf()).toMatchObject({ status: 'missing', detail: expect.stringContaining('changed') })
   })
   it('an allowed host is judged as the checks see it: Example.COM. against the list example.com is clean', async () => {
     list('example.com')

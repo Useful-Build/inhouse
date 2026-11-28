@@ -6,7 +6,7 @@ routeTitleFocusTests(false)
 
 // An old tab opening a lazy route after a deploy: its chunk is gone, so the tab reloads once and the draft survives.
 test('A lazy chunk that fails to load reloads the tab once and keeps the composer draft', async ({ page, fx }) => {
-  await fx.seed({ stage: 'Act', demo: { ambient: 'Always' } })
+  await fx.seed({ demo: { ambient: 'Always' } })
   let loads = 0
   page.on('load', () => { loads++ })
   await page.goto('/?demo#/today')

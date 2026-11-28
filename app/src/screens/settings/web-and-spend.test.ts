@@ -20,7 +20,7 @@ type Env = Parameters<typeof settingsPage>[1]
 
 const noop = () => {}
 const env = (product: boolean): Env => ({
-  S: 2, stage: 'Run', agent: agent.getSnapshot(), data: agent.read(), spent: agent.read().usage.total, phone: false,
+  agent: agent.getSnapshot(), data: agent.read(), spent: agent.read().usage.total, phone: false,
   openTeam: noop, openPop: noop, openSettings: noop, newChat: noop, goSkills: noop, togglePause: noop,
   theme: 'system', setTheme: noop, toast: noop, forget: noop, download: noop, setRole: noop, setSupport: noop,
   me: agent.me(), invite: noop, removeMember: noop, grantUi: product, product, showGrant: true, loadingMore: false, loadMore: noop, exportFromServer: null, exportDataFromServer: null,
@@ -71,7 +71,7 @@ describe('the spend fields (failures 3 to 5)', () => {
       const job = r.filter(x => x.key === 's:job_cap')
       expect(job.map(x => [x.title, x.kind, x.type, x.defaultValue])).toEqual([['Job budget', 'text', 'jobBudget', '$25']])
       expect(job[0].desc).not.toMatch(/[–—]/)
-      for (const tab of ['team-agent', 'team-plan', 'team-data', 'you-general']) expect(rows(tab, product).some(x => x.key === 's:cap' || x.key === 's:job_cap'), tab).toBe(false)
+      for (const tab of ['team-agent', 'team-data', 'you-general']) expect(rows(tab, product).some(x => x.key === 's:cap' || x.key === 's:job_cap'), tab).toBe(false)
     }
   })
   it('an Admin and the Inhouse team change both, a Member neither', () => {

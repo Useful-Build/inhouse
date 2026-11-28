@@ -75,12 +75,6 @@ export function Routines() {
             <Icon name="add" size={18} />New routine
           </Button>
         )} />
-      {S === 0 && (
-        <div className="mt-5.5 flex items-center gap-2.5 rounded-xl border border-dashed border-border-strong px-4 py-3 text-sm text-foreground-3">
-          <Icon name="lock" size={16} weight={400} />
-          <span className="flex-1">In Watch only the morning check runs. Scheduled jobs start in Act.</span>
-        </div>
-      )}
       {list.length === 0 && (
         <EmptyState className="mt-6">{data.status === 'loading' ? 'Still reading your tools. Your routines show here in a moment.' : 'No routines yet. Ask for one in a chat.'}</EmptyState>
       )}

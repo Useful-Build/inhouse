@@ -24,7 +24,7 @@ const jump = (page: Page) => page.getByRole('button', { name: 'Jump to latest' }
 const phase = (page: Page, name: string) => page.evaluate(n => { (window as unknown as { __phase: string }).__phase = n }, name)
 
 async function open(page: Page) {
-  await fxFor(page, undefined).seed({ stage: 'Act', demo: { ambient: 'Always' } })
+  await fxFor(page, undefined).seed({ demo: { ambient: 'Always' } })
   await page.goto('/?demo#/chats/refunds')
   await expect(page.getByRole('log', { name: 'Conversation' }).getByText('Refund requests rose').first()).toBeVisible()
 }

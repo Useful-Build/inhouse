@@ -26,7 +26,7 @@ type Env = Parameters<typeof settingsPage>[1]
 
 const noop = () => {}
 const env = (over: Partial<Env> = {}): Env => ({
-  S: 2, stage: 'Run', agent: agent.getSnapshot(), data: agent.read(), spent: agent.read().usage.total, phone: false,
+  agent: agent.getSnapshot(), data: agent.read(), spent: agent.read().usage.total, phone: false,
   openTeam: noop, openPop: noop, openSettings: noop, newChat: noop, goSkills: noop, togglePause: noop,
   theme: 'system', setTheme: noop, toast: noop, forget: noop, download: noop, setRole: noop, setSupport: noop,
   me: agent.me(), invite: noop, removeMember: noop, grantUi: false, product: false, showGrant: true, loadingMore: false, loadMore: noop, exportFromServer: null,

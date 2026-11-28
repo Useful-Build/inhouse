@@ -14,7 +14,10 @@ import { DoorRefusal, sqlString, type RunSql } from '../../targets/door.ts'
 export interface EgressRow { n: number; host: string; verdict: 'allowed' | 'refused'; code: string | null }
 
 export interface FetchDoor {
-  /** Sets the brand's `t:webfetch_mode`: `open` writes it, `list` deletes it (the default). */
+  /**
+   * Sets the brand's `t:webfetch_mode`, always as a row (#721 review): `list` is written too, never left to the default,
+   * so a case seeded `list` stays `list` if the default for a brand with no list ever changes (M3-J1).
+   */
   setMode(mode: 'list' | 'open'): Promise<void>
   /** The newest egress record's number now (0 for none): a chat's rows are the ones after it. */
   mark(): Promise<number>
@@ -29,12 +32,8 @@ const CODE = /^[a-z_]{1,20}$/
 export function createFetchDoor(run: RunSql): FetchDoor {
   return {
     async setMode(mode) {
-      if (mode === 'list') {
-        await run("DELETE FROM settings WHERE owner = 'brand' AND key = 't:webfetch_mode'")
-        return
-      }
-      if (mode !== 'open') throw new DoorRefusal('t:webfetch_mode is list or open')
-      await run(`INSERT INTO settings (owner, key, value_json, rev, updated_at_ms, updated_by, req_id) VALUES ('brand', 't:webfetch_mode', ${sqlString(JSON.stringify('open'))}, 1, ${Date.now()}, 'eval', 'eval') ON CONFLICT (owner, key) DO UPDATE SET value_json = excluded.value_json, rev = settings.rev + 1, updated_at_ms = excluded.updated_at_ms, updated_by = 'eval', req_id = 'eval'`)
+      if (mode !== 'list' && mode !== 'open') throw new DoorRefusal('t:webfetch_mode is list or open')
+      await run(`INSERT INTO settings (owner, key, value_json, rev, updated_at_ms, updated_by, req_id) VALUES ('brand', 't:webfetch_mode', ${sqlString(JSON.stringify(mode))}, 1, ${Date.now()}, 'eval', 'eval') ON CONFLICT (owner, key) DO UPDATE SET value_json = excluded.value_json, rev = settings.rev + 1, updated_at_ms = excluded.updated_at_ms, updated_by = 'eval', req_id = 'eval'`)
     },
     async mark() {
       const rows = await run('SELECT coalesce(max(n), 0) AS n FROM egress_fetches')

@@ -3,7 +3,6 @@ import { useEffect, useLayoutEffect, useRef, useState, useSyncExternalStore } fr
 import type { ComponentProps } from 'react'
 import { cn } from '@/lib/utils'
 import { agent, demo } from '../agent'
-import { STAGES } from '../agent/types'
 import type { SupportGrant } from '../agent'
 import { keepUnitsTogether } from '../agent/clock'
 import { STAGE_TAGS, memberFor, stageLocked, userName } from '../state/derive'
@@ -240,11 +239,10 @@ function download(file: string, text: string, type: string) {
 
 export function Settings() {
   const ctx = useCtx()
-  const { S, agent: st, data } = ctx
+  const { agent: st, data } = ctx
   const { usage } = data
   const ui = useUi()
   const { setTab, phone } = ui
-  const stage = STAGES[S]
   const me = useSyncExternalStore(agent.subscribe, agent.me)
   const [inviting, setInviting] = useState(false)
   const [loadingMore, setLoadingMore] = useState(false)
@@ -293,7 +291,7 @@ export function Settings() {
   // first click's promise, so it never starts a second export (and a second audit line).
   const exportInFlight = useRef<Promise<void> | null>(null)
   const env: Env = {
-    S, stage, agent: st, data,
+    agent: st, data,
     spent: usage.total,
     phone,
     openTeam: ui.openTeam, openPop: ui.openPop, openSettings: ui.openSettings, newChat: ui.newChat,
@@ -413,8 +411,8 @@ export function Settings() {
               <Icon name="desktop_windows" size={16} className="flex-none" />Change these on a computer.
             </p>
           )}
-          {/* Stage 1 M2-H: Always allowed draws itself (the product only; content.ts names it for the search). */}
-          {setTab === 'you-permissions' && demo === null && <Permissions />}
+          {/* Stage 1 M2-H: Always allowed draws itself (content.ts names it for the search). */}
+          {setTab === 'you-permissions' && <Permissions />}
           {/* Stage 1 M3-C: What the agent can do draws itself too. */}
           {setTab === 'team-ceiling' && demo === null && <Ceiling />}
           {page.sections.filter(sec => sec.rows.length > 0 || sec.empty).map((sec, si) => (

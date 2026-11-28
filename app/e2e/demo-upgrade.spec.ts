@@ -28,7 +28,7 @@ const restore = (entries: [string, string][]) => {
 
 const side = (page: Page) => page.getByRole('complementary', { name: 'Sidebar' })
 
-test('A demo stored by the build before the seam opens with its chat, draft, model pick and approval mid-hold intact', async ({ fx, page }) => {
+test('A demo stored by the build before the seam opens with its chat, draft and model pick intact, and drops the approval of what is now a finding', async ({ fx, page }) => {
   expect(demoEntry, 'the fixture holds the demo state').toBeDefined()
   const [approvalId, approval] = Object.entries(demoState.approved as Record<string, { ms: number; title: string; by: string; atMin: number }>)[0]
   // The card's aria-label is its problem's title: problem `stock` in src/agent/sample-data/problems.json, which the
@@ -47,7 +47,7 @@ test('A demo stored by the build before the seam opens with its chat, draft, mod
   await page.clock.install({ time: approval.ms })
   // The seed carries no demo switches: the restore below writes the fixture's own switches entry, whose ambient is Off.
   // Passing `demo: { ambient: 'Always' }` here would be silently overridden by it, so it isn't passed.
-  await fx.seedSaved({ stage: 'Act' }, demoState)
+  await fx.seedSaved({}, demoState)
   // After the seed (which clears storage first), so the fixture's other entries stay.
   await page.addInitScript(restore, rest.map(e => [e.key, e.value] as [string, string]))
   await fx.open('#/today')
@@ -69,20 +69,15 @@ test('A demo stored by the build before the seam opens with its chat, draft, mod
   await expect(page.getByRole('banner')).toContainText(draftTitle)
   await expect(page.getByRole('textbox', { name: 'Message Inhouse' })).toHaveValue(draft.text)
 
-  // The approval is mid-hold, then goes out on the clock.
+  // The fixture approved the Ridge reorder, which is a finding now (issue 747): its approval is dropped on load, so the card
+  // shows its suggestion, nothing is going out, and nothing goes out on the clock.
   await side(page).getByRole('button', { name: 'Today', exact: true }).click()
-  // The card is the fixture's approval, found by its problem title (the card's aria-label).
-  const approved = page.getByRole('article', { name: problemTitle, exact: true })
-  await expect(approved).toContainText('going out')
-  await expect(page.getByRole('article').filter({ hasText: 'going out' })).toHaveCount(1)
-  expect(Object.keys(((await fx.saved()).demo.sent as Record<string, unknown>) ?? {})).not.toContain(approvalId)
+  const ridge = page.getByRole('article', { name: problemTitle, exact: true })
+  await expect(ridge).toContainText('Suggested: reorder 600 from Kestrel Supply today')
+  await expect(page.getByRole('article').filter({ hasText: 'going out' })).toHaveCount(0)
   await page.clock.runFor(12_000)
-  await expect(approved).not.toContainText('going out')
-  // The card shows the approval's converted time: the fixture's `atMin` 480 (8:00 AM) is now an instant that reads 8:00 AM
-  // in the device's time zone, next to the approver's first name.
-  expect(approval.atMin).toBe(480)
-  await expect(approved).toContainText(`Approved by ${approval.by.split(' ')[0]} at 8:00 AM`)
-  await expect.poll(async () => Object.keys(((await fx.saved()).demo.sent as Record<string, unknown>) ?? {})).toContain(approvalId)
+  await expect(ridge).not.toContainText('Approved by')
+  expect(Object.keys(((await fx.saved()).demo.sent as Record<string, unknown>) ?? {})).not.toContain(approvalId)
   // The CSP guard's teardown waits one animation frame per page, and a paused fake clock holds animation frames too.
   await page.clock.resume()
 })

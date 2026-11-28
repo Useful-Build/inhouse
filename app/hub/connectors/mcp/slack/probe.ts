@@ -9,12 +9,14 @@
 // or an in-band error and its code), and why a failed list failed. It uses only the token handed to it: never the core,
 // never a stored credential. Shapes, codes and date-shaped version strings only: never a body, a header or upstream text.
 import { jsonObject, MCP_MAX_BYTES, MCP_TIMEOUT_MS, send, type Upstream } from '../../../oauth/http'
-import { reviewedCall } from '../reviewed-call'
+import { LEGACY_PINNED, reviewedCall } from '../reviewed-call'
 import { EraCache, sdkListTools, type McpFailure, type McpTarget, type SdkDeps } from '../sdk'
 import { slackConnector } from './route'
 
 export type ProbeResult = {
   listed: { slack_search_users: boolean; slack_read_file: boolean }
+  /** `ok`, or why the list failed: so a failed list isn't read as "hidden" (#700). */
+  list: 'ok' | McpFailure
   /** `ok`, `unauthorized` or a hub error code (`scope_mismatch` = 403 insufficient_scope, `upstream_rejected` = hidden). */
   searchUsers: string
 }
@@ -31,7 +33,7 @@ export type DiscoverAnswer = {
   versions?: string[]
 }
 
-export type ProbeDetail = ProbeResult & { list: 'ok' | McpFailure; discover: DiscoverAnswer }
+export type ProbeDetail = ProbeResult & { discover: DiscoverAnswer }
 
 const MODERN_VERSION = '2026-07-28'
 
@@ -67,10 +69,13 @@ export async function discoverOnce(upstream: Upstream, token: string): Promise<D
 export async function probeDetail(upstream: Upstream, token: string): Promise<ProbeDetail> {
   const deps: SdkDeps = { upstream, now: () => Date.now(), eras: new EraCache() }
   const target: McpTarget = { endpoint: slackConnector.mcp.endpoint, generation: 0, credential: { header: 'Authorization', value: `Bearer ${token}` } }
+  // The list and the call follow the hub's pin on Slack's era (`LEGACY_PINNED`), so `discoverOnce` is the only
+  // `server/discover` sent and the list answers whatever the probe got (#700, #701).
+  const era = LEGACY_PINNED.has(slackConnector.id) ? ('legacy' as const) : undefined
   const discover = await discoverOnce(upstream, token)
-  const list = await sdkListTools(deps, target)
+  const list = await sdkListTools(deps, target, { era })
   const names = list.kind === 'ok' ? list.tools.map(t => t.name) : []
-  const out = await reviewedCall(deps, { endpoint: target.endpoint, token, generation: 0, session: null, name: 'slack_search_users', args: { query: 'test' }, era: 'legacy' })
+  const out = await reviewedCall(deps, { endpoint: target.endpoint, token, generation: 0, session: null, name: 'slack_search_users', args: { query: 'test' }, era })
   return {
     listed: { slack_search_users: names.includes('slack_search_users'), slack_read_file: names.includes('slack_read_file') },
     searchUsers: out.kind === 'ok' ? 'ok' : out.kind === 'unauthorized' ? 'unauthorized' : out.code,
@@ -79,8 +84,8 @@ export async function probeDetail(upstream: Upstream, token: string): Promise<Pr
   }
 }
 
-/** The S4 answer alone (the CI canary's shape). */
+/** The S4 answer and the list's outcome (the CI canary's shape). */
 export async function probe(upstream: Upstream, token: string): Promise<ProbeResult> {
-  const { listed, searchUsers } = await probeDetail(upstream, token)
-  return { listed, searchUsers }
+  const { listed, list, searchUsers } = await probeDetail(upstream, token)
+  return { listed, list, searchUsers }
 }

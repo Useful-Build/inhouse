@@ -36,6 +36,23 @@ describe("Slack's pinned era", () => {
     expect(r.token).not.toBeNull()
   })
 
+  it('the re-send after one 401 is pinned too: no server/discover, and the token stays (#701)', async () => {
+    const w = world()
+    await connect(w)
+    const real = w.slack.fetch
+    const seen: string[] = []
+    let inits = 0
+    w.slack.fetch = async req => {
+      const body = req.method === 'POST' ? ((await req.clone().json().catch(() => null)) as { method?: string } | null) : null
+      if (body?.method) seen.push(body.method)
+      const refuse = body?.method === 'server/discover' || (body?.method === 'initialize' && inits++ === 0)
+      return refuse ? new Response(null, { status: 401, headers: { 'WWW-Authenticate': 'Bearer' } }) : real(req)
+    }
+    expect(codeOf(await slackRead(w))).toBe('ok')
+    expect(seen).toEqual(['initialize', 'initialize', 'notifications/initialized', 'tools/call'])
+    expect(w.store(SLACK).record()!.state).toBe('active')
+  })
+
   it('control: the notes fixture is unpinned, so its first read probes with server/discover and falls back', async () => {
     const w = world()
     await connect(w, NOTES)

@@ -9,7 +9,7 @@ pagesPolish(test, 'desktop')
 for (const width of [1440, 1024]) {
   test(`Models (desktop ${width}): one "How hard it thinks" caption, over the first picker`, async ({ page, fx }) => {
     await page.setViewportSize({ width, height: 900 })
-    await fx.seed({ stage: 'Act', once: false })
+    await fx.seed({ once: false })
     await page.goto('/?demo#/settings/team-modes')
     // One caption shows: above the picker column on a wide card, above the first picker when rows wrap.
     const visible = page.getByText('How hard it thinks', { exact: true }).filter({ visible: true })

@@ -12,7 +12,7 @@
 import { SYSTEM_MEMBER_ID } from '../../server/db/ids.ts'
 import { hashId } from '../../server/routines/keys.ts'
 import { BACKSTOP_MS } from '../../server/routines/limits.ts'
-import { parseHostlist } from '../../shared/contract/settings-table.ts'
+import { parseHostlist, webFetchMode } from '../../shared/contract/settings-table.ts'
 import type { BellFacet, ConnectorFacet, DayEvidence, EgressFacet, GuardFacet, MemoryFacet, MorningFacet, RunsFacet } from './types.ts'
 import { dayEndMs, dayStartMs } from './window.ts'
 
@@ -137,32 +137,37 @@ async function guards(db: SoakDb, s: number, e: number, canaries: readonly strin
 }
 
 /**
- * The egress record's day against the day's `t:webfetch` list. The settings row keeps only the current list and its
- * last write time (and the audit log keeps the list redacted), so the day's list is known only when the row was last
- * written before the day began; otherwise, or when the record can't be read, the facet is unreadable. No row, or an
- * empty or broken list, is no host (the product's rule, server/api/runs.ts).
+ * The egress record's day against the day's fetch rule. The rule is the server's own `webFetchMode` over the brand's
+ * `t:webfetch_mode` and `t:webfetch` rows (M3-J): in `open` no host is off the list; in `list` the listed hosts are the
+ * only ones allowed, and none when the list is empty, missing or broken. The settings rows keep only the current value
+ * and its last write time (and the audit log keeps a list redacted), so the day's rule is known only when both rows were
+ * last written before the day began; otherwise, or when the record can't be read, the facet is unreadable.
  */
 async function egressDay(db: SoakDb, s: number, e: number): Promise<EgressFacet> {
   let allowed: Record<string, unknown>[]
-  let listRows: Record<string, unknown>[]
+  let rows: Record<string, unknown>[]
   try {
-    listRows = await db("SELECT value_json, updated_at_ms FROM settings WHERE owner = 'brand' AND key = 't:webfetch'")
+    rows = await db("SELECT key, value_json, updated_at_ms FROM settings WHERE owner = 'brand' AND key IN ('t:webfetch_mode', 't:webfetch')")
     allowed = await db("SELECT host FROM egress_fetches WHERE verdict = 'allowed' AND at_ms >= ? AND at_ms < ?", [s, e])
   } catch (err) {
     console.error(`soak: the egress record could not be read: ${err instanceof Error ? err.message : String(err)}`)
     return { unreadable: 'the egress record could not be read' }
   }
-  const row = listRows[0]
-  if (row !== undefined && n(row.updated_at_ms) >= s) return { unreadable: "the brand's WebFetch list changed on or after this day began, so the day's list is unknown" }
-  let value: unknown = null
-  if (row !== undefined) {
-    try { value = JSON.parse(String(row.value_json)) } catch { value = null }
+  if (rows.some(r => n(r.updated_at_ms) >= s)) return { unreadable: "the brand's WebFetch mode or list changed on or after this day began, so the day's rule is unknown" }
+  // No row is undefined, as the egress reads it; a value that can't be read is a non-null value that is no valid mode or list, so it reads as `list` (fail closed).
+  const stored = (key: string): unknown => {
+    const row = rows.find(r => r.key === key)
+    if (row === undefined) return undefined
+    try { return JSON.parse(String(row.value_json)) as unknown } catch { return BROKEN }
   }
-  const listed = new Set(typeof value === 'string' ? parseHostlist(value) ?? [] : [])
+  const hosts = stored('t:webfetch')
+  const mode = webFetchMode(stored('t:webfetch_mode'), hosts)
+  const listed = new Set(typeof hosts === 'string' ? parseHostlist(hosts) ?? [] : [])
   // As the egress's checks see a host (lowercase, one trailing dot dropped): a row written another way is judged the same.
-  const offList = [...new Set(allowed.map(r => String(r.host).replace(/\.$/, '').toLowerCase()).filter(h => !listed.has(h)))].sort()
+  const offList = mode === 'open' ? [] : [...new Set(allowed.map(r => String(r.host).replace(/\.$/, '').toLowerCase()).filter(h => !listed.has(h)))].sort()
   return { allowed: allowed.length, offList }
 }
+const BROKEN = Symbol('unreadable setting value')
 
 /**
  * Why `day` can't be recorded yet, or null. A day waits while a slot due in it is still claimed or started inside its

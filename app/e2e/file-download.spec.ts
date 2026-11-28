@@ -5,7 +5,7 @@ import { readFileSync } from 'node:fs'
 import { expect, fxFor, test } from './support/fx.js'
 
 test('Download: a sent attachment has a Download button that saves a file named like the chip', async ({ page }) => {
-  await fxFor(page, undefined).seed({ stage: 'Act', demo: { ambient: 'Always' } })
+  await fxFor(page, undefined).seed({ demo: { ambient: 'Always' } })
   await page.goto('/?demo#/chats/stuck')
   const field = page.getByRole('textbox', { name: 'Message Inhouse' })
   await expect(field).toBeFocused()

@@ -2,7 +2,7 @@
 import { expect, test } from './support/fx.js'
 
 test('Phone: the chat row menu opens from the drawer and renames in place; Escape cancels without closing the drawer', async ({ page, fx }) => {
-  await fx.seed({ stage: 'Act', demo: { ambient: 'Always' } })
+  await fx.seed({ demo: { ambient: 'Always' } })
   await page.goto('/?demo#/chats/refunds')
   const side = page.getByRole('complementary', { name: 'Sidebar' })
   await page.getByRole('button', { name: 'Menu' }).click()

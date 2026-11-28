@@ -1,9 +1,9 @@
-// PR 4, Today, Approvals and the review panel, at 1440: no card cuts a word at Watch, Act or Run; a draft with no text of
+// PR 4, Today, Approvals and the review panel, at 1440: no card cuts a word (the agent's action cards too); a draft with no text of
 // its own takes a note in the panel, is approved there and keeps the note through Undo; Approve all low-risk comes back with
 // one Undo from the toast. The 390 px twin is today-approvals-phone.spec.ts.
 import { expect, test } from './csp.js'
 import type { Page } from '@playwright/test'
-import { cutText, expectNothingCut, start, STAGES } from './today-approvals-helpers.js'
+import { cutText, expectNothingCut, start } from './today-approvals-helpers.js'
 
 const shot = async (page: Page, name: string) => {
   await page.evaluate(() => Promise.all(document.getAnimations().filter(a => a.timeline instanceof DocumentTimeline && a.effect?.getTiming().iterations !== Infinity).map(a => a.finished)))
@@ -14,17 +14,16 @@ const toast = (page: Page, text: string | RegExp) => page.locator('[data-toast]'
 const draft = (page: Page, title: string) => page.locator('[data-slot=card]').filter({ has: page.getByRole('heading', { level: 2, name: title, exact: true }) })
 const RETURNS = 'Restock 11 units on Shopify'
 
-for (const stage of STAGES) {
-  test(`1440: at ${stage}, no card on Today or Approvals cuts any text`, async ({ page }) => {
-    await start(page, stage, '#/today')
-    await expectNothingCut(page, stage)
-    await shot(page, `approvals-${stage.toLowerCase()}-1440`)
-  })
-}
+// The demo has no stages since decision A13: one view, with the agent's action cards beside the drafts.
+test('1440: no card on Today or Approvals cuts any text', async ({ page }) => {
+  await start(page, '#/today')
+  await expectNothingCut(page)
+  await shot(page, 'approvals-1440')
+})
 
 test('A draft with no text: Edit opens the panel on a note field, the note rides through approve and Undo', async ({ page }) => {
-  await start(page, 'Act', '#/approvals')
-  await expect(waiting(page)).toHaveText(/·\s6$/)
+  await start(page, '#/approvals')
+  await expect(waiting(page)).toHaveText(/·\s3$/)
   // The restock has lines but no text of its own; Edit is in the card's "···" menu and always opens the panel.
   const card = draft(page, RETURNS)
   await expect(card.getByRole('button', { name: 'Approve and restock' })).toBeVisible()
@@ -44,7 +43,7 @@ test('A draft with no text: Edit opens the panel on a note field, the note rides
   const title = await panel.getByRole('heading', { name: '11 returns are not restocked' }).boundingBox()
   expect(done, 'Done is in the draft').not.toBeNull()
   expect(close!.y + close!.height, 'Close sits above the title').toBeLessThanOrEqual(title!.y)
-  await expect(panel.getByText(/^\d of 6$/)).toBeVisible()
+  await expect(panel.getByText(/^\d of 3$/)).toBeVisible()
   // The footer holds two buttons on one row, the main action then More (Don't send is inside More), inside the panel's box.
   const actions = await Promise.all(['More', 'Approve and restock'].map(n => panel.getByRole('button', { name: n, exact: true }).boundingBox()))
   const box = await panel.boundingBox()
@@ -59,36 +58,35 @@ test('A draft with no text: Edit opens the panel on a note field, the note rides
   await expect(panel.getByRole('heading', { level: 2 })).toBeVisible()
   await page.keyboard.press('Escape')
   await expect(panel).toHaveCount(0)
-  await expect(waiting(page)).toHaveText(/·\s5$/)
+  await expect(waiting(page)).toHaveText(/·\s2$/)
   const approved = page.getByRole('region', { name: 'Approved today' })
   await expect(approved).toContainText('11 units restocked on Shopify')
 
   // Undo brings the draft back with the note still on it.
   await approved.getByRole('button', { name: 'Undo', exact: true }).click()
-  await expect(waiting(page)).toHaveText(/·\s6$/)
+  await expect(waiting(page)).toHaveText(/·\s3$/)
   await expect(draft(page, RETURNS)).toContainText('Olive units first, the rest after the count.')
   await expect(draft(page, RETURNS)).toContainText('Your note')
 })
 
-test('Approve all low-risk approves three drafts, and one Undo in the toast takes them all back', async ({ page }) => {
-  await start(page, 'Act', '#/approvals')
-  await expect(waiting(page)).toHaveText(/·\s6$/)
-  await page.getByRole('button', { name: 'Approve all low-risk' }).click()
+// Every waiting draft is low risk since #726 (the two posts to #ops-alerts and the restock): with all three approved
+// and only the agent's own cards waiting, the drafts section steps aside, and one Undo brings all three back.
+test('Approve all low-risk approves the three drafts, and one Undo in the toast takes them all back', async ({ page }) => {
+  await start(page, '#/approvals')
   await expect(waiting(page)).toHaveText(/·\s3$/)
-  const approved = page.getByRole('region', { name: 'Approved today' })
-  await expect(approved.getByRole('button', { name: 'Undo', exact: true })).toHaveCount(3)
+  await page.getByRole('button', { name: 'Approve all low-risk' }).click()
+  await expect(toast(page, 'Approved 3 drafts')).toBeVisible()
   await expect(page.getByRole('button', { name: 'Approve all low-risk' })).toHaveCount(0)
-  // The sensitive three stay: each one's primary action is Review.
-  await expect(page.getByRole('main').getByRole('button', { name: 'Review draft', exact: true })).toHaveCount(3)
+  await expect(page.getByRole('main').getByRole('button', { name: 'Review draft', exact: true })).toHaveCount(0)
   await shot(page, 'approved-all-low-risk-1440')
   await toast(page, 'Approved 3 drafts').getByRole('button', { name: 'Undo', exact: true }).click()
-  await expect(waiting(page)).toHaveText(/·\s6$/)
-  await expect(approved).toHaveCount(0)
+  await expect(waiting(page)).toHaveText(/·\s3$/)
+  await expect(page.getByRole('region', { name: 'Approved today' })).toHaveCount(0)
   await expect(page.getByRole('button', { name: 'Approve all low-risk' })).toBeVisible()
 })
 
 test('Today: the whole card opens the panel from one real button, and the "···" menu does not', async ({ page }) => {
-  await start(page, 'Act', '#/today')
+  await start(page, '#/today')
   const card = page.getByRole('article', { name: 'Ridge 30L Pack runs out in 9 days' })
   // The title is a real button; the card has no click handler of its own.
   await card.getByRole('button', { name: 'Ridge 30L Pack runs out in 9 days', exact: true }).focus()
@@ -108,7 +106,7 @@ test('Today: the whole card opens the panel from one real button, and the "··�
 
 for (const [scenario, text] of [['First day', 'Nothing to approve yet.'], ['Loading', 'Reading your tools']] as const) {
   test(`Approvals, ${scenario}: no sort, no approve-all, no cut text${scenario === 'Loading' ? ', and a loading status' : ''}`, async ({ page }) => {
-    await start(page, 'Act', '#/approvals', scenario)
+    await start(page, '#/approvals', scenario)
     await expect(waiting(page)).toBeVisible()
     await expect(page.getByRole('main')).toContainText(text)
     await expect(page.getByRole('combobox', { name: /^Sort drafts/ })).toHaveCount(0)
