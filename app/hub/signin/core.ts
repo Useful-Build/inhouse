@@ -16,7 +16,8 @@
 import type { AccountStatus, HubErrorCode, HubResult, Instant, SignInState } from '../index/contract'
 import type { McpClientConfig, McpConnectorModule, McpToolResult } from '../registry/registry'
 import { MCP_SCOPE, requestedScopes, sameScopeSet, type Readiness } from '../registry/registry'
-import { callMcpTool, type McpSession } from '../connectors/mcp/client'
+import { reviewedCall } from '../connectors/mcp/reviewed-call'
+import { EraCache, type LegacySession } from '../connectors/mcp/sdk'
 import { constantTimeEqual } from '../oauth/http'
 import {
   authorizeUrl,
@@ -221,7 +222,9 @@ export class SignInCore {
   readonly #d: SignInDeps
   #inflight: Promise<GrantOutcome> | null = null
   /** The MCP session, in object memory only, keyed by the generation it started under (P5 W1). */
-  #session: McpSession | null = null
+  #session: LegacySession | null = null
+  /** Each endpoint's MCP era, in object memory only, by credential generation (N36). */
+  readonly #eras = new EraCache()
 
   constructor(deps: SignInDeps) {
     this.#d = deps
@@ -1292,12 +1295,12 @@ export class SignInCore {
     const ring = await this.#d.keyring()
     if (!ring.ok) return err('key_unavailable')
     const started = this.#d.now()
-    const target = { endpoint: c.mcp.endpoint, allowedHosts: c.mcp.allowedHosts }
+    const endpoint = c.mcp.endpoint
 
     const first = await this.#mcpAcquire(accountId, ring.ring, requested, true)
     if (!first.ok) return this.#mcpLogged(accountId, name, started, err(first.code, first.detail))
-    const upstream = await this.#d.upstream()
-    let out = await callMcpTool(upstream, target, first.token, first.generation, this.#session, name, args)
+    const sdk = { upstream: await this.#d.upstream(), now: () => this.#d.now(), eras: this.#eras }
+    let out = await reviewedCall(sdk, { endpoint, token: first.token, generation: first.generation, session: this.#session, name, args })
     if (out.kind === 'unauthorized') {
       this.#session = null
       const now = this.#read()
@@ -1310,7 +1313,7 @@ export class SignInCore {
       }
       const second = await this.#mcpAcquire(accountId, ring.ring, requested, false)
       if (!second.ok) return this.#mcpLogged(accountId, name, started, err(second.code, second.detail))
-      out = await callMcpTool(upstream, target, second.token, second.generation, null, name, args)
+      out = await reviewedCall(sdk, { endpoint, token: second.token, generation: second.generation, session: null, name, args })
       if (out.kind === 'unauthorized') {
         this.#mcpRejected(accountId, second.generation)
         return this.#mcpLogged(accountId, name, started, err('credentials_rejected'))
@@ -1321,8 +1324,8 @@ export class SignInCore {
       this.#session = null
       return this.#mcpLogged(accountId, name, started, err(out.code, undefined, out.retryAfterMs))
     }
-    // Kept only while the record still carries the generation it started under.
-    if (this.#read()?.generation === out.session.generation) this.#session = out.session
+    // Kept only while the record still carries the generation it started under (a modern server has none).
+    if (!out.session || this.#read()?.generation === out.session.generation) this.#session = out.session
     return this.#mcpLogged(accountId, name, started, ok(out.result), out.dropped)
   }
 

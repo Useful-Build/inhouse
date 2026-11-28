@@ -1,7 +1,8 @@
 // P5 W1 brief "Unit cases": Slack's token answers, scope parsing, discovery refusals, the host check, and the MCP
 // client's answers (isError, an SSE single event, 4 MiB + 1, 403 insufficient_scope). Literal fixtures throughout.
-import { describe, expect, it } from 'vitest'
-import { callMcpTool, singleEvent } from '../connectors/mcp/client'
+import { describe, expect, it, vi } from 'vitest'
+import { reviewedCall } from '../connectors/mcp/reviewed-call'
+import { EraCache, ERA_TTL_MS } from '../connectors/mcp/sdk'
 import { slackConnector } from '../connectors/mcp/slack/route'
 import { notesConnector } from '../connectors/mcp/testing/notes-connector'
 import type { McpConnectorModule } from '../registry/registry'
@@ -130,31 +131,38 @@ describe('discovery (dynamic connectors)', () => {
   })
 })
 
-describe('the MCP client', () => {
-  const target = { endpoint: 'https://mcp.slack.com/mcp', allowedHosts: ['mcp.slack.com'] }
-  /** Answers initialize and the notification, then `last` for tools/call. */
-  const server = (last: () => Response) => async (req: Request) => {
-    const msg = (await req.json()) as { method: string; id?: number }
-    if (msg.method === 'initialize') return json({ jsonrpc: '2.0', id: msg.id, result: { protocolVersion: '2025-11-25' } }, 200, { 'Mcp-Session-Id': 's1' })
-    if (msg.method === 'notifications/initialized') return new Response(null, { status: 202 })
-    return last()
+describe('the MCP client (the SDK wrapper, through reviewed-call.ts since M4-C2)', () => {
+  const endpoint = 'https://mcp.slack.com/mcp'
+  /** A known 2025 server: the era is cached as legacy, so the call runs the plain handshake (no probe). */
+  const deps = (upstream: (req: Request) => Promise<Response>) => {
+    const eras = new EraCache()
+    eras.set(endpoint, 1, { kind: 'legacy' }, Date.now() + ERA_TTL_MS)
+    return { upstream, now: () => Date.now(), eras }
   }
-  const call = (last: () => Response) => callMcpTool(server(last), target, 'tok', 1, null, 'slack_search_public', {})
+  /** Answers initialize and the notification, then `last` (with the request's id) for tools/call. */
+  const server = (last: (id: unknown) => Response) => async (req: Request) => {
+    const msg = (await req.json()) as { method: string; id?: number }
+    if (msg.method === 'initialize') return json({ jsonrpc: '2.0', id: msg.id, result: { protocolVersion: '2025-11-25', capabilities: { tools: {} }, serverInfo: { name: 'fake', version: '1' } } }, 200, { 'Mcp-Session-Id': 's1' })
+    if (msg.method === 'notifications/initialized') return new Response(null, { status: 202 })
+    return last(msg.id)
+  }
+  const callWith = (upstream: (req: Request) => Promise<Response>, token: string) =>
+    reviewedCall(deps(upstream), { endpoint, token, generation: 1, session: null, name: 'slack_search_public', args: {} })
+  const call = (last: (id: unknown) => Response) => callWith(server(last), 'tok')
 
   it('an isError result is upstream_rejected with no upstream text', async () => {
-    const r = await call(() => json({ jsonrpc: '2.0', id: 3, result: { isError: true, content: [{ type: 'text', text: 'SECRET upstream detail' }] } }))
+    const r = await call(id => json({ jsonrpc: '2.0', id, result: { isError: true, content: [{ type: 'text', text: 'SECRET upstream detail' }] } }))
     expect(r).toEqual({ kind: 'error', code: 'upstream_rejected' })
   })
 
   it('a JSON-RPC error is upstream_rejected', async () => {
-    expect(await call(() => json({ jsonrpc: '2.0', id: 3, error: { code: -1, message: 'SECRET' } }))).toEqual({ kind: 'error', code: 'upstream_rejected' })
+    expect(await call(id => json({ jsonrpc: '2.0', id, error: { code: -1, message: 'SECRET' } }))).toEqual({ kind: 'error', code: 'upstream_rejected' })
   })
 
   it('a single-event SSE answer is accepted; text parts kept, others counted', async () => {
-    const body = { jsonrpc: '2.0', id: 3, result: { content: [{ type: 'text', text: 'hi' }, { type: 'image', data: 'x' }] } }
-    const r = await call(() => new Response(`event: message\ndata: ${JSON.stringify(body)}\n\n`, { headers: { 'Content-Type': 'text/event-stream' } }))
+    const body = (id: unknown) => ({ jsonrpc: '2.0', id, result: { content: [{ type: 'text', text: 'hi' }, { type: 'image', data: 'aGk=', mimeType: 'image/png' }] } })
+    const r = await call(id => new Response(`event: message\ndata: ${JSON.stringify(body(id))}\n\n`, { headers: { 'Content-Type': 'text/event-stream' } }))
     expect(r).toMatchObject({ kind: 'ok', result: { content: [{ type: 'text', text: 'hi' }] }, dropped: 1 })
-    expect(singleEvent('data: {"a":1}\n\ndata: {"b":2}\n\n')).toBeNull()
   })
 
   it('a body over 4 MiB is result_too_large', async () => {
@@ -170,13 +178,25 @@ describe('the MCP client', () => {
 
   it('the bearer is on every request, never in the URL', async () => {
     const seen: Request[] = []
-    const up = server(() => json({ jsonrpc: '2.0', id: 3, result: { content: [] } }))
-    await callMcpTool(async req => (seen.push(req.clone()), up(req)), target, 'tok-123', 1, null, 'slack_search_public', {})
+    const up = server(id => json({ jsonrpc: '2.0', id, result: { content: [] } }))
+    await callWith(async req => (seen.push(req.clone()), up(req)), 'tok-123')
     expect(seen).toHaveLength(3)
     for (const r of seen) {
       expect(r.headers.get('Authorization')).toBe('Bearer tok-123')
       expect(r.url).not.toContain('tok-123')
     }
     expect(seen[2]!.headers.get('Mcp-Session-Id')).toBe('s1')
+  })
+
+  it('no console output on an answered call, a refused one or a planted bad answer (N36)', async () => {
+    const spies = (['log', 'info', 'warn', 'error', 'debug', 'trace'] as const).map(m => vi.spyOn(console, m).mockImplementation(() => {}))
+    try {
+      expect(await call(id => json({ jsonrpc: '2.0', id, result: { content: [{ type: 'text', text: 'hi' }] } }))).toMatchObject({ kind: 'ok' })
+      expect(await call(() => new Response(null, { status: 401 }))).toEqual({ kind: 'unauthorized' })
+      expect(await call(id => json({ jsonrpc: '2.0', id, result: { content: 'SECRET not a list' } }))).toEqual({ kind: 'error', code: 'upstream_unavailable' })
+      for (const s of spies) expect(s).not.toHaveBeenCalled()
+    } finally {
+      for (const s of spies) s.mockRestore()
+    }
   })
 })
