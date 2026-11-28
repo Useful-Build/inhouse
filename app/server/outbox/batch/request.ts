@@ -16,7 +16,9 @@ import type { SqlValue, Stmt } from '../../db/sql.ts'
 import { payloadHashOf } from '../../permissions/resolve.ts'
 import type { Resolved, ResolveFacts } from '../../permissions/types.ts'
 import { reserveUseSql, useDay as dayOfUse } from '../../permissions/uses.ts'
+import type { ActionDetail } from '../../../shared/contract/actions.ts'
 import type { StoredCard } from '../card.ts'
+import { detailJson } from '../detail.ts'
 import type { OperationEntry } from '../operations/types.ts'
 import { actionLine, GATE_OPEN, newActionId, stamped, unreleasedUse } from '../sql.ts'
 import type { Exists } from '../sql.ts'
@@ -39,7 +41,14 @@ export interface BatchRequestDeps {
   hook: (s: Stmt) => Stmt
 }
 
-interface Call { ctx: OutboxRequestCtx; r: Resolved; entry: OperationEntry; rf: ResolveFacts; via: 'tool' | 'approval_request'; label: string }
+/**
+ * `detail` (Stage 1 M3, card details): an item's display-only detail rows from the store's answer (store.ts reads it once
+ * per call), stored as `detail_json`; null when there are none.
+ */
+interface Call {
+  ctx: OutboxRequestCtx; r: Resolved; entry: OperationEntry; rf: ResolveFacts; via: 'tool' | 'approval_request'; label: string
+  detail: (args: unknown) => ActionDetail | null
+}
 
 const BATCH_COLUMNS = [
   'id', 'rev', 'state', 'verdict', 'guardrail', 'origin', 'via', 'asked_by', 'approver', 'chat_id', 'run_id', 'turn_id', 'tool_use_id', 'job_id',
@@ -86,7 +95,7 @@ async function splitItems(c: Call): Promise<NewItem[]> {
     items.push({
       itemId: newItemId(), n: k + 1, toolUseId: null, args: a,
       payloadHash: await payloadHashOf({ operation: c.r.operation, accountId: c.r.accountId, accountGen: c.r.accountGen, scope: c.r.scope, args: a }),
-      line: c.entry.itemLine(a, c.rf), records: c.entry.records(a), units: c.entry.units(a),
+      line: c.entry.itemLine(a, c.rf), detail: detailJson(c.detail(a)), records: c.entry.records(a), units: c.entry.units(a),
     })
   }
   // The items must add up to the call: anything else is a bug in the entry, and nothing is written.
@@ -252,7 +261,7 @@ export async function collect(d: BatchRequestDeps, c: Call, guardrail: 'count' |
       ),
       insertItemsStmt(id, c.ctx.chatId, [{
         itemId, n: tip + 1, toolUseId, args: c.r.args, payloadHash: c.r.payloadHash, line: c.entry.itemLine(c.r.args, c.rf),
-        records: c.r.records, units: c.r.units,
+        detail: detailJson(c.detail(c.r.args)), records: c.r.records, units: c.r.units,
       }], d.nowMs, mine),
       d.hook(actionLine({
         atMs: d.nowMs, actorId: asker.memberId, requestId: d.requestId,

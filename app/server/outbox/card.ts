@@ -9,7 +9,7 @@ import { ActionCardSchema } from '../../shared/contract/actions.ts'
 import type { MemberRole } from '../../shared/contract/members.ts'
 import { operationEntry } from './operations/index.ts'
 import type { OutboxActionRow, OutboxItemRow } from './types.ts'
-import { batchSummaries } from './batch/rows.ts'
+import { batchSummaries, storedDetail } from './batch/rows.ts'
 import type { BatchSummary } from './batch/rows.ts'
 import { batchMovedText, batchTitle, FAILED_TEXT, LAPSE_TEXT, needsCheckText, SENT_TEXT, WAITING_FOR_ADMIN, WITHDRAWN_TEXT } from './words.ts'
 import type { LapseReason } from './sql.ts'
@@ -67,6 +67,8 @@ export function cardOf(row: OutboxActionRow, viewer: Viewer, nowMs: number, batc
     : row.state === 'withdrawn' ? WITHDRAWN_TEXT[reason] ?? (row.kind === 'batch' && row.items_n === 0 ? batchMovedText(LAPSE_TEXT[reason]) : undefined)
       : row.state === 'waiting' || row.state === 'expired' ? LAPSE_TEXT[reason] : undefined
   const result = resultText(row)
+  // Stage 1 M3 (card details): a single action's own rows; a batch's are its items' (`firstDetails`, the items route).
+  const detail = row.kind === 'batch' ? null : storedDetail(row.detail_json)
   return ActionCardSchema.parse({
     id: row.id,
     rev: row.rev,
@@ -106,9 +108,11 @@ export function cardOf(row: OutboxActionRow, viewer: Viewer, nowMs: number, batc
         batch: {
           itemCount: row.items_n, firstLines: batch.firstLines, firstRows: batch.firstRows, ...(entry.rowHeads ? { heads: entry.rowHeads } : {}),
           totals: { records: row.records, units: row.units, unitsLabel: entry.unitsLabel },
+          ...(batch.firstDetails.some(x => x !== null) ? { firstDetails: batch.firstDetails } : {}),
         },
       }
       : {}),
+    ...(detail !== null ? { detail } : {}),
     approverKind: row.approver_kind,
     ...(admins && waiting && !own ? { waitingFor: WAITING_FOR_ADMIN } : {}),
   })

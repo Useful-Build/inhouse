@@ -3,16 +3,18 @@
 // read app's `shopify:store`). Never reads or falls back to the read app's credentials or token.
 //
 // Pure over injected store, clock, upstream, keyring, and config so the Node test project tests every branch and race.
-import type { AccountStatus, HubErrorCode, HubResult, WriteResult } from '../../../index/contract'
+import type { AccountStatus, CardFacts, CardFactsRequest, HubErrorCode, HubResult, WriteResult } from '../../../index/contract'
+import { err, hubError } from '../../../index/errors'
 import { open, sameEnvelope, seal, type Envelope } from '../../../crypto/envelope'
 import type { KeyRing, KeyRingResult } from '../../../crypto/keyring'
 import { log } from '../../../index/log'
 import { checkGrantedScopes, describeScopeMismatch } from '../../../scope/scopes'
 import { EXPIRY_MARGIN_MS, type SyncStore } from '../../../signin/core'
 import { requestGrant, type ShopifyConfig, type Upstream } from '../../../signin/providers/shopify'
+import { ordersDoc, readOrders, readVariants, SHOPIFY_WRITE_CARD_SCOPES, variantsDoc } from './card-facts'
 import { isShopifyWriteKey, SHOPIFY_WRITE_OPS } from './ops/index'
 import { CURRENCY_CODE } from './ops/money'
-import { postMutation, SHOPIFY_WRITE_ACCOUNT, SHOPIFY_WRITE_SCOPES, SHOPIFY_WRITE_SIGNIN_ACCOUNT, writeErr, type ShopifyWriteScope } from './provider'
+import { postMutation, type MutationDoc, SHOPIFY_WRITE_ACCOUNT, SHOPIFY_WRITE_SCOPES, SHOPIFY_WRITE_SIGNIN_ACCOUNT, writeErr, type ShopifyWriteScope } from './provider'
 
 /** One Shopify write as the gateway hands it over (`WriteRequest`'s operation, account, expectation and arguments). */
 export type ShopifyWriteInput = {
@@ -99,7 +101,8 @@ export class ShopifyWriteCore {
   async #doGrant(ring: KeyRing, config: ShopifyConfig, upstream: Upstream): Promise<{ ok: true } | { ok: false; code: HubErrorCode; detail?: string }> {
     const grant = await requestGrant(upstream, config, this.#d.now)
     if (!grant.ok) return { ok: false, code: grant.code }
-    const check = checkGrantedScopes(grant.scope, { read: SHOPIFY_WRITE_SCOPES, required: SHOPIFY_WRITE_SCOPES })
+    // Stage 1 M3 (card details): the card's read scopes are allowed beside the write scopes, never required.
+    const check = checkGrantedScopes(grant.scope, { read: [...SHOPIFY_WRITE_SCOPES, ...SHOPIFY_WRITE_CARD_SCOPES], required: SHOPIFY_WRITE_SCOPES })
     if (!check.ok) return { ok: false, code: 'scope_mismatch', detail: describeScopeMismatch(check) }
     const token = await seal(ring, SHOPIFY_WRITE_SIGNIN_ACCOUNT, 'token', grant.accessToken)
     this.#write({
@@ -243,6 +246,57 @@ export class ShopifyWriteCore {
     if (this.#d.config()?.shop !== config.shop) return null
     this.#d.store.put(CURRENCY_KEY, { v: 1, shop: config.shop, code, readAtMs: this.#d.now() } satisfies CurrencyRecord)
     return code
+  }
+
+  /**
+   * Stage 1 M3 (card details, #488): what an approval card shows beside the ids (card-facts.ts), read from the store the
+   * action is for (`expect.shop`, `expect.connectedAtMs`, checked as a write's are, again before each query). At most two
+   * queries (orders, variants), no retry. The customer is asked only when the grant holds `read_customers`; variants
+   * only when it holds `read_products` (else `variants: null`). Any query that fails or doesn't read fails the whole
+   * answer: the card then shows its ids only.
+   */
+  async cardFacts(req: CardFactsRequest): Promise<HubResult<CardFacts>> {
+    if (req.orderIds.length === 0 && req.variantIds.length === 0) return { ok: true, value: { orders: null, variants: null } }
+    const config = this.#d.config()
+    if (!config) return err('not_configured', 'shopify_write')
+    if (config.shop !== req.expect.shop) return err('connect_stale', 'shop')
+    const ready = async (): Promise<HubResult<CardFacts> | null> => {
+      if (this.#d.config()?.shop !== req.expect.shop) return err('connect_stale', 'shop')
+      const state = checkShopifyAccountState(await this.#d.accountStatus(req.accountId), req.expect.connectedAtMs)
+      return state && !state.ok ? { ok: false, error: state.error } : null
+    }
+    const before = await ready()
+    if (before) return before
+    const ring = await this.#d.keyring()
+    if (!ring.ok) return err('key_unavailable')
+    const upstream = await this.#d.upstream()
+    const acquired = await this.#acquire(ring.ring, config, upstream, null)
+    if (!acquired.ok) return err(acquired.code, acquired.detail)
+
+    const ask = async <T>(doc: MutationDoc, read: (data: Record<string, unknown>) => T | null): Promise<HubResult<T>> => {
+      const blocked = await ready()
+      if (blocked) return blocked as HubResult<T>
+      const answer = await postMutation(upstream, config, acquired.token, doc, this.#d.writeTimeoutMs)
+      if (!answer.ok) {
+        if (answer.result.ok === false && answer.result.error.code === 'credentials_rejected') this.#dropRejected(acquired.envelope)
+        return { ok: false, error: answer.result.ok ? hubError('internal') : answer.result.error }
+      }
+      const value = read(answer.data)
+      return value === null ? err('upstream_unavailable', 'card_facts') : { ok: true, value }
+    }
+    let orders: CardFacts['orders'] = null
+    if (req.orderIds.length > 0) {
+      const r = await ask(ordersDoc(req.orderIds, acquired.scopes.includes('read_customers')), d => readOrders(req.orderIds, d))
+      if (!r.ok) return r
+      orders = r.value
+    }
+    let variants: CardFacts['variants'] = null
+    if (req.variantIds.length > 0 && acquired.scopes.includes('read_products')) {
+      const r = await ask(variantsDoc(req.variantIds), d => readVariants(req.variantIds, d))
+      if (!r.ok) return r
+      variants = r.value
+    }
+    return { ok: true, value: { orders, variants } }
   }
 
   /**

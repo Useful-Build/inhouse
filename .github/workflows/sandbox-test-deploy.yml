@@ -6,7 +6,10 @@
 # PR N gets Worker inhouse-sbx-pr<N> (and its hub inhouse-sbx-pr<N>-hub) on https://inhouse-sbx-pr<N>-brand.<zone> and
 # -team.<zone>, its own D1, R2 and container application, all named by app/scripts/sandbox/names.mjs perPrNames(N). A
 # redeploy of the same PR tears the old one down first; sandbox-test-deploy-cleanup.yml deletes it when the PR closes.
-# Runs of different PRs go in parallel; runs of one PR queue (concurrency below).
+# Runs of different PRs go in parallel (they share no deployment); runs of one PR queue (concurrency below): the
+# whole run, deploy and specs, holds PR N's group, so a second dispatch waits until the first has finished. `queue: max`
+# keeps every waiting run in order (GitHub's default keeps one and cancels the older waiting run); up to 100 wait, and a
+# run waits for each one ahead of it (pr-code's 210-minute cap, so about 3.5 hours apiece at worst).
 #
 # Trust. The PR's code is untrusted, and everything a run prints or uploads is public.
 # - Two jobs run side by side, never mixed. `pr-code` runs the PR's code (install, build, specs) with no secret; its
@@ -64,6 +67,7 @@ permissions: {}
 concurrency:
   group: sandbox-test-deploy-pr-${{ inputs.pr }}
   cancel-in-progress: false
+  queue: max
 
 defaults:
   run:

@@ -44,6 +44,12 @@ export interface OutboxActionRow {
   records: number
   units: number
   card_json: string
+  /**
+   * Stage 1 M3 (card details, #488): the facts the card shows beside the ids (shared/contract/actions.ts `ActionDetail`),
+   * read from Shopify at request time and cleaned (detail.ts). Display only: never in `card_json`, whose words reach
+   * the agent. Null when none were read. Set at insert only.
+   */
+  detail_json: string | null
   grant_id: string | null
   approved_by: string | null
   approved_rev: number | null
@@ -97,6 +103,8 @@ export interface OutboxItemRow {
   args_json: string
   payload_hash: string
   line: string
+  /** Stage 1 M3 (card details): the item's display-only facts, as `OutboxActionRow.detail_json`. */
+  detail_json: string | null
   records: number
   units: number
   /** The batch it left, for the audit trail. */

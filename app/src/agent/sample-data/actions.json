@@ -1,5 +1,5 @@
 {
-  "note": "The demo's agent actions (Stage 1 M3-U): what the real agent's cards look like, on invented data. They show in the Normal scenario, whatever the stage. Each batch is one card holding many changes. The VIP batch tags 450 orders, one each, its orders numbered from `firstOrder` up; its lines, rows and title are the server's words for that operation. The restock batch adds stock to 12 items at one location, one quantity each (a table with its total). The refund is a teammate's, so only an admin may approve it. Times are from the demo's Monday.",
+  "note": "The demo's agent actions (Stage 1 M3-U): what the real agent's cards look like, on invented data. They show in the Normal scenario, whatever the stage. Each batch is one card holding many changes. The VIP batch tags 450 orders, one each, its orders numbered from `firstOrder` up; its lines, rows and title are the server's words for that operation, and each row carries what the store said about its order (`customers`, invented: a name and the order's total, in turn), as the real card's details do. The restock batch adds stock to 12 items at one location, one quantity each (a table with its total). The refund is a teammate's, so only an admin may approve it. Times are from the demo's Monday.",
   "tool": "Shopify",
   "shop": "northline-outdoor",
   "batches": [
@@ -11,6 +11,11 @@
       "count": 450,
       "firstOrder": 3901,
       "tag": "VIP",
+      "customers": [
+        ["Alex Moore", "642.10"], ["Priya Shah", "1208.00"], ["Jonas Weber", "517.45"], ["Mia Lopez", "889.90"], ["Sam Okafor", "730.00"],
+        ["Hana Sato", "560.00"], ["Diego Ramos", "1045.20"], ["Ella Fischer", "612.75"], ["Omar Haddad", "733.10"], ["Grace Kim", "540.00"],
+        ["Lucas Martin", "978.30"], ["Zoe Turner", "505.60"]
+      ],
       "unitsLabel": "orders",
       "guardrail": "bulk",
       "askedAt": "0d 07:58"
@@ -36,6 +41,9 @@
     "title": "Refund $238.00 (USD) on order 4838",
     "lines": ["1 item, shipping $0.00.", "1 × line 48381", "Restock the items: no.", "The customer gets Shopify’s refund email: no."],
     "askedAt": "0d 07:31",
+    "order": 4838,
+    "customer": "Nora Lindqvist",
+    "amount": "238.00",
     "result": "Sent."
   }
 }
