@@ -100,6 +100,6 @@ describe('item 7: what the agent did, its note and Activity\'s "by" are sentence
     expect(handled(ctx).summary.replace(/\s/g, ' ')).toContain('Restocked 11 units')
     const rows = activityRows(ctx)
     expect(rows.find(r => r.text.replace(/\s/g, ' ') === 'Restocked 11 units')?.t).toBe('6:10\u00a0AM')
-    expect(rows.find(r => r.text.startsWith('Refund of $64.00 on order 4807'))?.by).toBe('Drafted by Inhouse agent, approved by Dana Kim at 10:12\u00a0AM.')
+    expect(rows.find(r => r.text.startsWith('Refund of $64.00 on order 4807'))?.by).toBe('Drafted by Inhouse agent, approved by Sam Mercer at 10:12\u00a0AM.')
   })
 })

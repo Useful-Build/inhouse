@@ -61,10 +61,10 @@
       "at": "-4d 10:12",
       "kind": "change",
       "text": "Refund of $64.00 on order 4807",
-      "who": "Dana approved",
+      "who": "Sam approved",
       "why": "The jacket arrived with a torn seam.",
       "result": "$64.00 went back to the customer on Shopify. It has gone out, so it can no longer be undone.",
-      "by": { "text": "Drafted by Inhouse agent, approved by Dana Kim at {at:time}.", "times": { "at": "-4d 10:12" } },
+      "by": { "text": "Drafted by Inhouse agent, approved by Sam Mercer at {at:time}.", "times": { "at": "-4d 10:12" } },
       "trace": "draft"
     },
     {

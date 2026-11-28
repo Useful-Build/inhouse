@@ -36,12 +36,12 @@
   "approvalRules": [
     {
       "what": "Orders over $5,000",
-      "detail": "Refunds and draft orders.",
+      "detail": "Draft orders.",
       "approver": "Dana Kim"
     },
     {
       "what": "Customer orders",
-      "detail": "Tags and refunds on an order.",
+      "detail": "Tags on an order.",
       "approver": "Leo Park"
     },
     {

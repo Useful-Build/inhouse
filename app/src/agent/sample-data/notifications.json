@@ -51,8 +51,8 @@
       "opens": "chat: numbers"
     },
     {
-      "text": "Dana Kim approved the refund on order 4807.",
-      "who": "Dana Kim",
+      "text": "You approved the refund on order 4807.",
+      "who": "Sam Mercer",
       "at": "-4d 10:14",
       "unread": false,
       "opens": "Activity"

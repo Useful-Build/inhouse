@@ -43,6 +43,7 @@ const REMOVED_ACTS: [string, RegExp][] = [
 const STAGE_NAME = /\b(Watch|Act|Run)\b(?! now)/
 const STAGE_WORD = /\bstages?\b/i
 
+type ActRow = { text: string; result?: string; by?: { text: string } }
 type Problem = { id: string; draft: { lines: unknown[]; body?: string; items?: unknown[] } } & Record<string, unknown>
 const PROBLEMS = (problems as unknown as { problems: Problem[] }).problems
 const isDraft = (p: Problem) => p.draft.lines.length > 0 || !!p.draft.body || !!p.draft.items?.length
@@ -66,6 +67,18 @@ describe('the sample data shows only what the product can do', () => {
       const p = PROBLEMS.find(x => x.id === f.link?.id)
       expect(p && isDraft(p), `${f.id} links to ${String(f.link?.id)}, which has no draft`).toBe(true)
     }
+  })
+  // Only an Admin may approve what the server's operation marks `memberMay: false` (a refund: shopify-refund-create.ts), so no
+  // Activity row or bell line says a Member approved one (the review of round 3, part of issue 761).
+  test('every approval of a refund in Activity or the bell names an Admin', () => {
+    const admins = new Set((people as { members: { name: string; role: string }[] }).members.filter(m => m.role === 'Admin').map(m => m.name))
+    const rows = [...(activity as { today: ActRow[] }).today, ...(activity as { earlier: ActRow[] }).earlier]
+    const refunds = rows.filter(r => /refund/i.test(`${r.text} ${r.result ?? ''}`) && /approved by/.test(r.by?.text ?? ''))
+    expect(refunds.length, 'there is a refund approval to check').toBeGreaterThan(0)
+    for (const r of refunds) expect(admins.has(/approved by ([^,.]+?) at/.exec(r.by!.text)?.[1] ?? ''), r.text).toBe(true)
+    const bell = (notifications as { notifications: { text?: string; who: string }[] }).notifications.filter(n => /approved/i.test(n.text ?? '') && /refund/i.test(n.text ?? ''))
+    expect(bell.length, 'there is a refund notice to check').toBeGreaterThan(0)
+    for (const n of bell) expect(admins.has(n.who), n.text).toBe(true)
   })
   test('no word names a stage', () => {
     expect(ALL.filter(([, s]) => STAGE_NAME.test(s) || STAGE_WORD.test(s)).map(([p, s]) => `${p}: ${s.slice(0, 120)}`)).toEqual([])
