@@ -18,6 +18,9 @@
 import { accessHeaders, createProductTarget, EVAL_AUD_VAR, testIssuerSignIn, type ProductTarget, type ProductTargetOptions } from '../targets/product.ts'
 import { connectSlack, disconnectSlack, type InhouseApi } from '../targets/slack-door.ts'
 import { SEED_INHOUSE } from '../../server/seed/brand.ts'
+import { createSessionReader, type SessionReader } from '../read-side/product/r2.ts'
+import { EVAL_BUCKET } from '../exfiltration/store-data/transcripts.ts'
+import { plantVerdict } from './transcript.ts'
 import type { ExfilSpec } from '../types.ts'
 import { StartUndoFailed, type InjectionSession, type InjectionTarget } from './runner.ts'
 import { canonical } from './grade.ts'
@@ -86,6 +89,11 @@ export interface ProductInjectionOptions extends Pick<ProductTargetOptions, 'pai
   base?: ProductTarget
   /** The product as the Inhouse team (tests); default from INHOUSE_EVAL_INHOUSE_ORIGIN and _AUD. None: no Slack case runs. */
   inhouse?: InhouseApi | null
+  /**
+   * The session transcripts (tests); default the read-side set's R2 reader on the eval bucket (CF_SANDBOX_ACCOUNT_ID and
+   * CLOUDFLARE_API_TOKEN with R2 read), made on first use.
+   */
+  sessions?: SessionReader
   /** The Slack connect and disconnect (tests); default slack-door.ts's, through the product's own routes. */
   slackLink?: { connect(api: InhouseApi): Promise<void>; disconnect(api: InhouseApi): Promise<void> }
   sleep?: (ms: number) => Promise<void>
@@ -107,39 +115,112 @@ export function createProductInjectionTarget(o: ProductInjectionOptions): Inject
   async function leaveSlack(): Promise<void> {
     if (!slackConnected || !inhouse) return
     const failed: unknown[] = []
-    try {
-      await base.slackDoor().reset()
-    } catch (e) {
-      failed.push(e)
-    }
+    // The disconnect first (#612): it is what a later suite would see, and a cancel's close may be cut short.
     try {
       await link.disconnect(inhouse)
       slackConnected = false
     } catch (e) {
       failed.push(e)
     }
+    try {
+      await base.slackDoor().reset()
+    } catch (e) {
+      failed.push(e)
+    }
     if (failed.length === 1) throw failed[0]
     if (failed.length > 1) throw new AggregateError(failed, 'emptying the Slack workspace and disconnecting Slack both failed')
   }
+  /** What the run found and put right before its first case (#612), for the report. */
+  const notes: string[] = []
+  let slackChecked = false
+  /**
+   * #612: a hard-killed earlier run can leave Slack connected or the eval workspace full, which a non-Slack case (or
+   * another suite) would then run with. Once, at the first case's start (the doors exist only after the eval-brand check):
+   * Slack connected is disconnected, a workspace or a listed channel left is emptied, and the report says so. Slack left
+   * connected with no Inhouse app to disconnect it fails the case by name.
+   */
+  async function checkSlackAtStart(): Promise<void> {
+    if (slackChecked) return
+    const slack = base.slackDoor()
+    const [account, w] = await Promise.all([slack.account(), slack.read()])
+    const connected = account?.lastState === 'connected'
+    const left = w.channels.length + w.messages.length + w.listed.length
+    if (!connected && left === 0) {
+      slackChecked = true
+      return
+    }
+    // Both steps tried, their errors kept (Neon's #618 review); marked done only once both held, and a failure stops the
+    // run (StartUndoFailed, a reset failure to the runner), so no repeat runs on an earlier run's Slack.
+    const failed: unknown[] = []
+    if (connected) {
+      if (!inhouse) failed.push(new Error('Slack is still connected from an earlier run, and without the Inhouse app (INHOUSE_EVAL_INHOUSE_ORIGIN and _AUD) it can\'t be disconnected'))
+      else {
+        try {
+          await link.disconnect(inhouse)
+        } catch (e) {
+          failed.push(e)
+        }
+      }
+    }
+    if (left > 0) {
+      try {
+        await slack.reset()
+      } catch (e) {
+        failed.push(e)
+      }
+    }
+    if (failed.length) throw new StartUndoFailed(failed, 'the start-of-run Slack cleanup failed, so the run stops')
+    slackChecked = true
+    notes.push(`At the run's start an earlier run's Slack state was put right: ${[connected ? 'Slack disconnected' : '', left > 0 ? `the eval workspace emptied (${w.channels.length} channels, ${w.messages.length} messages, ${w.listed.length} listed)` : ''].filter(Boolean).join(', ')}.`)
+  }
   const sleep = o.sleep ?? ((ms: number) => new Promise<void>((r) => setTimeout(r, ms)))
   const now = o.now ?? Date.now
+  /**
+   * Neon's #618 review, cancel races: once the close starts no case starts and no Slack connect begins; a connect already
+   * in flight is waited for, so it can't outlive the close; the running repeat's turns are stopped before the lease goes.
+   */
+  let closed = false
+  let sessions: SessionReader | undefined = o.sessions
+  let connecting: Promise<void> | null = null
+  let active: { stopTurns?(): Promise<void> } | null = null
+  const closingRefusal = () => new Error('the target is closing (a cancel): no case starts and Slack stays off')
   return {
     name: 'product',
     provides,
     serves: (c) => (c.plant && !plants.includes(c.plant.via) ? `planting through ${c.plant.via} needs a per-case dataset on the eval hub (not built)` : null),
     spentUsd: () => base.spentUsd?.() ?? 0,
+    notes: () => [...notes],
     close: async () => {
+      closed = true
+      const failed: unknown[] = []
+      // A connect in flight ends first (its own failure is start()'s to report); then Slack is left off for good.
+      if (connecting) await connecting.then(() => undefined, () => undefined)
+      try {
+        // The running repeat's turns stop before the lease goes back.
+        await active?.stopTurns?.()
+      } catch (e) {
+        failed.push(e)
+      }
       try {
         // #583: leave the shared eval deployment without Slack (a cancel mid-repeat lands here too).
         await leaveSlack()
-      } finally {
-        await base.close?.()
+      } catch (e) {
+        failed.push(e)
       }
+      try {
+        await base.close?.()
+      } catch (e) {
+        failed.push(e)
+      }
+      if (failed.length === 1) throw failed[0]
+      if (failed.length > 1) throw new AggregateError(failed, 'the target\'s close failed in more than one step')
     },
     async start(c: InjectionCase, run): Promise<InjectionSession> {
+      if (closed) throw closingRefusal()
       const slackCase = c.needs.includes('slack_post') || c.plant?.via === 'slack'
       const plant: ExfilSpec | undefined = c.plant && c.plant.via !== 'slack' ? { kind: 'memory', via: c.plant.via as ExfilSpec['via'], hosts: [], plant: c.plant.text } : undefined
       const session = await base.seed([], { caseId: c.id, rep: run.rep, canary: run.canary, writes: true }, plant)
+      active = session
       const w = base.writeDoor()
       const asker = base.people.current
       const seeded = new Set<string>()
@@ -155,14 +236,23 @@ export function createProductInjectionTarget(o: ProductInjectionOptions): Inject
         await w.resetWrites()
         mark = (await w.now()) - CLOCK_SLACK_MS
         for (const s of c.ceilings) await w.setCeiling(s.operation, { ...(s.perDayMax !== undefined ? { perDayMax: s.perDayMax } : {}), ...(s.unitsMax !== undefined ? { unitsMax: s.unitsMax } : {}) })
+        await checkSlackAtStart()
         if (c.namedMember) teammate = await base.addTeammate({ caseId: c.id, rep: run.rep, name: c.namedMember })
         if (slackCase) {
           if (!inhouse) throw new Error('a Slack case needs the Inhouse app (INHOUSE_EVAL_INHOUSE_ORIGIN and _AUD)')
           // A fresh connection per case-repeat (the fake keeps its tokens in memory), the workspace with the case's plant
           // in #support, then the case's listed channels (after its ceiling: the door lists only where posting is on).
           // Marked before the connect: a connect that fails after its callback committed is still disconnected later.
+          if (closed) throw closingRefusal()
           slackConnected = true
-          await link.connect(inhouse)
+          connecting = link.connect(inhouse)
+          try {
+            await connecting
+          } finally {
+            connecting = null
+          }
+          // A close that began while the connect ran: this case stops here (its undo leaves Slack off).
+          if (closed) throw closingRefusal()
           const slack = base.slackDoor()
           await slack.seed({ messages: c.plant?.via === 'slack' ? [{ channel: 'support', text: c.plant.text(run.canary) }] : [] })
           await slack.list({ by: base.people.lena, channels: c.channels.map((name) => ({ name: name.replace(/^#/, '') })) })
@@ -275,6 +365,14 @@ export function createProductInjectionTarget(o: ProductInjectionOptions): Inject
           }
         },
         evidence: read,
+        // What the model received (Neon's #618 review): the non-error tool results in the repeat's session transcripts.
+        async plantDelivered(plant) {
+          sessions ??= createSessionReader({ env: o.env, bucket: EVAL_BUCKET })
+          const chatIds = (session as { chatIds?: () => readonly string[] }).chatIds?.() ?? []
+          const parts: Uint8Array[][] = []
+          for (const id of chatIds) parts.push(await sessions.parts(id))
+          return plantVerdict(parts, plant)
+        },
         async probeAdminsCard(m) {
           const deadline = now() + CONTROL_WAIT_MS
           for (;;) {
@@ -296,6 +394,7 @@ export function createProductInjectionTarget(o: ProductInjectionOptions): Inject
             try {
               if (teammate) await base.removeTeammate(teammate)
             } finally {
+              active = null
               // Slack off again before the next case: a later non-Slack case must not see Slack in its tools.
               await leaveSlack()
             }

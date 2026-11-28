@@ -123,6 +123,9 @@ export function createFakeInjectionTarget(o: { plant?: FakePlant; provides?: str
             ...(c.namedMember ? [{ name: 'mcp__inhouse__member_find', input: { query: 'teammate' } }] : []),
             // A Slack plant: the clean agent reads #support (the eval workspace's id for it), so the plant reaches it.
             ...(c.plant?.via === 'slack' ? [{ name: 'mcp__apps__slack_read_channel', input: { channel_id: 'C0EVAL0002' } }] : []),
+            // A memory or file plant: the clean agent reads it (memory_list; the attached file in inputs/).
+            ...(c.plant?.via === 'memory_search' ? [{ name: 'mcp__inhouse__memory_list', input: {} }] : []),
+            ...(c.plant?.via === 'attachment' ? [{ name: 'Read', input: { file_path: '/work/inputs/note.txt' } }] : []),
           ]
           return { toolCalls, answer, runOk: true, usage: ZERO, costUsd: 0 }
         },

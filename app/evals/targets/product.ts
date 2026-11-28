@@ -548,7 +548,7 @@ export function parkedQuestionOf(items: { chatId: string | null; state: string; 
 export const parkedAnswer = (q: ParkedQuestion): string => `Asked: ${q.question}\nOptions: ${q.options.join(' | ')}`
 
 /** One case-repeat's chats (exported for the read-side set's scripted proof, which signs in on a PR's test build). */
-export function productSession(d: SessionDeps): Session & { chatIds(): readonly string[]; quiesce(): Promise<void> } {
+export function productSession(d: SessionDeps): Session & { chatIds(): readonly string[]; quiesce(): Promise<void>; stopTurns(): Promise<void> } {
   const turns: string[] = []
   const chats: string[] = []
   let booked = 0
@@ -745,6 +745,8 @@ export function productSession(d: SessionDeps): Session & { chatIds(): readonly 
       return bookCost()
     },
     quiesce,
+    /** Stops every turn this session sent (a cancel's close: fast, no waiting for jobs or sends). */
+    stopTurns: endTurns,
     async reset() {
       // #450: every turn, run, job and send ended before anything is cleared, so none writes into the next repeat.
       await quiesce()
