@@ -61,8 +61,8 @@ describe('the web rows\' words follow the fetch mode (M3-J)', () => {
 
   it('the words in each case', async () => {
     const { webFetchWords } = await import('./content')
-    // No mode, no saved list (#744): open, and saving it empty says it blocks.
-    expect(webFetchWords(undefined, undefined).list).toBe('Until a list is saved, any public website is allowed. Enter one website name per line to allow only those. Saving it empty blocks all websites.')
+    // No mode, no saved list (#744): open. The row offers the choice of listing some, or none (#754).
+    expect(webFetchWords(undefined, undefined).list).toBe('Any public website is allowed. Choose Only the websites listed to allow just some, or none.')
     // A saved empty list with no mode blocks (the screen's promise), not "any public website".
     expect(webFetchWords(undefined, '')).toEqual({ read: 'Let your Inhouse agent open the websites listed below. Off blocks them all.', list: 'Enter one website name per line. Leave empty to block all websites.' })
     // An invalid stored mode is what the server reads: the list (#745).

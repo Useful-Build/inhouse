@@ -21,6 +21,8 @@ const rows = async (db: D1Database) =>
 
 /** The brand's web switches (M1-F): a stored row that doesn't parse turns them off for a routine turn. */
 const WEB_SWITCHES = new Set(['t:websearch', 't:webfetch_on'])
+/** How far reading web pages reaches (M3-F): a stored row of either that doesn't parse leaves no website for a routine turn (#755). */
+const WEB_REACH = new Set(['t:webfetch', 't:webfetch_mode'])
 
 const parse = (json: string): unknown => {
   try {
@@ -59,13 +61,19 @@ export type SubmitSettings = ResolvedTurn
  */
 export async function submitSettings(db: D1Database): Promise<SubmitSettings | { refused: { code: string; reason?: string } }> {
   // The brand and technical rows (the web switches are brand settings, M1-F), each listed under its own scope as the
-  // settings store lists them. A web switch whose row doesn't parse reads as off (fail closed): `undefined` would read
-  // as never set, which is on for `t:webfetch_on`.
+  // settings store lists them. A web row whose value doesn't parse fails closed, as the egress does (it refuses on the
+  // same row): `undefined` would read as never set, which is on for `t:webfetch_on` and any public website for the host
+  // list and mode (#755). A switch reads as off; a corrupt mode reads as `false`, which `webFetchMode` takes as `list`;
+  // and when either of the two is corrupt the host list reads as `false` too, which `resolveTurnSettings` takes as no
+  // host, so neither leaves a website.
+  const all = await rows(db)
+  const reachBroken = all.some(r => WEB_REACH.has(r.key) && parse(r.value_json) === undefined)
   const valueOf = (key: string, json: string): SettingRecord['value'] => {
     const v = parse(json)
-    return (v === undefined && WEB_SWITCHES.has(key) ? false : v) as SettingRecord['value']
+    if (v === undefined && (WEB_SWITCHES.has(key) || key === 't:webfetch_mode')) return false
+    return (key === 't:webfetch' && reachBroken ? false : v) as SettingRecord['value']
   }
-  const stored = (await rows(db)).map(r => ({ scope: settingSpec(r.key)?.scope, record: { key: r.key, value: valueOf(r.key, r.value_json), rev: r.rev, updatedAt: null, updatedBy: null } }))
+  const stored = all.map(r => ({ scope: settingSpec(r.key)?.scope, record: { key: r.key, value: valueOf(r.key, r.value_json), rev: r.rev, updatedAt: null, updatedBy: null } }))
   const ofScope = (scope: SettingScope): SettingRecord[] => stored.filter(r => r.scope === scope).map(r => r.record)
   const technical = ofScope('technical')
   const view: SettingsView = Object.fromEntries(technical.map(r => [r.key, r.value as string | boolean | null]))

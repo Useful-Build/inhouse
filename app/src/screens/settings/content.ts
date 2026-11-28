@@ -52,6 +52,8 @@ export interface Row {
   avatar?: { who: string; at: 'row' | 'control' }
   /** A `text` row's kind of value: checked when the field loses focus, and not saved while it is wrong. */
   type?: FieldType
+  /** A `hosts` row: nothing was ever saved (no row), which is not the same as a list saved empty. */
+  unset?: boolean
   /** A `select` row saved some way other than a setting (a member's role is its own call): runs instead of `setSetting(key, value)`. */
   save?: (value: string) => void
   /** A `toggle` row that isn't a switch setting (the support grant): whether it is on, and what flipping it does. */
@@ -323,14 +325,15 @@ export function exportRefused(e: unknown): string {
  * disagree with what the agent can open: `open` set, or no mode and no list ever saved, is any public website (the list
  * unused when `open` is set); everything else is the list, and an empty saved list blocks every website, an invalid
  * mode included (#744, #745). `readOnly` is the host row's text when read-only and its list isn't what decides (else
- * the hosts, or "No websites").
+ * the hosts, or "No websites"). The Inhouse team picks between the two states of the list on the row itself (any public
+ * website until it chooses to list some, then only the listed ones, none if it lists none).
  */
 export function webFetchWords(mode: unknown, hosts: unknown): { read: string; list: string; readOnly?: string } {
   if (mode === 'open') return { read: 'Let your Inhouse agent open any public website. Off blocks them all.', list: 'Your Inhouse team lets it open any public website, so this list isn’t used.', readOnly: 'Any public website' }
   if (webFetchMode(mode, hosts) === 'list') return { read: 'Let your Inhouse agent open the websites listed below. Off blocks them all.', list: 'Enter one website name per line. Leave empty to block all websites.' }
   return {
     read: 'Let your Inhouse agent open web pages. Off blocks them all.',
-    list: 'Until a list is saved, any public website is allowed. Enter one website name per line to allow only those. Saving it empty blocks all websites.',
+    list: 'Any public website is allowed. Choose Only the websites listed to allow just some, or none.',
     readOnly: 'Any public website',
   }
 }
@@ -435,7 +438,7 @@ export function settingsPage(tab: string, env: Env): Page {
         // The two web switches are an Admin's (brand settings, M1-F); which websites it may open stays the Inhouse team's.
         { ...R('Search the web', 'Let your Inhouse agent search the web. Off by default.', 'toggle', '', 0, 't:websearch', false), keywords: 'websearch internet' },
         { ...R('Read web pages', fetchWords.read, 'toggle', '', 0, 't:webfetch_on', true), keywords: 'webfetch internet websites' },
-        { ...txt('Websites it may open', fetchWords.list, 't:webfetch', ''), type: 'hosts', keywords: 'webfetch hosts domains allowlist', ...(fetchWords.readOnly ? { display: fetchWords.readOnly } : {}) },
+        { ...txt('Websites it may open', fetchWords.list, 't:webfetch', ''), type: 'hosts', unset: saved['t:webfetch'] == null, keywords: 'webfetch hosts domains allowlist', ...(fetchWords.readOnly ? { display: fetchWords.readOnly } : {}) },
       ] },
       { label: 'What your Inhouse agent knows', rows: [R('Team memory', `Supplier, customer and stock rules the whole team shares. ${memCount} things remembered.`, 'button', 'Open memory', 0, undefined, undefined, () => env.openSettings('team-memory')), R('Skills', `The jobs it knows how to do. ${skills.length} skills, added by your Inhouse team.`, 'button', 'View skills', 0, undefined, undefined, env.goSkills)] },
     ] },

@@ -146,3 +146,44 @@ test('A Member reads the web switches and both spend fields as text, with no con
   await expect(main.getByText('$25', { exact: true })).toBeVisible()
   for (const name of ['Monthly cap', 'Job budget']) await expect(main.getByRole('textbox', { name, exact: true })).toHaveCount(0)
 })
+
+// #754: the Inhouse team chooses how far reading web pages reaches on the Inhouse agent page. It can choose a list saved empty
+// (no website) on purpose, from a brand with no list saved, and go back to any public website. It would fail if the choice
+// saved nothing (the bug: a field left empty never saved, so a brand with no list couldn't be blocked from the screen).
+test('The Inhouse team picks any public website or only the websites listed, and an empty list blocks all', async ({ page, context }) => {
+  test.skip(phone(page.viewportSize()?.width), 'a phone reads team settings as text')
+  await signInAs(context, 'inhouse')
+  const main = page.getByRole('main')
+  await open(page, 'inhouse', '#/settings/team-agent')
+  const choice = (value: string) => main.getByRole('combobox', { name: `Websites it may open: ${value}`, exact: true })
+  const list = main.getByRole('textbox', { name: 'Websites it may open', exact: true })
+  const saved = () => page.waitForResponse(r => r.request().method() === 'PUT' && decodeURIComponent(new URL(r.url()).pathname).endsWith('/t:webfetch')).then(r => { expect(r.status()).toBe(200) })
+  // The seeded brand has a list saved: only those websites.
+  await expect(choice('Only the websites listed')).toBeVisible()
+  await expect(list).toHaveValue('example.com')
+  try {
+    // Going back to any public website asks first, because it clears the list; then there is no list to show.
+    await choice('Only the websites listed').click()
+    await page.getByRole('option', { name: 'Any public website', exact: true }).click()
+    await Promise.all([saved(), page.getByRole('dialog', { name: 'Allow any public website?' }).getByRole('button', { name: 'Allow any website', exact: true }).click()])
+    await expect(choice('Any public website')).toBeVisible()
+    await expect(list).toHaveCount(0)
+    // From a brand with no list saved, choosing the list saves it empty: it blocks every website, and it stays after a reload.
+    await choice('Any public website').click()
+    await Promise.all([saved(), page.getByRole('option', { name: 'Only the websites listed', exact: true }).click()])
+    await expect(choice('Only the websites listed')).toBeVisible()
+    await expect(list).toHaveValue('')
+    await page.reload()
+    await expect(choice('Only the websites listed')).toBeVisible()
+    await expect(list).toHaveValue('')
+  } finally {
+    // Put the seeded list back: choose the list if it isn't chosen, then type it.
+    if (await choice('Any public website').count()) {
+      await choice('Any public website').click()
+      await Promise.all([saved(), page.getByRole('option', { name: 'Only the websites listed', exact: true }).click()])
+    }
+    await list.fill('example.com')
+    await Promise.all([saved(), list.blur()])
+    await expect(list).toHaveValue('example.com')
+  }
+})
