@@ -97,7 +97,9 @@ describe("the demo agent's channel list", () => {
     const saved = await agent.saveNotifyChannels({ channelIds: ['C0DEMO0001', 'C0DEMO0002'], alertsChannelId: 'C0DEMO0001', ifRev: start.rev })
     // A fresh demo lists #ops-alerts, with the agent's posts switched on (issue 653).
     expect(start).toEqual({ rev: 0, channels: [{ channelId: 'C0DEMO0001', name: 'ops-alerts', alerts: false }], posting: { on: true, perDay: 50 } })
-    expect(saved).toEqual({ rev: start.rev + 1, channels: [{ channelId: 'C0DEMO0001', name: 'ops-alerts', alerts: true }, { channelId: 'C0DEMO0002', name: 'warehouse', alerts: false }], posting: { on: true, perDay: 50 } })
+    // The demo's person is an admin, so their mark gives the alerts channel its standing permission (M2-N, N27), up to the posting limit.
+    const permission = { id: expect.stringMatching(/^pg_/), scope: '#ops-alerts', perDay: 50 }
+    expect(saved).toEqual({ rev: start.rev + 1, channels: [{ channelId: 'C0DEMO0001', name: 'ops-alerts', alerts: true, permission }, { channelId: 'C0DEMO0002', name: 'warehouse', alerts: false }], posting: { on: true, perDay: 50 } })
     await expect(agent.saveNotifyChannels({ channelIds: ['C0DEMO0003'], ifRev: saved.rev })).rejects.toMatchObject({ code: 'conflict', reason: 'shared_channel' })
     await expect(agent.saveNotifyChannels({ channelIds: ['C0DEMO0004'], ifRev: saved.rev })).rejects.toMatchObject({ code: 'conflict', reason: 'not_member' })
     await expect(agent.saveNotifyChannels({ channelIds: [], ifRev: start.rev })).rejects.toMatchObject({ code: 'conflict', current: { rev: saved.rev } })
@@ -112,9 +114,9 @@ describe('Slack notices only with Slack connected (CI round)', async () => {
   it('a brand without Slack gets no menu row and no page; with it as a tool or a channel, both show', () => {
     expect(hasSlack(none)).toBe(false)
     expect(tabs(menuFor(none))).not.toContain('team-slack')
-    // The demo's menu (`menuFor` without `product`): every page but Slack notices and the product-only What the agent can
-    // do (Stage 1 M3-C).
-    expect(tabs(menuFor(none))).toEqual(tabs(SECTIONS).filter(id => id !== 'team-slack' && id !== 'team-ceiling'))
+    // The demo's menu (`menuFor` without `product`): every page but Slack notices (What the agent can do is in it since the
+    // demo catch-up's PR 3).
+    expect(tabs(menuFor(none))).toEqual(tabs(SECTIONS).filter(id => id !== 'team-slack'))
     for (const t of [{ connected: ['slack'], channels: [] }, { connected: [], channels: [{ key: 'slack' }] }]) {
       expect(hasSlack(t)).toBe(true)
       expect(tabs(menuFor(t))).toContain('team-slack')

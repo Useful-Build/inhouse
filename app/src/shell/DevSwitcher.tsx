@@ -33,6 +33,7 @@ export function DevSwitcher() {
   const scenario = useUi(s => s.scenario)
   const ambient = useUi(s => s.ambient)
   const animateMark = useUi(s => s.animateMark)
+  const viewAs = useUi(s => s.viewAs)
   const { setDemo, resetDemo, showToast, patch } = useUi.getState()
   if (!demoEnabled() || !open) return null
   const label = 'mt-2.5 mb-1 text-2xs font-strong text-muted-foreground'
@@ -49,6 +50,8 @@ export function DevSwitcher() {
           <Button key={s} variant={scenario === s ? 'primary' : 'soft'} size="sm" aria-pressed={scenario === s} onClick={() => setDemo({ scenario: s })}>{s}</Button>
         ))}
       </div>
+      <div className={label}>View as</div>
+      <Segmented<'admin' | 'member'> label="View as" value={viewAs} options={[['admin', 'Admin'], ['member', 'Member']]} onChange={v => setDemo({ viewAs: v })} />
       <div className={label}>Dot sweep</div>
       <Segmented<Ambient> label="Dot sweep" value={ambient} options={[['Always', 'Always'], ['When Inhouse agent works', 'When working'], ['Off', 'Off']]} onChange={v => setDemo({ ambient: v })} />
       <div className="mt-3 flex items-center gap-2.5 text-sm">

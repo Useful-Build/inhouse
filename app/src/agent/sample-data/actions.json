@@ -1,5 +1,5 @@
 {
-  "note": "The demo's agent actions and permissions: what the real agent's cards and its Always allowed list look like, on invented data, in the Normal scenario (the demo has no stages, as the product). Each batch is one card holding many changes. The VIP batch tags 450 orders, one each, its orders numbered from `firstOrder` up; its lines, rows and title are the server's words for that operation, and each row carries what the store said about its order (`customers`, invented: a name and the order's total, in turn), as the real card's details do (#488); a tag card's `order` is the same for its one order. The restock batch adds stock to 12 items at one location, one quantity each (a table with its total); it needs an exact OK because it's past Sam's Add stock permission (`count`). The refund is a teammate's, so only an admin may approve it. `singles` are one-change cards in the server's words (server/outbox/operations): `ask` ones offer Allow once, Always allow and No (`nudge`: Always allow first, after three Allow onces); one needs a check; one is Priya's, which Sam sees under Waiting on your team; one went out yesterday under Sam's permission. `operations` are each operation's permission title, units and default limits (server/outbox/operations, shared/audit-text.ts), which Always allow grants. `permissions` are the two seeded ones. Times are from the demo's Monday.",
+  "note": "The demo's agent actions and permissions: what the real agent's cards and its Always allowed list look like, on invented data, in the Normal scenario (the demo has no stages, as the product). Each batch is one card holding many changes. The VIP batch tags 450 orders, one each, its orders numbered from `firstOrder` up; its lines, rows and title are the server's words for that operation, and each row carries what the store said about its order (`customers`, invented: a name and the order's total, in turn), as the real card's details do (#488); a tag card's `order` is the same for its one order. The restock batch adds stock to 12 items at one location, one quantity each (a table with its total); it needs an exact OK because it's past Sam's Add stock permission (`count`). The refund is a teammate's, so only an admin may approve it. `singles` are one-change cards in the server's words (server/outbox/operations): `ask` ones offer Allow once, Always allow and No (`nudge`: Always allow first, after three Allow onces); one needs a check; one is Priya's, which Sam sees under Waiting on your team; one went out yesterday under Sam's permission. `operations` are each operation's permission title, units and default limits (server/outbox/operations, shared/audit-text.ts), which Always allow grants. `permissions` are the two seeded ones. Times are from the demo's Monday. Demo catch-up PR 3 adds: a finished batch that partly went out (`settled`: its failed items), a draft order and a stock reduction that went out (sent cards, their words from the operations), `ceiling` (the Inhouse ceiling's seven rows, as the page reads them: Settings > What the agent can do, read-only, editing off as in a deployable build), `questions` (what the agent asked this person: one in a chat, one a routine asked its creator, with the agent's next line per option), `chats` (the order-tags chat the agent keeps, so a late answer can add its follow-up) and `resumes` (what the agent says in a chat once a card it asked is settled).",
   "tool": "Shopify",
   "shop": "northline-outdoor",
   "batches": [
@@ -32,6 +32,23 @@
       "unitsLabel": "stock units",
       "guardrail": "count",
       "askedAt": "0d 07:49"
+    },
+    {
+      "id": "ac_demoLoyaltyBatch000000",
+      "chatId": "loyalty-tags",
+      "title": "Tag 450 orders as Loyalty",
+      "kind": "tags",
+      "count": 450,
+      "firstOrder": 4101,
+      "tag": "Loyalty",
+      "customers": [
+        ["Nina Alvarez", "412.00"], ["Theo Brandt", "389.50"], ["Ines Costa", "455.20"], ["Kofi Mensah", "398.00"], ["Lena Vogel", "421.75"],
+        ["Marco Rossi", "367.90"], ["Aiko Tanaka", "504.30"], ["Ben Hughes", "376.00"], ["Sara Novak", "443.15"], ["Ivan Petrov", "409.60"]
+      ],
+      "unitsLabel": "orders",
+      "guardrail": "bulk",
+      "askedAt": "-1d 11:20",
+      "settled": { "failed": [6, 52, 211], "approvedAt": "-1d 11:24" }
     }
   ],
   "batchResult": "Sent. {n} of {n} went out",
@@ -54,7 +71,9 @@
     "shopify.order.tag_add": { "title": "Add tags to orders", "tool": "shopify", "scope": "northline-outdoor", "unitsLabel": "orders", "perDay": 50, "unitsMax": 5, "ceilingPerDay": 200, "ceilingUnitsMax": 100 },
     "shopify.order.tag_remove": { "title": "Remove tags from orders", "tool": "shopify", "scope": "northline-outdoor", "unitsLabel": "orders", "perDay": 50, "unitsMax": 5, "ceilingPerDay": 200, "ceilingUnitsMax": 100 },
     "shopify.inventory.restock": { "title": "Add stock", "tool": "shopify", "scope": "northline-outdoor", "unitsLabel": "stock units", "perDay": 200, "unitsMax": 50, "ceilingPerDay": 1000, "ceilingUnitsMax": 500 },
-    "slack.channel.post": { "title": "Post messages to a channel", "tool": "slack", "scope": "#ops-alerts", "unitsLabel": "posts", "perDay": 50, "unitsMax": 1, "ceilingPerDay": 200, "ceilingUnitsMax": 1, "reversible": false }
+    "slack.channel.post": { "title": "Post messages to a channel", "tool": "slack", "scope": "#ops-alerts", "unitsLabel": "posts", "perDay": 50, "unitsMax": 1, "ceilingPerDay": 200, "ceilingUnitsMax": 1, "reversible": false },
+    "shopify.draft_order.create": { "title": "Create draft orders", "tool": "shopify", "scope": "northline-outdoor", "unitsLabel": "draft orders", "perDay": 10, "unitsMax": 1, "ceilingPerDay": 50, "ceilingUnitsMax": 1 },
+    "shopify.inventory.reduce": { "title": "Remove stock", "tool": "shopify", "scope": "northline-outdoor", "unitsLabel": "stock units", "perDay": null, "unitsMax": null, "ceilingPerDay": 1000, "ceilingUnitsMax": 500, "reversible": false }
   },
   "singles": [
     {
@@ -111,8 +130,169 @@
       "lines": ["Tag: Gift"],
       "result": "It isn’t clear whether this went out. Check in the tool, then say whether it did.",
       "askedAt": "-3d 15:48"
-    }
+    },
+    {"id": "ac_demoDraftOrder00000000", "operation": "shopify.draft_order.create", "chatId": "draft-orders", "state": "sent", "title": "Create a draft order of 12 items", "lines": ["8 × variant 7041", "4 × variant 7042", "Note: Samples for Dana’s photo shoot", "Tags: Samples"], "details": [{"ref": "Variant 7041", "product": "Cairn Insulated Bottle 750 ml, Olive", "sku": "CB-750-OLV", "quantity": 8}, {"ref": "Variant 7042", "product": "Cairn Insulated Bottle 750 ml, Black", "sku": "CB-750-BLK", "quantity": 4}], "result": "Sent.", "askedAt": "-2d 14:05"},
+    {"id": "ac_demoStockReduce0000000", "operation": "shopify.inventory.reduce", "exact": true, "chatId": "stock-fixes", "state": "sent", "title": "Remove 40 units of stock from item 8012", "lines": ["Location: 601", "Reason: damaged"], "result": "Sent.", "askedAt": "-2d 10:42"}
   ],
+  "ceilingSetAt": "-6d 09:30",
+  "ceiling": [
+    {"operation": "shopify.order.tag_add", "title": "Add tags to orders", "description": "Adds 1 to 5 tags to orders in the connected store.", "tool": "Shopify", "measure": {"kind": "count", "label": "orders"}, "applies": {"perDay": true, "batch": true}, "guardrails": [], "approverKind": "person", "enabled": true, "perDayMax": 200, "unitsMax": 100, "bulkThreshold": 5, "batchMax": 500, "suggested": {"perDayMax": 200, "unitsMax": 100}},
+    {"operation": "slack.channel.post", "title": "Post messages to a channel", "description": "Posts a message to a Slack channel the brand listed for notices. Links are removed and mentions stay silent.", "tool": "Slack", "measure": {"kind": "count", "label": "posts"}, "applies": {"perDay": true, "batch": false}, "guardrails": [], "approverKind": "person", "enabled": true, "perDayMax": 200, "unitsMax": 1, "bulkThreshold": 5, "batchMax": 500, "suggested": {"perDayMax": 200, "unitsMax": 1}},
+    {"operation": "shopify.order.tag_remove", "title": "Remove tags from orders", "description": "Removes 1 to 5 tags from orders in the connected store.", "tool": "Shopify", "measure": {"kind": "count", "label": "orders"}, "applies": {"perDay": true, "batch": true}, "guardrails": [], "approverKind": "person", "enabled": true, "perDayMax": 200, "unitsMax": 100, "bulkThreshold": 5, "batchMax": 500, "suggested": {"perDayMax": 200, "unitsMax": 100}},
+    {"operation": "shopify.draft_order.create", "title": "Create draft orders", "description": "Creates a draft order with products, quantities, a note and tags. It has no customer and is never sent or completed.", "tool": "Shopify", "measure": {"kind": "count", "label": "draft orders"}, "applies": {"perDay": true, "batch": true}, "guardrails": [], "approverKind": "person", "enabled": true, "perDayMax": 50, "unitsMax": 1, "bulkThreshold": 5, "batchMax": 500, "suggested": {"perDayMax": 50, "unitsMax": 1}},
+    {"operation": "shopify.inventory.restock", "title": "Add stock", "description": "Raises the available stock of one product at one location in the connected store.", "tool": "Shopify", "measure": {"kind": "count", "label": "stock units"}, "applies": {"perDay": true, "batch": true}, "guardrails": [], "approverKind": "person", "enabled": true, "perDayMax": 1000, "unitsMax": 500, "bulkThreshold": 5, "batchMax": 500, "suggested": {"perDayMax": 1000, "unitsMax": 500}},
+    {"operation": "shopify.inventory.reduce", "title": "Remove stock", "description": "Lowers the available stock of one product at one location in the connected store. It can't be undone.", "tool": "Shopify", "measure": {"kind": "count", "label": "stock units"}, "applies": {"perDay": false, "batch": false}, "guardrails": ["destructive"], "approverKind": "person", "enabled": true, "perDayMax": 1000, "unitsMax": 500, "bulkThreshold": 5, "batchMax": 500, "suggested": {"perDayMax": 1000, "unitsMax": 500}},
+    {"operation": "shopify.refund.create", "title": "Refund orders", "description": "Refunds line items, and shipping if asked, on one order in the shop's currency. Shopify may send the customer its own refund notice.", "tool": "Shopify", "measure": {"kind": "money", "currency": "USD"}, "applies": {"perDay": false, "batch": false}, "guardrails": ["money", "customer"], "approverKind": "admins", "enabled": true, "perDayMax": 50000, "unitsMax": 50000, "bulkThreshold": 5, "batchMax": 500, "suggested": {"perDayMax": 50000, "unitsMax": 50000}}
+  ],
+  "questions": [
+    {"id": "q_demoMorningStuckOrders", "askedAt": "0d 06:12", "chatId": null, "asker": "The morning check", "question": "Your morning stuck orders routine found 2 orders that have waited on a customer reply for over 10 days. Should it flag those as stuck too?", "options": ["Yes, flag them", "No, leave them out"]},
+    {"id": "q_demoWholesaleHeadsUp00", "askedAt": "-3d 15:52", "chatId": "order-tags", "question": "Should I post the Wholesale heads-up in #ops-alerts for every wholesale order, or only for orders over $1,000?", "options": ["Every wholesale order", "Only over $1,000"], "next": {"Every wholesale order": "Got it. I’ll post the heads-up for every wholesale order.", "Only over $1,000": "Got it. I’ll post the heads-up only for wholesale orders over $1,000."}}
+  ],
+  "chats": {
+    "order-tags": {
+      "messages": [
+        {
+          "id": "t_demoOrderTags000000001.u",
+          "role": "user",
+          "text": "Tag order 4377 as Gift.",
+          "at": "-3d 15:51",
+          "turnId": "t_demoOrderTags000000001",
+          "runId": "r_demoOrderTags000000001"
+        },
+        {
+          "id": "t_demoOrderTags000000001.0",
+          "role": "agent",
+          "part": {
+            "type": "text",
+            "text": "Order 4377 is Mia Torres's order of the Summit Fleece. I'll add the Gift tag once you allow it."
+          },
+          "trace": "order-tags-gift",
+          "model": "sonnet",
+          "at": "-3d 15:51",
+          "turnId": "t_demoOrderTags000000001",
+          "runId": "r_demoOrderTags000000001"
+        },
+        {
+          "id": "t_demoOrderTags000000001.1",
+          "role": "agent",
+          "part": {
+            "type": "ask",
+            "actionId": "ac_demoGiftTagCheck000000"
+          },
+          "trace": "order-tags-gift",
+          "model": "sonnet",
+          "at": "-3d 15:51",
+          "turnId": "t_demoOrderTags000000001",
+          "runId": "r_demoOrderTags000000001"
+        },
+        {
+          "id": "t_demoOrderTags000000002.u",
+          "role": "user",
+          "text": "Tag order 4512 as Wholesale.",
+          "at": "-3d 15:51",
+          "turnId": "t_demoOrderTags000000002",
+          "runId": "r_demoOrderTags000000002"
+        },
+        {
+          "id": "t_demoOrderTags000000002.0",
+          "role": "agent",
+          "part": {
+            "type": "text",
+            "text": "Order 4512 is Harbor & Pine's restock of 24 Ridge 30L packs. I'll add the Wholesale tag once you allow it, so the warehouse packs it with the trade orders."
+          },
+          "trace": "order-tags-wholesale",
+          "model": "sonnet",
+          "at": "-3d 15:51",
+          "turnId": "t_demoOrderTags000000002",
+          "runId": "r_demoOrderTags000000002"
+        },
+        {
+          "id": "t_demoOrderTags000000002.1",
+          "role": "agent",
+          "part": {
+            "type": "ask",
+            "actionId": "ac_demoWholesaleTag000000"
+          },
+          "trace": "order-tags-wholesale",
+          "model": "sonnet",
+          "at": "-3d 15:51",
+          "turnId": "t_demoOrderTags000000002",
+          "runId": "r_demoOrderTags000000002"
+        },
+        {
+          "id": "t_demoOrderTags000000003.u",
+          "role": "user",
+          "text": "Post a heads-up in #ops-alerts once it's tagged.",
+          "at": "-3d 15:51",
+          "turnId": "t_demoOrderTags000000003",
+          "runId": "r_demoOrderTags000000003"
+        },
+        {
+          "id": "t_demoOrderTags000000003.0",
+          "role": "agent",
+          "part": {
+            "type": "text",
+            "text": "Here's the post. It goes to #ops-alerts once you allow it."
+          },
+          "trace": "order-tags-post",
+          "model": "sonnet",
+          "at": "-3d 15:51",
+          "turnId": "t_demoOrderTags000000003",
+          "runId": "r_demoOrderTags000000003"
+        },
+        {
+          "id": "t_demoOrderTags000000003.1",
+          "role": "agent",
+          "part": {
+            "type": "ask",
+            "actionId": "ac_demoOpsAlertsPost00000"
+          },
+          "trace": "order-tags-post",
+          "model": "sonnet",
+          "at": "-3d 15:51",
+          "turnId": "t_demoOrderTags000000003",
+          "runId": "r_demoOrderTags000000003"
+        },
+        {
+          "id": "t_demoOrderTags000000003.2",
+          "role": "agent",
+          "part": {
+            "type": "text",
+            "text": "One more thing: should the Wholesale heads-up go out for every wholesale order, or only for the bigger ones? The question is waiting for you on the Approvals page."
+          },
+          "trace": "order-tags-post",
+          "model": "sonnet",
+          "at": "-3d 15:52",
+          "turnId": "t_demoOrderTags000000003",
+          "runId": "r_demoOrderTags000000003"
+        }
+      ]
+    }
+  },
+  "resumes": {
+    "ac_demoWholesaleTag000000": {
+      "turn": "t_demoOrderTags000000004",
+      "run": "r_demoOrderTags000000004",
+      "sent": "Done. Order 4512 has the Wholesale tag.",
+      "denied": "Understood. I won’t tag order 4512."
+    },
+    "ac_demoOpsAlertsPost00000": {
+      "turn": "t_demoOrderTags000000005",
+      "run": "r_demoOrderTags000000005",
+      "sent": "Done. The heads-up is in #ops-alerts.",
+      "denied": "Understood. I won’t post to #ops-alerts."
+    }
+  },
+  "late": {
+    "event": "Your Inhouse agent went on once the action was settled.",
+    "trace": "order-tags-resume",
+    "questionTurns": {
+      "q_demoWholesaleHeadsUp00": {
+        "turn": "t_demoOrderTags000000006",
+        "run": "r_demoOrderTags000000006"
+      }
+    }
+  },
   "resolved": { "sent": "Sent.", "failed": "It didn’t go out." },
   "lapsed": { "paused": "The agent was paused, so this needs your OK again.", "permission_removed": "The permission was removed, so this needs your OK again.", "channel_not_listed": "The channel isn’t listed any more, so this needs your OK again." },
   "permissions": [

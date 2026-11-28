@@ -71,9 +71,9 @@ describe('the menu, the palette and the deep links (failures 2 and 3)', () => {
         expect(settingsTabs(product), id).not.toContain(id)
       }
     }
-    // The demo has every page the product has but What the agent can do (M3-C: the demo has no ceiling yet).
+    // The demo has every page the product has, What the agent can do too (the demo catch-up's PR 3).
     expect(settingsTabs(true)).toEqual(SETTINGS_PAGES.map(p => p.id))
-    expect(settingsTabs(false)).toEqual(SETTINGS_PAGES.map(p => p.id).filter(id => id !== 'team-ceiling'))
+    expect(settingsTabs(false)).toEqual(SETTINGS_PAGES.map(p => p.id))
     expect(ids(true)).toEqual(expect.arrayContaining(['you-general', 'you-memory', 'you-permissions', 'team-agent', 'team-modes', 'team-memory', 'team-spend', 'team-members', 'team-data', 'team-audit']))
   })
   // Stage 1 M2-I: the product has no stages. Its Env is the Act view it is pinned to (store.ts `useCtx`). The audit log is
@@ -144,14 +144,14 @@ describe('Pause Inhouse agent (failure 4)', () => {
 })
 
 describe('a page no build has (failure 6)', () => {
-  it('a gone page renders the default page, in the product and the demo; the ceiling page only in the product', () => {
+  it('a gone page renders the default page, in the product and the demo; the ceiling page in both', () => {
     for (const product of [true, false]) {
       for (const id of ['team-approvals', 'team-limits', 'you-notif', 'team-plan']) {
         expect(settingsPage(id, env(product)).title, id).toBe(settingsPage('you-general', env(product)).title)
       }
     }
     expect(settingsPage('team-ceiling', env(true)).title).toBe('What the agent can do')
-    expect(settingsPage('team-ceiling', env(false)).title).toBe(settingsPage('you-general', env(false)).title)
+    expect(settingsPage('team-ceiling', env(false)).title).toBe('What the agent can do')
   })
 })
 

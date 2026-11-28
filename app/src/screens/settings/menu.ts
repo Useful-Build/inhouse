@@ -53,12 +53,12 @@ type SlackSignals = { connected: readonly string[]; channels: readonly { key: st
 export const hasSlack = (tools: SlackSignals): boolean => tools.connected.includes('slack') || tools.channels.some(c => c.key === 'slack')
 
 /**
- * The pages only the product offers. Stage 1 M3-C: the demo has no ceiling yet, so What the agent can do would be empty.
- * The demo has no pages of its own: since decision A13 (option B) it shows what the product does, so Who approves what,
- * Run limits, Notifications and Stage and plan are gone from both (the stored `a:<n>`, `l:*` and `stage` settings stay,
- * unread by any page).
+ * The pages only the product offers: none. The demo has no pages of its own and leaves none out: since decision A13
+ * (option B) it shows what the product does, so Who approves what, Run limits, Notifications and Stage and plan are gone
+ * from both (the stored `a:<n>`, `l:*` and `stage` settings stay, unread by any page), and since the demo catch-up's PR 3
+ * What the agent can do is in both (read-only, as in a deployable build).
  */
-const PRODUCT_ONLY_PAGES: readonly string[] = ['team-ceiling']
+const PRODUCT_ONLY_PAGES: readonly string[] = []
 /** Whether a page is offered: the demo leaves out the product-only pages. */
 export const pageShown = (id: string, product: boolean): boolean => product || !PRODUCT_ONLY_PAGES.includes(id)
 /** Where the account menu's Team settings opens: the first team page (M2-I). */
@@ -71,7 +71,7 @@ const BRAND_PERSON_PAGES: readonly string[] = ['you-permissions']
 
 /**
  * The menu as this brand sees it: Slack notices only with Slack connected, and in the demo (`product` false) no
- * product-only pages.
+ * product-only pages (there are none now).
  * `role`: the viewer's (unknown while signing in): the Inhouse team has no Always allowed page, and (Stage 1 M3-C) a member
  * no What the agent can do (route 150 lets only admins and the Inhouse team read it).
  */

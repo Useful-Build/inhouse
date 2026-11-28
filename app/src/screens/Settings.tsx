@@ -414,7 +414,7 @@ export function Settings() {
           {/* Stage 1 M2-H: Always allowed draws itself (content.ts names it for the search). */}
           {setTab === 'you-permissions' && <Permissions />}
           {/* Stage 1 M3-C: What the agent can do draws itself too. */}
-          {setTab === 'team-ceiling' && demo === null && <Ceiling />}
+          {setTab === 'team-ceiling' && <Ceiling />}
           {page.sections.filter(sec => sec.rows.length > 0 || sec.empty).map((sec, si) => (
             <section key={`${si}|${sec.label}`} className={sec.label ? undefined : 'mt-4.5'}>
               {sec.label && <SectionHeader title={sec.label} className="mt-6 mb-2.5" />}

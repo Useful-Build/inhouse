@@ -11,6 +11,7 @@ describe('request schemas', () => {
     expect(AskOptionsSchema.parse({ chatId: 'c1', quote: 'q', replacesRun: 'r1', attachments: [{ name: 'a.csv', meta: '1 KB', icon: 'description' }], mode: 'sonnet', effort: 'high' }).effort).toBe('high')
     expect(SendOptionsSchema.parse({ priority: 'now' }).priority).toBe('now')
     expect(DemoContextSchema.parse({ scenario: 'Normal' })).toEqual({ scenario: 'Normal' })
+    expect(DemoContextSchema.parse({ scenario: 'Normal', viewAs: 'member' })).toEqual({ scenario: 'Normal', viewAs: 'member' })
     expect(CreateChatInputSchema.parse({ id: 'chat-1', title: 'A chat' }).id).toBe('chat-1')
   })
   it('refuse a value outside its enum, and a missing chat', () => {
@@ -18,6 +19,7 @@ describe('request schemas', () => {
     expect(AskOptionsSchema.safeParse({}).success).toBe(false)
     expect(SendPrioritySchema.safeParse('urgent').success).toBe(false)
     expect(DemoContextSchema.safeParse({ scenario: 'Fly' }).success).toBe(false)
+    expect(DemoContextSchema.safeParse({ scenario: 'Normal', viewAs: 'owner' }).success).toBe(false)
     expect(CreateChatInputSchema.safeParse({ id: '', title: 'x' }).success).toBe(false)
   })
 })

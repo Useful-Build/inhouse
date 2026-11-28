@@ -32,7 +32,7 @@ import type { ActionCard, ActionChoice, ActionFilter, ActionItemsPage, ActionRes
 import type { MockActions } from './mock-actions'
 import type { MockJobs } from './mock-jobs'
 import type { Permission } from '../../shared/contract/permissions'
-import type { CeilingList, CeilingRow } from '../../shared/contract/ceiling'
+import type { CeilingList, CeilingRow, UpdateCeilingInput } from '../../shared/contract/ceiling'
 import type { Question } from '../../shared/contract/questions'
 import type { Job, JobOutcome } from '../../shared/contract/jobs'
 import { MEMBER_ID_PATTERN, meetsRule, settingRow } from '../../shared/contract/settings-table'
@@ -424,8 +424,6 @@ interface Server {
   skillsDeleted: Record<string, true>
   skillsChanged: Record<string, Instant>
 }
-/** The demo has no actions, permissions or questions (Stage 1 M2): an answer to one names nothing it has. */
-const NO_M2_RECORD = "That isn't there any more."
 /** What the mock says to someone without `approveMemory` (the server's matrix refuses routes 77 and 78 the same way). */
 const WAITING_REFUSED = 'Only admins and the Inhouse team can see what waits for an OK.'
 const DECIDING_REFUSED = 'Only admins and the Inhouse team can decide on what waits for an OK.'
@@ -813,7 +811,7 @@ export class MockAgent implements AgentClient {
   read = (): AgentData => {
     const base = DATA_FOR[this.demo.scenario]
     // Whether the grant is live changes with the clock alone, so it is part of what a view is built from.
-    const key = [this.server, this.state.settings, this.failed, this.grantNow()?.live, this.skillBodies, this.slackListed, this.lapsed, this.state.sent]
+    const key = [this.server, this.state.settings, this.failed, this.grantNow()?.live, this.skillBodies, this.slackListed, this.lapsed, this.state.sent, this.demo.viewAs]
     const hit = this.views.find(x => x.base === base && x.key.every((k, i) => k === key[i]))
     if (hit) return hit.v
     const v = this.overlay(base)
@@ -832,7 +830,8 @@ export class MockAgent implements AgentClient {
     return [...SAMPLE_MEMBERS.map(m => again.get(m.id) ?? m), ...s.invited.filter(m => !sampleIds.has(m.id))].map(m => ({
       ...m,
       name: m.id === ME_ID ? this.meName() : m.name,
-      role: s.roles[m.id] ?? m.role,
+      // The demo's "View as" shows the signed-in person as a member: their saved role stays what it is.
+      role: m.id === ME_ID && this.demo.viewAs === 'member' ? 'member' as const : s.roles[m.id] ?? m.role,
       photo: m.id in s.photos ? s.photos[m.id] : m.photo,
       status: s.removed[m.id] ? 'removed' as const : m.status,
       rev: this.rev(`member:${m.id}`, m.rev),
@@ -928,7 +927,7 @@ export class MockAgent implements AgentClient {
   /** The signed-in person: the sample Admin. `can` follows the role (the demo's Admin may do everything, call 10). */
   me = (): Me | null => {
     if (DATA_FOR[this.demo.scenario].status === 'loading') return null
-    const key = [this.server, this.state.settings['g:name']]
+    const key = [this.server, this.state.settings['g:name'], this.demo.viewAs]
     if (this.meSnap && key.every((k, i) => k === this.meSnap!.key[i])) return this.meSnap.me
     const m = this.members().find(x => x.id === ME_ID)!
     const admin = m.role === 'admin'
@@ -942,7 +941,7 @@ export class MockAgent implements AgentClient {
   onNotice = (l: (n: AgentNotice) => void) => { this.noticeListeners.add(l); return () => { this.noticeListeners.delete(l) } }
   /** DemoControls (demo-controls.ts), not AgentClient: the real client has neither. */
   setDemo(ctx: DemoContext) {
-    const changed = ctx.scenario !== this.demo.scenario
+    const changed = ctx.scenario !== this.demo.scenario || ctx.viewAs !== this.demo.viewAs
     this.demo = ctx
     // What `read`, `listFiles` and `listNotifications` return follows the scenario.
     if (changed) this.listeners.forEach(l => l())
@@ -1100,25 +1099,26 @@ export class MockAgent implements AgentClient {
     if (forgotten) forgot[key] = true; else delete forgot[key]
     return this.writeRecs([[rec, 1]], { forgot })
   }
-  // Stage 1 M2 (N18): the demo has no questions: its list is empty and every answer is refused (there is nothing it could
-  // name), with no notice. Stage 1 M3-U and the demo catch-up (PR 1): its actions and permissions are the real agent's
-  // cards and Always allowed list on sample data (mock-actions.ts), in the Normal scenario; in the other scenarios none,
-  // as before. They load with the first read of them (their module and sample data), outside Today's first load
-  // (check-bundle).
+  // Stage 1 M2 (N18) and the demo catch-up (PRs 1 and 3): the demo's actions, permissions, questions and ceiling are the real
+  // agent's cards, Always allowed list, "Questions for you" and "What the agent can do" on sample data (mock-actions.ts), in
+  // the Normal scenario; in the other scenarios none (the ceiling aside), as before. They load with the first read of them
+  // (their module and sample data), outside Today's first load (check-bundle).
   private demoActionsLoad: Promise<MockActions> | null = null
   private actionListeners = new Set<(u: { actionId: string; rev: number }) => void>()
   /** The Slack channels listed (mock-notify.ts), by name: a fresh demo lists #ops-alerts (#653). */
   private slackListed: readonly string[] = ['ops-alerts']
   /** Counts Reset demo, so a Pause queued before one never lapses the fresh demo's cards. */
   private resets = 0
+  private actionsInstance: MockActions | null = null
   private demoActions(): Promise<MockActions> {
-    return this.demoActionsLoad ??= import('./mock-actions').then(m => new m.MockActions({
+    return this.demoActionsLoad ??= import('./mock-actions').then(m => this.actionsInstance = new m.MockActions({
       now: () => demoNow(this.startedAt).getTime(),
       shown: () => this.demo.scenario === 'Normal',
       hasTool: tool => { const t = this.read().tools; return tool !== 'slack' || t.connected.includes('slack') || t.channels.some(c => c.key === 'slack') },
       listedChannels: () => this.slackListed,
       meId: ME_ID,
       memberId: memberIdOf,
+      role: () => (this.demo.viewAs === 'member' ? 'member' : 'admin'),
       paused: () => this.state.paused !== null,
       changed: u => { this.actionListeners.forEach(l => l(u)) },
       sentBack: u => { this.sentBack = [{ ...u, id: `n-sent-back-${u.actionId}-${u.rev}` }, ...this.sentBack]; this.listeners.forEach(l => l()) },
@@ -1142,8 +1142,10 @@ export class MockAgent implements AgentClient {
   onActionUpdated(l: (u: { actionId: string; rev: number }) => void): () => void { this.actionListeners.add(l); return () => { this.actionListeners.delete(l) } }
   permissions(): Promise<Permission[]> { return this.acted(a => a.permissions()) }
   removePermission(id: string, ifRev: number): Promise<Permission[]> { return this.acted(a => a.removePermission(id, ifRev)) }
-  questions(): Promise<Question[]> { return Promise.resolve([]) }
-  answerQuestion(): Promise<Question> { return this.rejected(NOT_FOUND, NO_M2_RECORD, false) }
+  questions(): Promise<Question[]> { return this.acted(a => a.questions()) }
+  answerQuestion(id: string, choice: string): Promise<Question> { return this.acted(a => a.answerQuestion(id, choice)) }
+  loadActions(): Promise<MockActions> { return this.demoActions() }
+  loadedActions(): MockActions | null { return this.actionsInstance }
   // Stage 1 PR 2 (J1 to J6): the demo's long jobs live in mock-jobs.ts + sample-data/jobs.json, loaded lazily on
   // first job read or long-task run so none of its sample data sits on Today's first load.
   private demoJobsLoad: Promise<MockJobs> | null = null
@@ -1203,10 +1205,10 @@ export class MockAgent implements AgentClient {
       return this.rejected(e.code, e.message, false, { ...(e.reason ? { reason: e.reason } : {}), ...(e.current ? { current: e.current } : {}) })
     }
   }
-  // Stage 1 M3-C (N26): the demo has no ceiling (its page is the product's only, menu.ts), so a read or a change names
-  // nothing it has, refused like the M2 answers above (the same words, so Today's first load barely grows).
-  ceiling(): Promise<CeilingList> { return this.rejected(NOT_FOUND, NO_M2_RECORD, false) }
-  setCeiling(): Promise<CeilingRow> { return this.rejected(NOT_FOUND, NO_M2_RECORD, false) }
+  // Stage 1 M3-C (N26): the Inhouse ceiling, as a deployable build serves it: every operation's row, read-only (editing is
+  // off, `CEILING_EDIT_ON`), for admins; a member is refused. Its rows live with the demo's actions (mock-actions.ts).
+  ceiling(): Promise<CeilingList> { return this.acted(a => a.ceiling()) }
+  setCeiling(_operation: string, _input: UpdateCeilingInput): Promise<CeilingRow> { return this.acted(a => a.setCeiling()) }
 
   waitingMemory(): Promise<WaitingMemory[]> {
     if (!this.me()?.can.approveMemory) return this.rejected('forbidden', WAITING_REFUSED, false)
@@ -1553,16 +1555,25 @@ export class MockAgent implements AgentClient {
   // The demo's list lives in ./mock-notify, loaded on first use, so none of it weighs on Today's first load.
   private notifyLoad: Promise<typeof import('./mock-notify')> | null = null
   private loadNotify = () => (this.notifyLoad ??= import('./mock-notify'))
-  listNotifyChannels = (): Promise<NotifyChannelList> => this.loadNotify().then(m => m.demoNotify.list())
+  /** The list with the alerts channel's standing permission on it, when an admin's mark gave one (M2-N, N27). */
+  private withAlertsPermission = async (list: NotifyChannelList): Promise<NotifyChannelList> => {
+    const a = await this.demoActions()
+    return { ...list, channels: list.channels.map(c => { const permission = c.alerts ? a.alertsPermission(c.name) : undefined; return permission ? { ...c, permission } : c }) }
+  }
+  listNotifyChannels = (): Promise<NotifyChannelList> => this.loadNotify().then(async m => this.withAlertsPermission(await m.demoNotify.list()))
   availableNotifyChannels = (): Promise<AvailableChannels> => this.loadNotify().then(m => m.demoNotify.available())
   saveNotifyChannels = (input: PutNotifyChannels): Promise<NotifyChannelList> => this.loadNotify().then(async m => {
+    const before = (await m.demoNotify.list()).channels.find(c => c.alerts)?.channelId ?? null
     const list = await m.demoNotify.save(input)
+    // Moving the alerts mark gives the brand's standing permission to the channel it lands on (an admin's mark only), and takes it from the one it left.
+    const marked = list.channels.find(c => c.alerts)
+    if ((marked?.channelId ?? null) !== before) (await this.demoActions()).markAlerts(marked?.name ?? null)
     // The demo's Slack cards and permissions follow the list (#653).
     this.slackListed = m.demoNotify.names()
     // A post to a channel that left the list is a finding now, and one in its hold goes back with the outbox's words.
     void this.demoActions().then(a => { a.channelsChanged(); this.lapsePosts(a.lapseText('channel'), 'today', p => !this.slackListed.includes(channelOf(p))) })
     this.listeners.forEach(l => l())
-    return list
+    return this.withAlertsPermission(list)
   })
   disconnect = (): void => undefined
 

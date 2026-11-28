@@ -146,9 +146,10 @@ test('Settings: search filters the menu to matching pages and rows', async ({ pa
   const nav = page.getByRole('navigation', { name: 'Settings' })
   const menu = nav.locator('button[data-nav-row]')
   const search = page.getByRole('searchbox', { name: 'Search settings' })
-  // 11 with P5 W4's Slack notices: the sample brand has Slack connected (a brand without it keeps 10). Decision A13 took
-  // Notifications, Who approves what, Run limits and Stage and plan; the demo's permissions brought Always allowed.
-  await expect(menu).toHaveCount(11)
+  // 12 with P5 W4's Slack notices: the sample brand has Slack connected (a brand without it keeps 11). Decision A13 took
+  // Notifications, Who approves what, Run limits and Stage and plan; the demo's permissions brought Always allowed, and the
+  // demo catch-up's PR 3 What the agent can do (an admin's).
+  await expect(menu).toHaveCount(12)
 
   await search.fill('time zone')
   await expect(menu).toHaveCount(1)
@@ -169,7 +170,7 @@ test('Settings: search filters the menu to matching pages and rows', async ({ pa
   // Escape clears the box and the whole menu comes back.
   await search.press('Escape')
   await expect(search).toHaveValue('')
-  await expect(menu).toHaveCount(11)
+  await expect(menu).toHaveCount(12)
 })
 
 test('Chats: there is no Chats item in the nav; New chat and Recent chats stay', async ({ page, fx }) => {

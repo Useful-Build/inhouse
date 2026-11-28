@@ -102,7 +102,7 @@ describe('the mock: asking first and Always allow', () => {
   it("the bell's approval notices show only where the demo shows its actions", () => {
     const a = fresh()
     const approvals = () => a.listNotifications().filter(n => n.link.to === 'page' && n.link.page === 'approvals' && n.who === 'Inhouse').map(n => n.text)
-    expect(approvals()).toEqual(['Approval waiting', 'A send needs a check', 'An approval expired'])
+    expect(approvals()).toEqual(['Approval waiting', 'A send needs a check', 'A question is waiting', 'An approval expired'])
     a.setDemo({ scenario: 'Tool disconnected' })
     expect(approvals()).toEqual([])
   })

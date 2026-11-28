@@ -6,6 +6,7 @@
 //  3. a stage word ("Watch", "Act", "Run", "stage") is shown.
 // The data's own notes (`note`, `fieldGuide`, `usedBy`) and the patterns that match what a person types (`match`) are not shown.
 import { describe, expect, test } from 'vitest'
+import actions from '@sample/actions.json'
 import activity from '@sample/activity.json'
 import chatScript from '@sample/chat-script.json'
 import chats from '@sample/chats.json'
@@ -20,7 +21,7 @@ import skillBodies from '@sample/skill-bodies.json'
 import skills from '@sample/skills.json'
 import tools from '@sample/tools.json'
 
-const FILES: Record<string, unknown> = { activity, 'chat-script': chatScript, chats, help, library, memory, notifications, 'people-and-rules': people, problems, routines, 'skill-bodies': skillBodies, skills, tools }
+const FILES: Record<string, unknown> = { actions, activity, 'chat-script': chatScript, chats, help, library, memory, notifications, 'people-and-rules': people, problems, routines, 'skill-bodies': skillBodies, skills, tools }
 const UNSHOWN = new Set(['note', 'fieldGuide', 'usedBy', 'match', 'trace'])
 
 /** Every string a screen can show, with where it is. */

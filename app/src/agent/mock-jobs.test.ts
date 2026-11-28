@@ -393,6 +393,38 @@ describe('helper traces and web switches (J6, J7, J8)', () => {
     expect(urlBlocked.labels).not.toContain('Searching the web')
     expect(urlBlocked.labels).not.toContain('Reading a web page')
   })
+
+  test('a list never saved means any public website; a saved empty list means none (B13, M3-J: webFetchMode)', async () => {
+    const l = await load()
+    await l.mock.createChat({ id: 'web-open', title: 'Web open' })
+    const ask = async (key: string, text: string) => {
+      const evs: RunEvent[] = []
+      const s = await l.mock.send('web-open', { clientTurnKey: key, text, model: 'opus' })
+      const off = l.mock.attach(s.runId, f => evs.push(f.event))
+      await run(20_000)
+      off()
+      const tr = await l.mock.getTrace(s.turnId)
+      return { text: evs.filter(e => e.type === 'part').map(e => (e.type === 'part' && e.part.type === 'text' ? e.part.text : '')).join('\n'), labels: tr?.steps.map(st => st.label) ?? [] }
+    }
+    // Never saved: a public website no list names opens.
+    const anySite = await ask('open-key-01', 'Check https://anywhere.example.test/bottles')
+    expect(anySite.text).toContain('[anywhere.example.test](https://anywhere.example.test)')
+    expect(anySite.labels).toContain('Reading a web page')
+    // Still any public website only: an address that isn't one is refused, as the egress's address block does.
+    const local = await ask('open-key-02', 'Check http://localhost/admin')
+    expect(local.text).toContain("localhost isn't a public website")
+    expect(local.labels).not.toContain('Reading a web page')
+    // A search reads the invented competitors without any list.
+    await l.mock.setToggle('t:websearch', true)
+    const search = await ask('open-key-03', 'Search the web for competitor prices on insulated bottles')
+    expect(search.text).toContain('Checked these websites')
+    expect(search.labels).toContain('Reading a web page')
+    // A saved empty list is the team's choice: no website at all.
+    await l.mock.setSetting('t:webfetch', '')
+    const none = await ask('open-key-04', 'Check https://anywhere.example.test/bottles')
+    expect(none.text).toContain("isn't in Websites it may open")
+    expect(none.labels).not.toContain('Reading a web page')
+  })
 })
 
 describe('round 3 parity and plant regression tests (H1, H2, issue 707)', () => {

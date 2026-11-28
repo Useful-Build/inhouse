@@ -41,7 +41,7 @@ const pages = (s: Scenario): [hash: string, ready: (p: Page) => Locator][] => [
 ]
 const SETTINGS = (s: Scenario): [tab: string, heading: string][] => [
   ['you-general', 'General'], ['you-memory', 'Memory'], ['you-permissions', 'Always allowed'], ['team-agent', 'Inhouse agent'],
-  ['team-modes', 'Models'], ['team-memory', 'Team memory'], ['team-spend', 'Spending cap'], ['team-members', 'Members'],
+  ['team-modes', 'Models'], ['team-memory', 'Team memory'], ['team-ceiling', 'What the agent can do'], ['team-spend', 'Spending cap'], ['team-members', 'Members'],
   ['team-slack', slack(s) ? 'Slack notices' : 'General'], ['team-data', 'Data and access'],
 ]
 

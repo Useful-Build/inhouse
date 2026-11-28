@@ -278,6 +278,15 @@ export const STATES: UiState[] = [
   // first), and Settings > Always allowed with the seeded permissions.
   page_('act-chat-order-tags', 'Normal', '#/chats/order-tags', 'Post to #ops-alerts in Slack', true),
   page_('act-settings-permissions', 'Normal', '#/settings/you-permissions', 'Done without asking', true),
+  // The demo catch-up's PR 3: What the agent can do, the Slack page with its disclosure, the chats for the other write
+  // cards (a batch that partly went out, a draft order, a refused stock call with its reduction, an order note).
+  // Approvals above now carries the two questions; the member's view is checked in questions-ceiling-demo.spec.ts.
+  page_('act-settings-ceiling', 'Normal', '#/settings/team-ceiling', 'Actions in your tools', true),
+  page_('act-settings-slack', 'Normal', '#/settings/team-slack', 'Alerts channel', true),
+  page_('act-chat-loyalty-tags', 'Normal', '#/chats/loyalty-tags', 'Sent. 447 of 450 went out', true),
+  page_('act-chat-draft-orders', 'Normal', '#/chats/draft-orders', 'Create a draft order of 12 items', true),
+  page_('act-chat-stock-fixes', 'Normal', '#/chats/stock-fixes', 'Remove 40 units of stock from item 8012', true),
+  page_('act-chat-order-note', 'Normal', '#/chats/order-note', 'came from the order, not from you', true),
 ]
 
 /** Opens a state from a clean demo: a fixed theme, no agent-mark animation, no dot sweep. */
