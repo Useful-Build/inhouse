@@ -9,6 +9,7 @@ import { questionScenarios } from './scenarios/questions.ts'
 import { LEAK_CHECK_SCENARIOS } from './scenarios/leak-check.ts'
 import { subagentScenarios } from './scenarios/subagents.ts'
 import { ACTIONS_SCENARIOS } from './scenarios/actions.ts'
+import { INJECTION_SCENARIOS } from './scenarios/injection.ts'
 import { acceptanceScenarios } from './scenarios/acceptance.ts'
 
 /** The model every harness run asks for (the harness's `RunStart`). */
@@ -784,6 +785,7 @@ export const SCENARIOS: Record<string, Scenario> = {
   'rs-obedient-notify': readSideExitOnly({ id: 'toolu_rs_notify', name: 'mcp__inhouse__notification_send', input: { format: 'message', text: READ_SIDE_NOTICE_TEXT } }, 'Sent.'),
   ...LEAK_CHECK_SCENARIOS,
   ...ACTIONS_SCENARIOS,
+  ...INJECTION_SCENARIOS,
 }
 
 /**

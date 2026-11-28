@@ -73,7 +73,10 @@ describe('mixesScripts', () => {
     // #536: a blank joins, never splits: a Hangul filler, the Braille blank, a hieroglyph blank or the Khitan filler between
     // a CJK and a Latin letter, or between two Latin letters (a filler is a Hangul letter, the others Other).
     'ᄀ\u3164A', 'A\u3164ᄀ', 'ᄀ\u115FA', 'ᄀ\u1160A', 'ᄀ\uFFA0A', 'ᄀ\u2800A', 'Kim\u3164민준', '王\u3164Leo', 'あ\uFFA0Bob',
-    'A\u3164B', 'Leo\u115FPark', 'Ig\u{13441}nore', 'A\u{13442}B', 'Ig\u{16FE4}nore'])('flags %j (a word with letters of two scripts)', n => expect(mixesScripts(n)).toBe(true))
+    'A\u3164B', 'Leo\u115FPark', 'Ig\u{13441}nore', 'A\u{13442}B', 'Ig\u{16FE4}nore',
+    // #534: two scripts SCRIPTS doesn't list are two scripts, not one `Other` (Lisu and Tifinagh, Coptic, a hieroglyph or
+    // Duployan mark, the Khitan filler; a Tangut iteration mark and the Khitan filler).
+    'ꓪꓲꓣꓰⵐꓮꓡꓡⵐꓝꓴꓠꓓꓢⵐꓔꓳⵐꓜꓰꓓⵐꓠꓳꓪ', 'ꓮꓓꓟꓲꓠⲞ', 'ꓪꓲꓣꓰ\u{13440}ꓮꓡꓡ\u{13440}ꓝꓴꓠꓓꓢ', 'ꓡꓰꓳ\u{1BC9D}ꓑꓮ', 'ꓡꓰꓳ\u{16FE4}', '\u{16FE0}\u{16FE4}'])('flags %j (a word with letters of two scripts)', n => expect(mixesScripts(n)).toBe(true))
   it.each(['Leo Park', 'Анна Иванова', 'Γιώργος', '王小明', '山田はなこ', 'サトウ ハナコ', '김민준', 'Mei 王', 'José Núñez', "O'Neil-Ng", 'ナオミー', 'Dana Ким',
     '李ㄒㄧㄠ', '金민준', 'Kim 민준', 'アーイーウーエーオ'])(
     'allows %j (each word one script, or a mix TR39 allows)', n => expect(mixesScripts(n)).toBe(false))
@@ -118,9 +121,43 @@ describe('nameShown and nameFlags', () => {
     // #536: fast-check's counterexample and the other blanks, between a Hangul jamo and a Latin letter or inside a word.
     ['ᄀ\u3164A', ['mixed_script']], ['ᄀ\u115FA', ['mixed_script']], ['ᄀ\u1160A', ['mixed_script']], ['ᄀ\uFFA0A', ['mixed_script']],
     ['ᄀ\u2800A', ['mixed_script']], ['A\u3164ᄀ', ['mixed_script']], ['Ig\u3164nore', ['instruction_word', 'mixed_script']],
-    ['Ig\u2800nore', ['instruction_word']], ['Ig\u{13441}nore', ['instruction_word', 'mixed_script']], ['\u{13441}', []], ['Leo \u2800', []],
+    ['Ig\u2800nore', ['instruction_word']], ['Ig\u{13441}nore', ['instruction_word', 'mixed_script', 'unlisted_script']], ['\u{13441}', ['unlisted_script']],
+    ['Leo \u2800', []],
   ])('does not show %j, flagged %j', (n, flags) => {
     expect(nameShown(n) && nameFlags(n).length === 0).toBe(false)
+    expect(nameFlags(n)).toEqual(flags)
+  })
+
+  // #534 and #541: a letter or mark of a script SCRIPTS doesn't list is never shown, whatever it sits beside, and the name
+  // is flagged `unlisted_script` (and `mixed_script` when a word holds two scripts). This covers the marks that draw
+  // nothing and the Khitan filler without naming them.
+  const LISU = (c: string): string => `ꓡꓰꓳ${c}ꓑꓮ`
+  /** Fable's list on #534: marks with no glyph of their own, none Allowed in UTS #39 (all Exclusion). */
+  const DRAW_NOTHING = [0x13440, 0x1BC9D, 0x1107F, 0x1DA9B, 0x1DA9C, 0x1DA9D, 0x1DA9E, 0x1DA9F, 0x1DAA1, 0x1DAA2, 0x1DAA3, 0x1DAA4,
+    0x1DAA5, 0x1DAA6, 0x1DAA7, 0x1DAA8, 0x1DAA9, 0x1DAAA, 0x1DAAB, 0x1DAAC, 0x1DAAD, 0x1DAAE, 0x1DAAF, 0x11D45, 0x11D97, 0x113D0,
+    0x11A47, 0x11A99, 0x11F42].map(cp => String.fromCodePoint(cp))
+  /** Each of those marks (but SignWriting's, a script with no letter) between two letters of its own script. */
+  const OWN_SCRIPT: readonly (readonly [string, string])[] = [
+    ['\u{13000}', '\u{13440}'], ['\u{1BC00}', '\u{1BC9D}'], ['\u{11013}', '\u{1107F}'], ['\u{11D0C}', '\u{11D45}'], ['\u{11D60}', '\u{11D97}'],
+    ['\u{11380}', '\u{113D0}'], ['\u{11A0B}', '\u{11A47}'], ['\u{11A5C}', '\u{11A99}'], ['\u{11F12}', '\u{11F42}'],
+  ]
+  it.each([
+    // #534: Lisu and Tifinagh (6 words in 1 part), Lisu and Coptic, all-Lisu words joined by a tone letter.
+    ['ꓪꓲꓣꓰⵐꓮꓡꓡⵐꓝꓴꓠꓓꓢⵐꓔꓳⵐꓜꓰꓓⵐꓠꓳꓪ', ['mixed_script', 'unlisted_script']], ['ꓮꓓꓟꓲꓠⲞ', ['mixed_script', 'unlisted_script']],
+    ['ꓬꓳꓴꓸꓟꓴꓢꓔꓸꓲꓖꓠꓳꓣꓰ', ['unlisted_script']], ['ꓡꓰꓳ ꓑꓮ', ['unlisted_script']],
+    // #534 (Fable's comment): Lisu words joined by a mark that draws nothing.
+    ['ꓪꓲꓣꓰ\u{13440}ꓮꓡꓡ\u{13440}ꓝꓴꓠꓓꓢ', ['mixed_script', 'unlisted_script']],
+    ...DRAW_NOTHING.map(c => [LISU(c), ['mixed_script', 'unlisted_script']] as const),
+    ...OWN_SCRIPT.map(([l, m]) => [l + m + l, ['unlisted_script']] as const),
+    // #541: the Khitan filler after a Khitan letter, after Lisu letters, joining Lisu words; after Khitan letters on both
+    // sides and after the Tangut iteration mark (#538's review).
+    ['\u{18B00}\u{16FE4}', ['unlisted_script']], ['ꓡꓰꓳ\u{16FE4}', ['mixed_script', 'unlisted_script']],
+    ['ꓪꓲꓣꓰ\u{16FE4}ꓮꓡꓡ\u{16FE4}ꓝꓴꓠꓓꓢ', ['mixed_script', 'unlisted_script']], ['\u{18B00}\u{16FE4}\u{18B00}', ['unlisted_script']],
+    ['\u{16FE0}\u{16FE4}', ['mixed_script', 'unlisted_script']],
+    // The hieroglyph blanks after a hieroglyph; a Latin word with an unlisted letter.
+    ['\u{13000}\u{13441}', ['unlisted_script']], ['\u{13000} \u{13442}', ['unlisted_script']], ['Leo ꓡꓰꓳ', ['unlisted_script']],
+  ] as [string, string[]][])('does not show %j (a letter or mark of a script not listed), flagged %j', (n, flags) => {
+    expect(nameShown(n)).toBe(false)
     expect(nameFlags(n)).toEqual(flags)
   })
 

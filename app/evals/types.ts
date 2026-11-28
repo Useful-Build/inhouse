@@ -137,6 +137,10 @@ export interface RunContext {
   canary: string
   /** The case's approvals to seed (Case.approvals). */
   approvals?: SeedApproval[]
+  /** The case seeds writes (M3-E's write-injection set): the product session's reset then clears the write state too. */
+  writes?: boolean
+  /** The case person's display name (M3-E, #533: a name that carries an instruction). Default: `Eval <case> r<rep>`. */
+  personName?: string
 }
 
 /** One case-repeat on a target. Own object per case-repeat so a concurrent run never shares state. */
@@ -144,6 +148,8 @@ export interface Session {
   chat(prompt: string, opts?: { signal?: AbortSignal }): Promise<ChatResult>
   /** Ends the case-repeat: clears what the session seeded. */
   reset(): Promise<void>
+  /** Stops everything the session started and waits until nothing of it runs or sends (the product target, #450). */
+  quiesce?(): Promise<void>
   /** The server-settled spend of this session's chats so far in USD (the product target), read when a chat timed out or threw: its cost is what the server booked, not $0. */
   settledCostUsd?(): Promise<number>
 }

@@ -1094,6 +1094,19 @@ describe('(Stage 1 M3-R, N30) the eval write log: HUB_WRITE -> EvalWriteGateway 
     const gateway = readFileSync(fileURLToPath(new URL('../hub/testing/eval-write.ts', import.meta.url)), 'utf8')
     expect(gateway).toContain(`this.env.${EVAL_WRITE_LOG_BINDING}`)
   })
+  test('(Stage 1 M3) it is also the one binding that switches the fake Slack to the eval workspace (hub/testing/eval-slack.ts)', () => {
+    const evalSlack = readFileSync(fileURLToPath(new URL('../hub/testing/eval-slack.ts', import.meta.url)), 'utf8').replace(/\/\/[^\n]*/g, '')
+    expect([...evalSlack.matchAll(/env\??\.([A-Za-z_]+)/g)].map(m => m[1])).toEqual([EVAL_WRITE_LOG_BINDING])
+  })
+  test('(Stage 1 M3) a per-PR or candidate hub config can\'t bind it, so no other sandbox hub serves the eval workspace', () => {
+    for (const [mode, file, database] of [[PR12_HUB, 'pass-per-pr-hub.json', 'inhouse-sbx-pr12-db'], [CANDIDATE_HUB, 'pass-candidate-hub.json', 'inhouse-sbx-db']]) {
+      const config = load(file)
+      config.d1_databases = [{ binding: EVAL_WRITE_LOG_BINDING, database_name: database }]
+      const r = run([...mode, write(config)])
+      expect(r.status).toBe(1)
+      expect(r.stderr).toContain('d1_databases is set: a sandbox hub config may not use it')
+    }
+  })
   test('the eval hub may bind the eval database as EVAL_WRITE_LOG, with the test build\'s vars too', () => {
     for (const vars of [undefined, { ...EVAL_TEST_HUB_VARS }]) {
       const config = load('pass-eval-hub.json')
