@@ -334,7 +334,8 @@ export async function sdkCallTool(deps: SdkDeps, target: McpTarget, call: McpToo
           if (typeof era !== 'string') return era
           continue
         }
-        if (f.reason === 'version') deps.eras.drop(target.endpoint, target.generation)
+        // An answer that may mean the cached era is wrong: the next operation probes again (never this call).
+        if (f.reason === 'version' || f.reason === 'rejected' || f.reason === 'malformed') deps.eras.drop(target.endpoint, target.generation)
         return fail(op, f.reason, f.retryAfterMs)
       }
       if (isInputRequiredResult(res)) {

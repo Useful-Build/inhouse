@@ -149,9 +149,49 @@ describe('the era cache', () => {
     await read(2)
     expect(wire(url).slice(6)).toEqual(['server/discover', 'tools/call'])
   })
+
+  it("a stale 'modern' verdict on a 2025 server: its refusal drops the cache, and the next call probes and falls back", async () => {
+    const url = `${LEGACY}/mcp`
+    // A real modern verdict (the modern fixture's discover), planted under the legacy endpoint.
+    await sdkListTools(deps, target(`${MODERN}/open/mcp`))
+    const modernPrior = deps.eras.get(`${MODERN}/open/mcp`, 1, clock)
+    expect(modernPrior?.kind).toBe('modern')
+    deps.eras.set(url, 1, modernPrior!, clock + ERA_TTL_MS)
+    const out = await sdkCallTool(deps, target(url), { tool: def('notes_read'), args: { id: 'n1' }, mode: 'read' })
+    expect(out).toMatchObject({ kind: 'error', reason: 'rejected' })
+    expect(wire(url)).toEqual(['tools/call'])
+    expect(deps.eras.get(url, 1, clock)).toBeNull()
+    expect(await sdkCallTool(deps, target(url), { tool: def('notes_read'), args: { id: 'n1' }, mode: 'read' })).toMatchObject({ kind: 'ok', era: 'legacy' })
+    expect(wire(url).slice(1)).toEqual(['server/discover', 'initialize', 'notifications/initialized', 'tools/call'])
+  })
 })
 
 describe('streams', () => {
+  it('a stream that ends or breaks before its answer is lost: a read is sent once more, a write is not', async () => {
+    const url = `${MODERN}/open/mcp`
+    let cut = 0
+    const plant: SdkDeps = {
+      ...deps,
+      upstream: async req => {
+        const body = await req.clone().text()
+        if (!body.includes('"tools/call"') || cut++ > 0) return fx.fetch(req)
+        await fx.fetch(req)
+        // The first call's answer: an event stream with a comment and an event id, then the end (no answer).
+        return new Response(': open\n\nid: ev-1\ndata: \n\n', { status: 200, headers: { 'Content-Type': 'text/event-stream' } })
+      },
+    }
+    await sdkListTools(plant, target(url))
+    const started = performance.now()
+    const r = await sdkCallTool(plant, target(url), { tool: def('notes_read'), args: { id: 'n1' }, mode: 'read' })
+    expect(r, JSON.stringify(r)).toMatchObject({ kind: 'ok' })
+    expect(performance.now() - started).toBeLessThan(1_000)
+    expect(calls(url)).toBe(2)
+    cut = 0
+    const w = await sdkCallTool(plant, target(url), { tool: WRITE, args: { folder: 'ops', text: 'x' }, mode: 'write' })
+    expect(w).toMatchObject({ kind: 'error', reason: 'lost', sent: 'unknown' })
+    expect(calls(url)).toBe(3)
+  })
+
   it('the open-stream fixture answers inside the deadline: read to the matching answer, then closed', async () => {
     const url = `${MODERN}/stream-open/mcp`
     const slow: SdkDeps = { ...deps, timeoutMs: 5_000 }
