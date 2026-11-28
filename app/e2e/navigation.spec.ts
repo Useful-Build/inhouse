@@ -5,7 +5,7 @@ import { expect, test, type Fx } from './support/fx.js'
 import type { Page } from '@playwright/test'
 
 async function start(page: Page, fx: Fx, hash = '#/today') {
-  await fx.seed({ stage: 'Act', demo: { ambient: 'Always' } })
+  await fx.seed({ demo: { ambient: 'Always' } })
   await page.goto('/?demo' + hash)
   await expect(page.getByRole('heading', { level: 1 }).first()).toBeVisible()
 }
@@ -87,7 +87,7 @@ test('Palette: open a chat and a settings page, run New chat, Escape gives focus
 
 test('Palette over the problem panel: Escape closes only the palette; the palette search ignores internal ids', async ({ fx, page }) => {
   await start(page, fx)
-  await page.getByRole('article', { name: 'Ridge 30L Pack runs out in 9 days' }).getByRole('button', { name: 'Review' }).click()
+  await page.getByRole('article', { name: 'Ridge 30L Pack runs out in 9 days' }).getByRole('button', { name: 'Ridge 30L Pack runs out in 9 days', exact: true }).click()
   const panel = page.getByRole('dialog').filter({ hasText: 'Ridge 30L Pack' })
   await expect(panel).toBeVisible()
   await page.keyboard.press('ControlOrMeta+k')
@@ -211,16 +211,17 @@ test('Sidebar: collapse to the rail, move through it by its tooltips, stay colla
 test('Notifications: one read by clicking it drops the count in the bell, Mark all as read shows the empty state', async ({ fx, page }) => {
   await start(page, fx)
   const bell = header(page).getByRole('button', { name: /^Notifications/ })
-  await expect(bell).toHaveAccessibleName('Notifications, 2 unread')
+  // Unread: Klaviyo, the drafts line and two approval notices (the demo catch-up's PR 1).
+  await expect(bell).toHaveAccessibleName('Notifications, 4 unread')
   await bell.click()
   const pop = page.getByRole('dialog', { name: 'Notifications' })
-  await expect(pop.getByText('Unread')).toHaveCount(2)
+  await expect(pop.getByText('Unread')).toHaveCount(4)
   await pop.getByRole('button', { name: /drafts are waiting for your approval/ }).click()
   await expect.poll(() => hash(page)).toBe('#/approvals')
-  await expect(bell).toHaveAccessibleName('Notifications, 1 unread')
+  await expect(bell).toHaveAccessibleName('Notifications, 3 unread')
 
   await bell.click()
-  await expect(pop.getByText('Unread')).toHaveCount(1)
+  await expect(pop.getByText('Unread')).toHaveCount(3)
   await pop.getByRole('button', { name: 'Mark all as read' }).click()
   // Nothing unread, but the drafts line still says something is waiting, so "all caught up" doesn't show above it (L11).
   await expect(pop.getByText("You're all caught up")).toHaveCount(0)

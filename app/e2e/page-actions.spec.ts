@@ -4,15 +4,18 @@
 import { expect, test, type Fx } from './support/fx.js'
 import type { Page } from '@playwright/test'
 
-async function start(page: Page, fx: Fx, stage: 'Watch' | 'Act' | 'Run', scenario = 'Normal', hash = '#/today') {
-  await fx.seed({ stage, scenario, demo: { ambient: 'Always', animateMark: true } })
+async function start(page: Page, fx: Fx, scenario = 'Normal', hash = '#/today') {
+  await fx.seed({ scenario, demo: { ambient: 'Always', animateMark: true } })
   await page.goto('/?demo' + hash)
 }
 
 const shot = (page: Page, name: string) => page.screenshot({ path: test.info().outputPath(`${name}.png`), fullPage: true })
 const badge = (page: Page) => page.getByRole('navigation', { name: 'Main' }).getByRole('button', { name: /Approvals/ })
-/** Stage 1 M3-U: the demo's three agent cards (two batches and a teammate's refund) wait on Sam too, beside the drafts. */
-const ASKS = 3
+/**
+ * The demo's agent cards wait on Sam too, beside the drafts: two batches and a teammate's refund (Stage 1 M3-U), two ask
+ * cards and one that needs a check (the demo catch-up's PR 1). A teammate's own ask isn't Sam's to answer.
+ */
+const ASKS = 6
 const card = (page: Page, title: string) => page.getByRole('article').filter({ hasText: title })
 const toast = (page: Page, text: string | RegExp) => page.locator('[data-toast]').filter({ hasText: text })
 const waiting = (page: Page) => page.getByRole('heading', { level: 2, name: /^Waiting for you/ })
@@ -30,88 +33,91 @@ const approveDraft = async (page: Page, title: string) => {
     await expect(page.getByRole('dialog')).toHaveCount(0)
   } else await d.getByRole('button', { name: /^Approve/ }).click()
 }
-const draft = (page: Page, title: string) => page.locator('[data-slot=card]').filter({ has: page.getByRole('heading', { level: 2, name: title, exact: true }) })
-
+/**
+ * The waiting drafts (#726: only what the product does: two posts to #ops-alerts in Slack and a Shopify restock; the
+ * other three problems are findings with no draft). Both posts carry the product's own title, "Post to #ops-alerts in
+ * Slack", so each draft is found by words only it holds.
+ */
 const D = {
-  oversell: 'Pause the variant and email 5 customers',
-  stock: 'Reorder 600 Ridge 30L Packs',
-  payout: 'Open a reimbursement case',
-  po: 'Chase Kestrel for a new ship date',
+  payout: 'Seller Support',
   returns: 'Restock 11 units on Shopify',
-  stuck: "Ask ShipBob why #4821 hasn't shipped",
+  stuck: 'Order #4821 was released to ShipBob',
 }
 const ALL = Object.values(D)
-/** The draft titles on Approvals, top to bottom. */
-const draftOrder = async (page: Page) => (await page.getByRole('heading', { level: 2 }).allInnerTexts()).filter(t => ALL.includes(t))
+const draft = (page: Page, key: string) => page.locator('[data-slot=card]').filter({ hasText: key })
+/** The waiting drafts on Approvals, top to bottom, by their key. */
+const draftOrder = async (page: Page) => (await page.locator('main [data-slot=card]').allInnerTexts()).map(t => ALL.find(k => t.includes(k))).filter(Boolean)
 
 test('Approvals: edit then approve and Undo, Don\'t send and Undo, approve all low-risk with one Undo, and sort', async ({ fx, page }) => {
-  await start(page, fx, 'Act', 'Normal', '#/approvals')
-  await expect(waiting(page)).toHaveText(/·\s6$/)
-  await expect(badge(page)).toContainText(String(6 + ASKS))
+  await start(page, fx, 'Normal', '#/approvals')
+  await expect(waiting(page)).toHaveText(/·\s3$/)
+  await expect(badge(page)).toContainText(String(3 + ASKS))
 
   // Each draft shows the time it was made, from the data.
   await expect(draft(page, D.payout)).toContainText('· 6:06 AM')
-  await expect(draft(page, D.stock)).toContainText('· 6:08 AM')
 
-  // Edit opens the panel with the draft's text ready to change; the change survives approving and undoing.
-  await moreItem(page, D.oversell, 'Edit')
+  // Edit opens the panel on a note field (a Slack post has no Edit, the product's card goes out as written); the note survives
+  // approving and undoing.
+  await draft(page, D.payout).getByRole('button', { name: /^More actions/ }).click()
+  await expect(page.getByRole('menu', { name: 'Draft actions' }).getByRole('menuitem', { name: "Don't send", exact: true })).toBeVisible()
+  await expect(page.getByRole('menu', { name: 'Draft actions' }).getByRole('menuitem', { name: 'Edit', exact: true })).toHaveCount(0)
+  await page.keyboard.press('Escape')
+  await moreItem(page, D.returns, 'Edit')
   const panel = page.getByRole('dialog')
-  const text = panel.getByRole('textbox', { name: 'Email to customers, in your tone' })
+  const text = panel.getByRole('textbox', { name: 'Your note' })
   await expect(text).toBeVisible()
-  await text.fill('Hi Jamie, your Trail Shell ships on Tue 9 Dec. Edited in the e2e run.')
+  await text.fill('Edited in the e2e run.')
   await shot(page, 'approvals-editing')
-  await panel.getByRole('button', { name: 'Approve and send 5 emails' }).click()
-  const held = toast(page, 'Approved. It goes out in 10 seconds.')
-  await expect(held).toBeVisible()
-  // The open panel hides the page from the accessibility tree, so the badge is read once it closes.
+  await panel.getByRole('button', { name: 'Approve and restock' }).click()
+  // A restock can be taken back, so it goes out at once with its Undo (no hold).
+  const done = toast(page, '11 units restocked on Shopify')
+  await expect(done).toBeVisible()
   await page.keyboard.press('Escape')
   await expect(panel).toHaveCount(0)
-  await expect(badge(page)).toContainText(String(5 + ASKS))
-  await held.getByRole('button', { name: 'Undo', exact: true }).click()
-  await expect(waiting(page)).toHaveText(/·\s6$/)
-  await expect(badge(page)).toContainText(String(6 + ASKS))
-  await expect(draft(page, D.oversell)).toContainText('Edited in the e2e run.')
+  await expect(badge(page)).toContainText(String(2 + ASKS))
+  await done.getByRole('button', { name: 'Undo', exact: true }).click()
+  await expect(waiting(page)).toHaveText(/·\s3$/)
+  await expect(badge(page)).toContainText(String(3 + ASKS))
+  await expect(draft(page, D.returns)).toContainText('Edited in the e2e run.')
 
   // Don't send takes the draft out of Waiting; Undo in the toast brings it back.
   await moreItem(page, D.returns, "Don't send")
   await expect(draft(page, D.returns)).toHaveCount(0)
-  await expect(waiting(page)).toHaveText(/·\s5$/)
-  await expect(badge(page)).toContainText(String(5 + ASKS))
+  await expect(waiting(page)).toHaveText(/·\s2$/)
+  await expect(badge(page)).toContainText(String(2 + ASKS))
   await toast(page, 'Not sent.').getByRole('button', { name: 'Undo', exact: true }).click()
   await expect(draft(page, D.returns)).toBeVisible()
-  await expect(badge(page)).toContainText(String(6 + ASKS))
-
-  // Approve all low-risk approves exactly the drafts with no money and no customers, and one Undo takes them all back.
-  await page.getByRole('button', { name: 'Approve all low-risk' }).click()
-  await expect(waiting(page)).toHaveText(/·\s3$/)
-  expect((await draftOrder(page)).sort()).toEqual([D.oversell, D.payout, D.stock].sort())
-  const approved = page.getByRole('region', { name: 'Approved today' })
-  await expect(approved.getByRole('button', { name: 'Undo', exact: true })).toHaveCount(3)
   await expect(badge(page)).toContainText(String(3 + ASKS))
-  await expect(page.getByRole('button', { name: 'Approve all low-risk' })).toHaveCount(0)
-  await shot(page, 'approvals-approved-all-low-risk')
-  await toast(page, 'Approved 3 drafts.').getByRole('button', { name: 'Undo', exact: true }).click()
-  await expect(waiting(page)).toHaveText(/·\s6$/)
-  await expect(approved).toHaveCount(0)
-  await expect(badge(page)).toContainText(String(6 + ASKS))
 
-  // The sort is real: oldest, newest and most at stake each give their own order (same-minute drafts keep the agent's order).
-  expect(await draftOrder(page)).toEqual([D.payout, D.oversell, D.po, D.stock, D.returns, D.stuck])
+  // The sort is real: oldest and newest give their own order (same-minute drafts keep the agent's order).
+  expect(await draftOrder(page)).toEqual([D.payout, D.returns, D.stuck])
   const sort = page.getByRole('combobox', { name: /^Sort drafts/ })
   await sort.click()
   await page.getByRole('option', { name: 'Most at stake' }).click()
   await expect(sort).toHaveAccessibleName('Sort drafts: Most at stake')
-  expect(await draftOrder(page)).toEqual([D.stock, D.po, D.payout, D.oversell, D.returns, D.stuck])
+  expect(await draftOrder(page)).toEqual([D.payout, D.returns, D.stuck])
   await sort.click()
   await page.getByRole('option', { name: 'Newest first' }).click()
-  expect(await draftOrder(page)).toEqual([D.stock, D.returns, D.stuck, D.oversell, D.po, D.payout])
+  expect(await draftOrder(page)).toEqual([D.returns, D.stuck, D.payout])
   await shot(page, 'approvals-newest-first')
+
+  // Approve all low-risk approves every draft with no money and no customers (all three now), and one Undo takes them
+  // all back. With none left and only the agent's own cards waiting, the drafts section steps aside.
+  await page.getByRole('button', { name: 'Approve all low-risk' }).click()
+  await expect(toast(page, 'Approved 3 drafts.')).toBeVisible()
+  await expect(badge(page)).toContainText(String(ASKS))
+  await expect(page.getByRole('button', { name: 'Approve all low-risk' })).toHaveCount(0)
+  await shot(page, 'approvals-approved-all-low-risk')
+  await toast(page, 'Approved 3 drafts.').getByRole('button', { name: 'Undo', exact: true }).click()
+  await expect(waiting(page)).toHaveText(/·\s3$/)
+  await expect(page.getByRole('region', { name: 'Approved today' })).toHaveCount(0)
+  await expect(badge(page)).toContainText(String(3 + ASKS))
 })
 
 test('Today: snooze one card and dismiss another; Today, Approvals and the badge agree, after a reload too, until Reset demo', async ({ fx, page }) => {
-  await start(page, fx, 'Act')
+  await start(page, fx)
   const h1 = page.getByRole('heading', { level: 1 })
-  await expect(h1).toContainText('6 things need you. Drafts are ready.')
+  await expect(h1).toContainText('3 left to approve today.')
   await expect(page.getByRole('article')).toHaveCount(6)
 
   // The menu doesn't open the card's panel.
@@ -135,12 +141,13 @@ test('Today: snooze one card and dismiss another; Today, Approvals and the badge
   await expect(toast(page, 'Dismissed.')).toBeVisible()
 
   const agree = async () => {
+    // Left: three findings and the restock, the one draft.
     await expect(page.getByRole('article')).toHaveCount(4)
-    await expect(h1).toContainText('4 left to approve today.')
-    await expect(page.getByRole('heading', { level: 2, name: /^Needs you/ })).toContainText('4 drafted and waiting')
-    await expect(badge(page)).toContainText(String(4 + ASKS))
+    await expect(h1).toContainText('1 left to approve today.')
+    await expect(page.getByRole('heading', { level: 2, name: /^Needs you/ })).toContainText('1 drafted and waiting')
+    await expect(badge(page)).toContainText(String(1 + ASKS))
     await page.getByRole('navigation', { name: 'Main' }).getByRole('button', { name: /Approvals/ }).click()
-    await expect(waiting(page)).toHaveText(/·\s4$/)
+    await expect(waiting(page)).toHaveText(/·\s1$/)
     await expect(draft(page, D.stuck)).toHaveCount(0)
     await expect(draft(page, D.payout)).toHaveCount(0)
     await page.getByRole('navigation', { name: 'Main' }).getByRole('button', { name: /Today/ }).click()
@@ -150,9 +157,9 @@ test('Today: snooze one card and dismiss another; Today, Approvals and the badge
 
   // A one-tap Approve on a low-risk card shows the toast with Undo, and the counts move together.
   await card(page, '11 returns are not restocked').getByRole('button', { name: 'Approve and restock', exact: true }).click()
-  await expect(badge(page)).toContainText(String(3 + ASKS))
+  await expect(badge(page)).toContainText(String(ASKS))
   await toast(page, '11 units restocked on Shopify').getByRole('button', { name: 'Undo', exact: true }).click()
-  await expect(badge(page)).toContainText(String(4 + ASKS))
+  await expect(badge(page)).toContainText(String(1 + ASKS))
 
   await page.reload()
   await agree()
@@ -160,12 +167,12 @@ test('Today: snooze one card and dismiss another; Today, Approvals and the badge
   await page.getByRole('button', { name: /Demo switches/ }).click()
   await page.getByRole('button', { name: 'Reset demo', exact: true }).click()
   await expect(page.getByRole('article')).toHaveCount(6)
-  await expect(h1).toContainText('6 things need you. Drafts are ready.')
-  await expect(badge(page)).toContainText(String(6 + ASKS))
+  await expect(h1).toContainText('3 left to approve today.')
+  await expect(badge(page)).toContainText(String(3 + ASKS))
 })
 
 test('Tools: Request a tool opens the team window; a disconnected tool has its own Reconnect; Pause access has Undo', async ({ fx, page }) => {
-  await start(page, fx, 'Act', 'Tool disconnected', '#/tools')
+  await start(page, fx, 'Tool disconnected', '#/tools')
   await page.getByRole('button', { name: 'Request a tool' }).click()
   const team = page.getByRole('dialog', { name: /Your Inhouse team/ })
   await expect(team).toBeVisible()
@@ -189,7 +196,7 @@ test('Tools: Request a tool opens the team window; a disconnected tool has its o
 })
 
 test('Usage: the daily bars are one tab stop; arrows, Home and End move between days with the tooltip', async ({ fx, page }) => {
-  await start(page, fx, 'Act', 'Normal', '#/usage')
+  await start(page, fx, 'Normal', '#/usage')
   const bars = page.getByRole('grid', { name: 'Daily cost' }).getByRole('gridcell')
   // Usage loads on first visit (its own chunk): count once its bars are in.
   await expect(bars.first()).toBeVisible()
@@ -226,14 +233,14 @@ test('Usage: the daily bars are one tab stop; arrows, Home and End move between 
 const go = (page: Page, hash: string) => page.evaluate(h => { location.hash = h }, hash)
 const actRow = (page: Page, text: string | RegExp) => page.locator('button[data-activity-row]').filter({ hasText: text })
 
-test('A set-aside problem approved from the chat card or the Library\'s approval link is a normal approval everywhere; Activity logs each set-aside with Undo', async ({ fx, page }) => {
-  await start(page, fx, 'Act', 'Normal', '#/approvals')
+test('A set-aside problem approved from the chat card is a normal approval everywhere; Activity logs each set-aside with Undo', async ({ fx, page }) => {
+  await start(page, fx, 'Normal', '#/approvals')
 
   // Don't send the ShipBob draft: Activity logs it, and its detail is searchable.
   await moreItem(page, D.stuck, "Don't send")
-  await expect(waiting(page)).toHaveText(/·\s5$/)
+  await expect(waiting(page)).toHaveText(/·\s2$/)
   await go(page, '#/activity')
-  const notSent = actRow(page, `Not sent: ask ShipBob why #4821 hasn't shipped`)
+  const notSent = actRow(page, 'Not sent: post to #ops-alerts in Slack')
   await expect(notSent).toBeVisible()
   await page.getByRole('searchbox', { name: 'Search activity' }).fill('left Approvals')
   await expect(page.locator('button[data-activity-row]')).toHaveCount(1)
@@ -250,41 +257,27 @@ test('A set-aside problem approved from the chat card or the Library\'s approval
 
   // The chat still offers its approval card; approving there clears the set-aside.
   await go(page, '#/chats/stuck')
-  await page.getByRole('button', { name: 'Approve and send to ShipBob' }).click()
+  await page.getByRole('button', { name: 'Approve and post' }).click()
   await expect(toast(page, 'Approved. It goes out in 10 seconds.')).toBeVisible()
-  await expect(badge(page)).toContainText(String(5 + ASKS))
+  await expect(badge(page)).toContainText(String(2 + ASKS))
   await go(page, '#/approvals')
-  await expect(waiting(page)).toHaveText(/·\s5$/)
-  await expect(page.getByRole('region', { name: 'Approved today' })).toContainText("ask ShipBob why #4821 hasn't shipped")
+  await expect(waiting(page)).toHaveText(/·\s2$/)
+  await expect(page.getByRole('region', { name: 'Approved today' })).toContainText('post to #ops-alerts in Slack')
   await go(page, '#/today')
   await expect(card(page, 'Order #4821 is stuck for 4 days')).toContainText('Approved by Sam at')
-  await expect(page.getByRole('heading', { level: 2, name: /^Needs you/ })).toContainText('5 drafted and waiting')
+  await expect(page.getByRole('heading', { level: 2, name: /^Needs you/ })).toContainText('2 drafted and waiting')
   await go(page, '#/activity')
   await expect(actRow(page, 'Not sent:')).toHaveCount(0)
-  await expect(actRow(page, `Approved: ask ShipBob why #4821 hasn't shipped`)).toBeVisible()
+  await expect(actRow(page, 'Approved: post to #ops-alerts in Slack')).toBeVisible()
 
-  // Snooze the Kestrel card on Today, then approve it from its file's "Open the approval" in the Library (the panel).
+  // Snooze the Kestrel card on Today (a finding, #726: it counts for no approval).
   await go(page, '#/today')
   await card(page, 'PO-1187 from Kestrel is 6 days late').getByRole('button', { name: 'More' }).click()
   await page.getByRole('menu', { name: 'Card actions' }).getByRole('menuitem', { name: 'Snooze until tomorrow' }).click()
   await expect(card(page, 'PO-1187 from Kestrel is 6 days late')).toHaveCount(0)
-  await expect(badge(page)).toContainText(String(4 + ASKS))
+  await expect(badge(page)).toContainText(String(2 + ASKS))
   await go(page, '#/activity')
   await expect(actRow(page, 'Snoozed: PO-1187 from Kestrel is 6 days late')).toBeVisible()
-  await go(page, '#/library')
-  const file = page.getByRole('list', { name: 'Files' }).getByRole('listitem').filter({ hasText: 'PO-1187-kestrel-summit-fleece.pdf' })
-  await file.hover()
-  await file.getByRole('button', { name: 'Actions for PO-1187-kestrel-summit-fleece.pdf' }).click()
-  await page.getByRole('menu', { name: 'File actions' }).getByRole('menuitem', { name: 'Open the approval' }).click()
-  const panel = page.getByRole('dialog')
-  await panel.getByRole('button', { name: 'Approve and send to Mei' }).click()
-  await page.keyboard.press('Escape')
-  await expect(panel).toHaveCount(0)
-  await expect(badge(page)).toContainText(String(4 + ASKS))
-  await go(page, '#/today')
-  await expect(card(page, 'PO-1187 from Kestrel is 6 days late')).toContainText('Approved by Sam at')
-  await go(page, '#/activity')
-  await expect(actRow(page, 'Snoozed:')).toHaveCount(0)
 
   // Dismiss a card; Activity's Undo brings it back to Today.
   await go(page, '#/today')
@@ -297,12 +290,12 @@ test('A set-aside problem approved from the chat card or the Library\'s approval
   await expect(actRow(page, 'Dismissed:')).toHaveCount(0)
   await go(page, '#/today')
   await expect(card(page, '11 returns are not restocked')).toBeVisible()
-  await expect(badge(page)).toContainText(String(4 + ASKS))
+  await expect(badge(page)).toContainText(String(2 + ASKS))
 })
 
-test('Counts leave set-aside problems out: Watch notifications and Approvals, an empty Today, and Act once every draft is approved or set aside', async ({ fx, page }) => {
-  await start(page, fx, 'Watch')
-  const h1 = page.getByRole('heading', { level: 1 })
+// The demo has no Watch since decision A13: the counts are checked in the one view there is.
+test('Counts leave set-aside problems out: the bell and Approvals, and once every draft is approved or set aside', async ({ fx, page }) => {
+  await start(page, fx)
   const snooze = async (title: string) => {
     await card(page, title).getByRole('button', { name: 'More' }).click()
     await page.getByRole('menu', { name: 'Card actions' }).getByRole('menuitem', { name: 'Snooze until tomorrow' }).click()
@@ -312,29 +305,30 @@ test('Counts leave set-aside problems out: Watch notifications and Approvals, an
   expect(titles).toHaveLength(6)
   await snooze(titles[0])
   await snooze(titles[1])
-  await expect(h1).toContainText('4 things need you today.')
-  await page.getByRole('button', { name: 'Notifications' }).click()
-  await expect(page.getByText('Today has 4 things that need you.')).toBeVisible()
+  await expect(page.getByRole('article')).toHaveCount(4)
+  // The two cards first on Today are findings (#726), so the three drafts still wait.
+  await page.getByRole('button', { name: /^Notifications/ }).click()
+  await expect(page.getByText('3 drafts are waiting for your approval.')).toBeVisible()
   await page.keyboard.press('Escape')
   await go(page, '#/approvals')
-  await expect(page.getByText("In Act, today's 4 fixes would be waiting here")).toBeVisible()
-  // The Watch block's list (the agent's action cards above it have rows of their own).
-  await expect(page.locator('[data-watch-block]').getByRole('listitem')).toHaveCount(4)
+  await expect(waiting(page)).toHaveText(/·\s3$/)
+  await shot(page, 'approvals-two-set-aside')
 
+  // Every card set aside (#657): Today says so, and the bell's drafts line is gone at 0.
   await go(page, '#/today')
   for (const t of titles.slice(2)) await snooze(t)
-  await expect(h1).toContainText("You're all caught up.")
+  await expect(page.getByRole('heading', { level: 1 })).toContainText("You're all caught up.")
   await expect(page.getByRole('status').filter({ hasText: 'Every card is set aside for today.' })).toBeVisible()
   await shot(page, 'today-all-set-aside')
-  await page.getByRole('button', { name: 'Notifications' }).click()
-  await expect(page.getByText(/Today has \d+ things? that needs? you/)).toHaveCount(0)
+  await page.getByRole('button', { name: /^Notifications/ }).click()
+  await expect(page.getByRole('dialog', { name: 'Notifications' })).toBeVisible()
+  await expect(page.getByText(/drafts? (is|are) waiting for your approval/)).toHaveCount(0)
   await page.keyboard.press('Escape')
 
-  // Act: one draft not sent and the rest approved says so, not "all approved".
+  // One draft not sent and the rest approved: Today then counts the findings left to look at, never "all approved".
   await page.getByRole('button', { name: /Demo switches/ }).click()
   const demo = page.getByRole('dialog', { name: 'Demo switches' })
   await demo.getByRole('button', { name: 'Reset demo', exact: true }).click()
-  await demo.getByRole('radiogroup', { name: 'Stage' }).getByRole('radio', { name: 'Act', exact: true }).click()
   await demo.getByRole('button', { name: 'Close demo switches' }).click()
   await go(page, '#/approvals')
   await moreItem(page, D.stuck, "Don't send")
@@ -343,5 +337,6 @@ test('Counts leave set-aside problems out: Watch notifications and Approvals, an
     await expect(draft(page, t)).toHaveCount(0)
   }
   await go(page, '#/today')
-  await expect(page.getByRole('heading', { level: 2, name: /^Nothing waiting/ })).toContainText('5 approved, 1 set aside')
+  await expect(page.getByRole('heading', { level: 1 })).toContainText('3 things need you today.')
+  await expect(page.getByRole('heading', { level: 1 })).not.toContainText(/approved|caught up/i)
 })

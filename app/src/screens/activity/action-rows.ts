@@ -8,13 +8,13 @@ import type { Whose } from '../chat/ask-card'
 export const ACTION_ROWS_MAX = 20
 
 /**
- * What a row offers about the permission behind its action: the one to stop, the Settings page, or nothing. Only the
- * asker's own permissions count (an admin sees everyone's, and another member's on the same account isn't this one).
+ * The permission a row offers to stop: the one its action ran under (the card's `permissionId`, set only for a viewer who
+ * may remove it), while it still stands and this viewer may remove it. None for an action a person answered (#655: never
+ * a guess by tool account, which named a permission that didn't cover the action).
  */
-export function stopAllowing(card: ActionCard, permissions: readonly Permission[]): { kind: 'one'; permission: Permission } | { kind: 'many' } | null {
-  const covering = permissions.filter(p => p.can.remove && p.tool.accountId === card.tool.accountId && p.holder.kind === 'member' && p.holder.memberId === card.askedBy)
-  if (covering.length === 0) return null
-  return covering.length === 1 ? { kind: 'one', permission: covering[0]! } : { kind: 'many' }
+export function stopAllowing(card: ActionCard, permissions: readonly Permission[]): Permission | null {
+  if (!card.permissionId) return null
+  return permissions.find(p => p.id === card.permissionId && p.can.remove) ?? null
 }
 
 /** The row's one line: the title, then where it got to. */

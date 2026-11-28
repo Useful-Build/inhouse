@@ -36,10 +36,12 @@ describe('a problem with no real draft', () => {
     for (const S of [0, 1, 2] as const) expect(draftView(ctxWith(S, [p]), p.id).mode).toBe('watch')
   })
 
-  test('every sample draft is a real one, and any one of lines, text, items or run lines makes it real', () => {
+  test('the sample findings have no draft, every other sample draft is a real one, and any one of lines, text, items or run lines makes it real', () => {
+    // #726: what the product can't do yet is a finding (noticed, with a suggested next step), never a draft to approve.
+    const FINDINGS = ['oversell', 'stock', 'po']
+    expect(sample.problems.filter(q => !hasDraft(q)).map(q => q.id)).toEqual(FINDINGS)
     for (const q of sample.problems) {
-      expect(hasDraft(q), q.id).toBe(true)
-      expect(draftView(ctxWith(1, sample.problems), q.id).mode, q.id).not.toBe('watch')
+      expect(draftView(ctxWith(1, sample.problems), q.id).mode === 'watch', q.id).toBe(FINDINGS.includes(q.id))
     }
     const item = { name: 'Ridge 30L Pack', qty: 1, each: { minor: 100, currency: 'USD' } }
     fc.assert(fc.property(fc.boolean(), fc.boolean(), fc.boolean(), fc.boolean(), (lines, body, items, runLines) => {
@@ -61,7 +63,7 @@ describe('a problem with no real draft', () => {
       expect(pendingIds(ctx), `S${S}`).not.toContain(p.id)
     }
     // A real draft still waits for approval at Act.
-    expect(pendingIds(ctxWith(1, sample.problems))).toContain(sample.problems[0].id)
+    expect(pendingIds(ctxWith(1, sample.problems))).toContain(sample.problems.find(hasDraft)!.id)
   })
 
   test('approved stays approved even with an empty draft', () => {

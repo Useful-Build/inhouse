@@ -7,7 +7,7 @@ import type { Page } from '@playwright/test'
 const phone = () => test.info().project.name === 'ship-phone'
 
 async function start(page: Page, fx: Fx) {
-  await fx.seed({ stage: 'Act', demo: { ambient: 'Always' } })
+  await fx.seed({ demo: { ambient: 'Always' } })
   await page.goto('/?demo#/today')
   await expect(page.getByRole('heading', { level: 1 }).first()).toBeVisible()
 }

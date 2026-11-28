@@ -14,7 +14,7 @@ const REFUNDS_Q = 'Why did refunds jump?'
 const REFUNDS_A = 'Refund requests rose from 14 last week to 31 this week'
 
 async function start(page: Page, fx: Fx) {
-  await fx.seed({ stage: 'Act', demo: { ambient: 'Always' } })
+  await fx.seed({ demo: { ambient: 'Always' } })
   await page.goto('/?demo#/today')
   await expect(page.getByRole('heading', { level: 1 }).first()).toBeVisible()
 }
@@ -62,6 +62,6 @@ test('S2: A saved chat: the sources are one pill that opens a clean list, and th
   // The draft sits after the answer card, in its own card.
   const draft = log(page).locator('[data-approval]').first()
   await draft.scrollIntoViewIfNeeded()
-  await expect(draft).toContainText("Ask ShipBob why #4821 hasn't shipped")
-  await expect(draft.getByRole('button', { name: /^Approve and send to ShipBob/ })).toBeVisible()
+  await expect(draft).toContainText('Ask the team to chase ShipBob on #4821')
+  await expect(draft.getByRole('button', { name: /^Approve and post/ })).toBeVisible()
 })

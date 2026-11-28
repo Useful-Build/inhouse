@@ -3,9 +3,10 @@
     "sev": "dot color: #b23c22 = urgent (red), #b97a14 = soon (amber)",
     "cost": "money figure shown on the card",
     "costNote": "label for the figure",
-    "next": "suggested next step (Watch)",
+    "next": "suggested next step",
     "found": "the finding as [text, sourceNumber] pairs; sourceNumber links to sources[].n",
-    "draft": "the drafted fix (Act and Run)",
+    "draftedAt": "when the agent made the problem's draft or finding, like \"0d 06:08\": what Approvals sorts by",
+    "draft": "the change the agent asks you to approve (a finding has none: its suggestion is `next`)",
     "draft.money / draft.customer": "sensitive: card shows Review, never one-tap Approve",
     "draft.rev": "reversible: Undo stays after approval; otherwise 10 s hold then final",
     "draft.cta": "label of the approve button",
@@ -18,14 +19,15 @@
     "doneText": "confirmation text after approval",
     "runDoneText": "confirmation text in Run for a partial draft",
     "facts": "up to 3 facts for the review panel's strip: label, value, note, source (a sources[].n), tone \"bad\" for the bad news; shortLabel and shortNote are the phone's wording",
-    "draft.kind / summary": "what the draft is (\"Purchase order\") and one sentence for the Today card's draft sheet",
+    "draft.kind / summary": "what the draft is (\"Slack post\") and one sentence for the Today card's draft sheet",
     "draft.amount": "the money approving it moves: { money, direction: spend | claim }, shown as \"Spends $9,600\" or \"Claims $1,240\"",
     "draft.destination / to": "a short name for where it goes (the panel's progress line), and who the document goes to (its From and To)",
-    "draft.items": "a purchase order's lines as { name, qty, each }: the panel draws them as a table"
+    "draft.items": "a draft with several lines, as { name, qty, each }: the panel draws them as a table"
   },
   "problems": [
     {
       "id": "oversell",
+      "draftedAt": "0d 06:07",
       "sev": "#b23c22",
       "area": "Orders",
       "title": "Trail Shell Jacket (M, Olive) is oversold by 5",
@@ -36,14 +38,9 @@
       ],
       "cost": { "minor": 119000, "currency": "USD" },
       "costNote": "in orders at risk",
-      "next": "pause the variant, then email 5 customers",
+      "next": "pause the Olive M variant on Shopify, then tell the 5 customers about the delay",
       "review": "Customers involved",
-      "done": { "text": "Paused the variant at {at:time}. Customer emails wait in Approvals", "times": { "at": "0d 06:04" } },
-      "doneText": "Variant paused, 5 customers emailed",
-      "wait": "5 customer emails",
-      "partial": true,
-      "partialShort": "Paused · emails wait for you",
-      "runDoneText": "Emails sent to 5 customers",
+      "doneText": "Nothing done yet",
       "found": [
         [
           "Shopify has 14 open orders for the Trail Shell Jacket in M, Olive",
@@ -94,47 +91,14 @@
         }
       ],
       "draft": {
-        "kind": "Shopify and 5 emails",
-        "summary": "Offers each a new ship date, Tue, Dec 8, or a refund.",
-        "destination": "5 customers",
-        "title": "Pause the variant and email 5 customers",
-        "lines": [
-          [
-            "Pause on Shopify",
-            "Trail Shell Jacket · M · Olive"
-          ],
-          [
-            "Email 5 customers",
-            "New ship date Tue, Dec 8, or a refund"
-          ],
-          [
-            "Restock due",
-            "Thu, Dec 3 from Kestrel"
-          ]
-        ],
-        "bodyLabel": "Email to customers, in your tone",
-        "body": "Hi Jamie, thanks for your order. The Trail Shell in Olive, size M, sold faster than we expected, so yours will ship on Tue, Dec 8. If you'd rather not wait, reply and we'll refund you straight away. The Northline team",
-        "customer": true,
-        "memory": "Remembered: you offer a refund before a discount, and sign emails \"The Northline team\".",
-        "cta": "Approve and send 5 emails",
-        "approver": "Leo Park usually signs off customer emails. As an admin, you can approve them in Leo's place.",
-        "ask": "Ask Leo",
-        "runTitle": "Email 5 customers about the delay",
-        "runLines": [
-          [
-            "Email 5 customers",
-            "New ship date Tue, Dec 8, or a refund"
-          ],
-          [
-            "Restock due",
-            "Thu, Dec 3 from Kestrel"
-          ]
-        ],
-        "doneNote": { "text": "Your Inhouse agent already paused the variant at {at:time}, inside your Run limits. The customer emails wait for a person.", "times": { "at": "0d 06:04" } }
+        "title": "Pause the Olive M variant on Shopify, then tell the 5 customers about the delay",
+        "lines": [],
+        "cta": "Approve"
       }
     },
     {
       "id": "stock",
+      "draftedAt": "0d 06:08",
       "sev": "#b97a14",
       "area": "Stock",
       "title": "Ridge 30L Pack runs out in 9 days",
@@ -145,9 +109,7 @@
       "cost": { "minor": 840000, "currency": "USD" },
       "costNote": "in sales at risk",
       "next": "reorder 600 from Kestrel Supply today",
-      "isDraft": true,
-      "wait": "a $9,600 order",
-      "doneText": "Reorder of 600 sent to Kestrel Supply",
+      "doneText": "Nothing done yet",
       "found": [
         [
           "At the current rate the Ridge 30L sells out on Wed, Nov 25",
@@ -213,57 +175,14 @@
         }
       ],
       "draft": {
-        "kind": "Purchase order",
-        "summary": "To Kestrel Supply as a PDF. 400 Olive, 200 Black.",
-        "amount": {
-          "money": { "minor": 960000, "currency": "USD" },
-          "direction": "spend"
-        },
-        "destination": "Kestrel",
-        "to": {
-          "name": "Kestrel Supply",
-          "note": "Mei Chen, as a PDF"
-        },
-        "items": [
-          {
-            "name": "Ridge 30L Pack · Olive",
-            "qty": 400,
-            "each": { "minor": 1600, "currency": "USD" }
-          },
-          {
-            "name": "Ridge 30L Pack · Black",
-            "qty": 200,
-            "each": { "minor": 1600, "currency": "USD" }
-          }
-        ],
-        "title": "Reorder 600 Ridge 30L Packs",
-        "lines": [
-          [
-            "Ridge 30L · Olive",
-            "400 × $16 = $6,400"
-          ],
-          [
-            "Ridge 30L · Black",
-            "200 × $16 = $3,200"
-          ],
-          [
-            "To",
-            "Kestrel Supply, PDF purchase order"
-          ],
-          [
-            "Total",
-            "$9,600"
-          ]
-        ],
-        "money": true,
-        "memory": "Remembered: Kestrel ships in 14 days and wants the PO as a PDF. Dana approves orders over $5,000.",
-        "cta": "Approve and send to Kestrel",
-        "approver": "Dana Kim usually signs off orders over $5,000. As an admin, you can approve it in Dana's place.",
-        "ask": "Ask Dana"
+        "title": "Reorder 600 from Kestrel Supply today",
+        "lines": [],
+        "cta": "Approve"
       }
     },
     {
       "id": "payout",
+      "draftedAt": "0d 06:06",
       "sev": "#b23c22",
       "area": "Money",
       "title": "Amazon paid out $1,240 less than expected",
@@ -274,10 +193,9 @@
       ],
       "cost": { "minor": 124000, "currency": "USD" },
       "costNote": "missing from the payout",
-      "next": "open a reimbursement case for 18 orders",
+      "next": "ask Dana to open a reimbursement case for 18 orders",
       "review": "18 orders to check",
-      "wait": "a $1,240 claim",
-      "doneText": "Reimbursement case opened with Amazon",
+      "doneText": "Posted to #ops-alerts for Dana",
       "found": [
         [
           "Amazon's settlement for Oct 30 to Nov 12 paid $18,420",
@@ -339,35 +257,20 @@
         }
       ],
       "draft": {
-        "kind": "Amazon case",
-        "summary": "Claims back the large-item fee on 18 orders.",
-        "amount": {
-          "money": { "minor": 124000, "currency": "USD" },
-          "direction": "claim"
-        },
-        "destination": "Amazon",
-        "title": "Open a reimbursement case",
-        "lines": [
-          [
-            "Case",
-            "Fulfillment fee charged too high"
-          ],
-          [
-            "Orders",
-            "18, listed in the attachment"
-          ],
-          [
-            "Amount",
-            "$1,240"
-          ]
-        ],
-        "money": true,
+        "kind": "Slack post",
+        "summary": "Asks Dana to claim back the large-item fee on 18 orders.",
+        "destination": "#ops-alerts",
+        "title": "Post to #ops-alerts in Slack",
+        "lines": [],
+        "bodyLabel": "Post",
+        "body": "Dana, Amazon charged the large-item fee on 18 orders that ship as standard size, so the Nov 12 payout is $1,240 short. Could you open a reimbursement case with Seller Support?",
         "memory": "Remembered: your Amazon rate card was last updated on Sep 30.",
-        "cta": "Approve and open the case"
+        "cta": "Approve and post"
       }
     },
     {
       "id": "po",
+      "draftedAt": "0d 06:07",
       "sev": "#b97a14",
       "area": "Stock",
       "title": "PO-1187 from Kestrel is 6 days late",
@@ -376,9 +279,7 @@
       "cost": { "minor": 510000, "currency": "USD" },
       "costNote": "of stock on order",
       "next": "ask Kestrel for a new ship date",
-      "isDraft": true,
-      "done": { "text": "Chased Kestrel at {at:time}. New date: {newDate:weekday}", "times": { "at": "0d 06:08", "newDate": "+3d 12:00" } },
-      "doneText": "Chase sent to Mei at Kestrel",
+      "doneText": "Nothing done yet",
       "found": [
         [
           "PO-1187 for 420 Summit Fleece was due on Nov 10",
@@ -440,28 +341,14 @@
         }
       ],
       "draft": {
-        "kind": "Email",
-        "summary": "To Mei Chen at Kestrel. \"PO-1187: new ship date?\"",
-        "destination": "Mei",
-        "title": "Chase Kestrel for a new ship date",
-        "lines": [
-          [
-            "To",
-            "Mei Chen, Kestrel Supply"
-          ],
-          [
-            "Subject",
-            "PO-1187: new ship date?"
-          ]
-        ],
-        "bodyLabel": "Email, in your tone",
-        "body": "Hi Mei, PO-1187 (420 Summit Fleece) was due on Nov 10 and we haven't seen a shipping notice. Could you send a new ship date today? We have about 12 days of stock left. Thanks, Sam",
-        "memory": "Remembered: Mei is your contact at Kestrel, and you keep supplier emails short.",
-        "cta": "Approve and send to Mei"
+        "title": "Ask Kestrel for a new ship date",
+        "lines": [],
+        "cta": "Approve"
       }
     },
     {
       "id": "returns",
+      "draftedAt": "0d 06:08",
       "sev": "#b97a14",
       "area": "Orders",
       "title": "11 returns are not restocked",
@@ -530,6 +417,7 @@
     },
     {
       "id": "stuck",
+      "draftedAt": "0d 06:08",
       "sev": "#b97a14",
       "area": "Orders",
       "title": "Order #4821 is stuck for 4 days",
@@ -540,10 +428,9 @@
       ],
       "cost": { "minor": 31200, "currency": "USD" },
       "costNote": "order value",
-      "next": "ask ShipBob why it hasn't shipped",
+      "next": "ask the team to chase ShipBob",
       "isDraft": true,
-      "done": { "text": "Asked ShipBob at {at:time}. Picked at {picked:time}", "times": { "at": "0d 06:06", "picked": "0d 07:40" } },
-      "doneText": "Message sent to ShipBob about #4821",
+      "doneText": "Posted to #ops-alerts about #4821",
       "found": [
         [
           "Order #4821 was paid on Thu, Nov 12",
@@ -577,23 +464,14 @@
         }
       ],
       "draft": {
-        "kind": "ShipBob ticket",
-        "summary": "A new support ticket asking them to ship it today.",
-        "destination": "ShipBob",
-        "title": "Ask ShipBob why #4821 hasn't shipped",
-        "lines": [
-          [
-            "To",
-            "ShipBob support, new ticket"
-          ],
-          [
-            "Order",
-            "#4821, paid Nov 12"
-          ]
-        ],
-        "bodyLabel": "Support message",
-        "body": "Hi, order #4821 was released to you on Nov 12 and still shows as not picked. Can you check what's holding it and ship it today? It's for a repeat customer. Thanks, Northline Outdoor",
-        "cta": "Approve and send to ShipBob"
+        "kind": "Slack post",
+        "summary": "Asks the team to chase ShipBob so #4821 ships today.",
+        "destination": "#ops-alerts",
+        "title": "Post to #ops-alerts in Slack",
+        "lines": [],
+        "bodyLabel": "Post",
+        "body": "Order #4821 was released to ShipBob on Nov 12 and still shows as not picked. Could someone ask ShipBob what's holding it, so it ships today? It's for a repeat customer.",
+        "cta": "Approve and post"
       }
     }
   ]

@@ -1,19 +1,16 @@
-// Shared by today-approvals.spec.ts and today-approvals-phone.spec.ts: start at a stage, and find any text a card cuts.
+// Shared by today-approvals.spec.ts and today-approvals-phone.spec.ts: start the demo, and find any text a card cuts.
 import { expect } from '@playwright/test'
 import type { Page } from '@playwright/test'
 import { mockClient } from './support/clients/mock.js'
 
-export type Stage = 'Watch' | 'Act' | 'Run'
-export const STAGES: Stage[] = ['Watch', 'Act', 'Run']
-
-export async function start(page: Page, stage: Stage, hash: string, scenario = 'Normal') {
+export async function start(page: Page, hash: string, scenario = 'Normal') {
   const client = mockClient(page)
-  await client.seed({ stage, scenario })
+  await client.seed({ scenario })
   await client.open(hash)
 }
 
 /**
- * Text a card cuts, in a Today card, an Approvals card or Approvals' Watch block: any element whose own box clips its content
+ * Text a card cuts, in a Today card, an Approvals card or an agent's action card: any element whose own box clips its content
  * sideways or down (overflow not visible), and any text element whose box sticks out of the card or out of a clipping parent.
  * Hidden skeletons and icon spans are skipped. Also any sideways scroll of the page.
  */
@@ -24,7 +21,7 @@ export async function cutText(page: Page) {
     const label = (el: Element) => `<${el.tagName.toLowerCase()}> "${(el.textContent ?? '').trim().slice(0, 48)}"`
     const skip = (el: Element) => !!el.closest('[aria-hidden=true]') || el.classList.contains('ms')
     const clips = (el: Element) => { const s = getComputedStyle(el); return s.overflowX !== 'visible' || s.overflowY !== 'visible' }
-    for (const root of document.querySelectorAll<HTMLElement>('main article, main [data-slot=card], main [data-watch-block]')) {
+    for (const root of document.querySelectorAll<HTMLElement>('main article, main [data-slot=card], main [data-action-card]')) {
       if (skip(root)) continue
       for (const el of root.querySelectorAll<HTMLElement>('*')) {
         if (skip(el)) continue
@@ -47,13 +44,14 @@ export async function cutText(page: Page) {
   })
 }
 
-/** Today's cards, then Approvals' cards, at one stage: nothing is cut on either page. */
-export async function expectNothingCut(page: Page, stage: Stage) {
+/** Today's cards, then Approvals' cards (the agent's action cards with them): nothing is cut on either page. */
+export async function expectNothingCut(page: Page) {
   await expect(page.getByRole('heading', { level: 1 })).toContainText('Good morning, Sam.')
   await expect(page.getByRole('article').first()).toBeVisible()
-  expect(await cutText(page), `Today at ${stage}`).toEqual([])
+  expect(await cutText(page), 'Today').toEqual([])
   await page.evaluate(() => { location.hash = '#/approvals' })
   await expect(page.getByRole('heading', { level: 1, name: 'Approvals' })).toBeVisible()
-  await expect(page.getByRole('main')).toContainText(stage === 'Watch' ? 'would be waiting here' : 'Waiting for you')
-  expect(await cutText(page), `Approvals at ${stage}`).toEqual([])
+  await expect(page.getByRole('main')).toContainText('Waiting for you')
+  await expect(page.locator('main [data-action-card]').first()).toBeVisible()
+  expect(await cutText(page), 'Approvals').toEqual([])
 }

@@ -4,12 +4,12 @@
     {
       "icon": "wb_twilight",
       "title": "Start your day with Today",
-      "text": "Today lists what needs you, most urgent first. Open a card to see what your Inhouse agent found and which tool it read. In Act, each card holds a drafted fix you can approve in one click."
+      "text": "Today lists what needs you, most urgent first. Open a card to see what your Inhouse agent found and which tool it read. Some cards hold a fix you can approve in one click. The rest tell you what to do next."
     },
     {
       "icon": "task_alt",
       "title": "How approvals work",
-      "text": "Your Inhouse agent never spends money or messages a customer on its own. It drafts the work and waits. Approve it here or in Slack, and you have 10 seconds to undo anything that has just gone out."
+      "text": "Your Inhouse agent never spends money or messages a customer on its own. For a change it can make, like a Shopify tag or a Slack post, it shows the change and waits. Approve it here or in Slack, and you have 10 seconds to undo anything that has just gone out."
     },
     {
       "icon": "event_repeat",
@@ -19,7 +19,7 @@
     {
       "icon": "neurology",
       "title": "Teach a rule",
-      "text": "Tell your Inhouse agent once, in a chat. For example: send every Kestrel Supply purchase order as a PDF. Your Inhouse agent shows the rule, an approver confirms it, and the rule is saved in Team memory."
+      "text": "Tell your Inhouse agent once, in a chat. For example: late means 2 days unshipped for wholesale orders. Your Inhouse agent shows the rule, an approver confirms it, and the rule is saved in Team memory."
     },
     {
       "icon": "link",

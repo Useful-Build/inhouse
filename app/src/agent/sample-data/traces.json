@@ -12,8 +12,7 @@
   },
   "usedBy": {
     "stuck": "answer to \"Which orders are stuck over 3 days?\"",
-    "routine": "the follow-up that drafts a message and creates a routine (Act and Run)",
-    "stuck-watch": "the same follow-up in Watch",
+    "routine": "the follow-up that drafts a message and creates a routine",
     "morning": "the 6:00 AM morning check",
     "draft": "drafting one fix (opened from Activity)",
     "generic": "an answer from this morning's findings, and the off-script answer",
@@ -133,7 +132,7 @@
           "detail": "Output: anyone who approves"
         },
         {
-          "label": "Drafted the message to ShipBob",
+          "label": "Drafted the post to #ops-alerts",
           "kind": "model",
           "startSeconds": 3.4,
           "endSeconds": 9.8,
@@ -141,7 +140,7 @@
           "detail": "Sonnet 5.5 · in your tone · waits for approval"
         },
         {
-          "label": "Message to ShipBob waits for approval",
+          "label": "The post waits for approval",
           "kind": "approval",
           "startSeconds": 9.8,
           "endSeconds": 41,
@@ -371,62 +370,6 @@
           "endSeconds": 6.8,
           "depth": 1,
           "detail": "Sent to Chats"
-        }
-      ]
-    },
-    "stuck-watch": {
-      "title": "Chase ShipBob on #4821, and check for stuck orders every morning",
-      "durationSeconds": 8.6,
-      "cost": { "minor": 3, "currency": "USD" },
-      "tokens": "14.6k",
-      "steps": [
-        {
-          "label": "Inhouse agent",
-          "kind": "root",
-          "startSeconds": 0,
-          "endSeconds": 8.6,
-          "depth": 0,
-          "detail": "Request in Chats, in Watch"
-        },
-        {
-          "label": "Understood the request",
-          "kind": "model",
-          "startSeconds": 0,
-          "endSeconds": 1.6,
-          "depth": 1,
-          "detail": "Haiku 5.5 · Watch reads only, so the message is text to copy"
-        },
-        {
-          "label": "ShipBob · status of #4821",
-          "kind": "tool",
-          "startSeconds": 1.7,
-          "endSeconds": 2.5,
-          "depth": 1,
-          "detail": "Output: released Nov 12, not picked"
-        },
-        {
-          "label": "Memory · how you write to suppliers",
-          "kind": "tool",
-          "startSeconds": 2.6,
-          "endSeconds": 2.8,
-          "depth": 1,
-          "detail": "Output: short, signed Northline Outdoor"
-        },
-        {
-          "label": "Wrote the message to copy",
-          "kind": "model",
-          "startSeconds": 2.9,
-          "endSeconds": 8.4,
-          "depth": 1,
-          "detail": "Sonnet 5.5 · nothing sent"
-        },
-        {
-          "label": "Answer",
-          "kind": "answer",
-          "startSeconds": 8.4,
-          "endSeconds": 8.6,
-          "depth": 1,
-          "detail": "Sent to Chats with a note that routines start in Act"
         }
       ]
     },
@@ -1377,6 +1320,166 @@
           "kind": "answer",
           "startSeconds": 9.2,
           "endSeconds": 9.4,
+          "depth": 1,
+          "detail": "Sent to Chats"
+        }
+      ]
+    },
+    "order-tags-gift": {
+      "title": "Tag order 4377 as Gift.",
+      "durationSeconds": 5.1,
+      "cost": { "minor": 2, "currency": "USD" },
+      "tokens": "6.2k",
+      "steps": [
+        {
+          "label": "Inhouse agent",
+          "kind": "root",
+          "startSeconds": 0,
+          "endSeconds": 5.1,
+          "depth": 0,
+          "detail": "Question in Chats"
+        },
+        {
+          "label": "Shopify · order 4377",
+          "kind": "tool",
+          "startSeconds": 0.2,
+          "endSeconds": 0.9,
+          "depth": 1,
+          "detail": "Output: 1 order"
+        },
+        {
+          "label": "Shopify · add the Gift tag to order 4377",
+          "kind": "tool",
+          "startSeconds": 1.0,
+          "endSeconds": 1.8,
+          "depth": 1,
+          "detail": "Asks first"
+        },
+        {
+          "label": "Waits for your OK",
+          "kind": "approval",
+          "startSeconds": 1.8,
+          "endSeconds": 1.9,
+          "depth": 1,
+          "detail": "Nothing goes out until someone allows it"
+        },
+        {
+          "label": "Wrote the answer",
+          "kind": "model",
+          "startSeconds": 1.9,
+          "endSeconds": 4.9,
+          "depth": 1,
+          "detail": "Sonnet 5.5"
+        },
+        {
+          "label": "Answer",
+          "kind": "answer",
+          "startSeconds": 4.9,
+          "endSeconds": 5.1,
+          "depth": 1,
+          "detail": "Sent to Chats"
+        }
+      ]
+    },
+    "order-tags-wholesale": {
+      "title": "Tag order 4512 as Wholesale.",
+      "durationSeconds": 5.6,
+      "cost": { "minor": 2, "currency": "USD" },
+      "tokens": "6.8k",
+      "steps": [
+        {
+          "label": "Inhouse agent",
+          "kind": "root",
+          "startSeconds": 0,
+          "endSeconds": 5.6,
+          "depth": 0,
+          "detail": "Question in Chats"
+        },
+        {
+          "label": "Shopify · order 4512",
+          "kind": "tool",
+          "startSeconds": 0.2,
+          "endSeconds": 1.0,
+          "depth": 1,
+          "detail": "Output: 1 order from Harbor & Pine"
+        },
+        {
+          "label": "Shopify · add the Wholesale tag to order 4512",
+          "kind": "tool",
+          "startSeconds": 1.1,
+          "endSeconds": 1.9,
+          "depth": 1,
+          "detail": "Asks first"
+        },
+        {
+          "label": "Waits for your OK",
+          "kind": "approval",
+          "startSeconds": 1.9,
+          "endSeconds": 2.0,
+          "depth": 1,
+          "detail": "Nothing goes out until someone allows it"
+        },
+        {
+          "label": "Wrote the answer",
+          "kind": "model",
+          "startSeconds": 2.0,
+          "endSeconds": 5.4,
+          "depth": 1,
+          "detail": "Sonnet 5.5"
+        },
+        {
+          "label": "Answer",
+          "kind": "answer",
+          "startSeconds": 5.4,
+          "endSeconds": 5.6,
+          "depth": 1,
+          "detail": "Sent to Chats"
+        }
+      ]
+    },
+    "order-tags-post": {
+      "title": "Post a heads-up in #ops-alerts once it's tagged.",
+      "durationSeconds": 4.8,
+      "cost": { "minor": 2, "currency": "USD" },
+      "tokens": "5.9k",
+      "steps": [
+        {
+          "label": "Inhouse agent",
+          "kind": "root",
+          "startSeconds": 0,
+          "endSeconds": 4.8,
+          "depth": 0,
+          "detail": "Question in Chats"
+        },
+        {
+          "label": "Slack · post to #ops-alerts",
+          "kind": "tool",
+          "startSeconds": 0.2,
+          "endSeconds": 1.0,
+          "depth": 1,
+          "detail": "Asks first"
+        },
+        {
+          "label": "Waits for your OK",
+          "kind": "approval",
+          "startSeconds": 1.0,
+          "endSeconds": 1.1,
+          "depth": 1,
+          "detail": "Nothing goes out until someone allows it"
+        },
+        {
+          "label": "Wrote the answer",
+          "kind": "model",
+          "startSeconds": 1.1,
+          "endSeconds": 4.6,
+          "depth": 1,
+          "detail": "Sonnet 5.5"
+        },
+        {
+          "label": "Answer",
+          "kind": "answer",
+          "startSeconds": 4.6,
+          "endSeconds": 4.8,
           "depth": 1,
           "detail": "Sent to Chats"
         }

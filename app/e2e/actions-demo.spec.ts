@@ -1,7 +1,7 @@
 // Stage 1 M3-U in the demo: the real agent's batch card and admins card on sample data (sample-data/actions.json,
 // mock-actions.ts), on desktop and phone, in both themes. It would fail if:
 //  - the 450-change batch didn't show in its chat with its title, one quiet line ("One approval covers all 450"), 3 rows,
-//    "and 447 more" with "See all 450" and "Approve all 450", or showed on day one (the stage doesn't matter: they're going);
+//    "and 447 more" with "See all 450" and "Approve all 450", or showed on day one (the demo has no stages, decision A13);
 //  - "See all 450" didn't list every change, in order, its search didn't narrow them, or its Approve covered another count;
 //  - the 12-item restock didn't show as a table (column heads, 5 rows) with its total in the header;
 //  - the approval didn't hold for 10 seconds on the demo clock and then say all 450 went out;
@@ -11,14 +11,14 @@
 // phone's: actions-demo-phone.spec.ts.
 import AxeBuilder from '@axe-core/playwright'
 import type { Locator, Page } from '@playwright/test'
-import { expect, fxFor, test, type Stage, type Theme } from './support/fx.js'
+import { expect, fxFor, test, type Theme } from './support/fx.js'
 
 const BATCH = 'Tag 450 orders as VIP'
 const APPROVE = 'Approve all 450'
 
-async function start(page: Page, hash: string, o: { stage?: Stage; theme?: Theme } = {}) {
+async function start(page: Page, hash: string, o: { theme?: Theme } = {}) {
   await page.clock.install()
-  await fxFor(page, undefined).seed({ stage: o.stage ?? 'Act', scenario: 'Normal', theme: o.theme ?? 'light' })
+  await fxFor(page, undefined).seed({ scenario: 'Normal', theme: o.theme ?? 'light' })
   await page.goto('/?demo' + hash)
 }
 
@@ -125,14 +125,9 @@ for (const theme of ['light', 'dark'] as const) {
   })
 }
 
-test('the cards show whatever the stage', async ({ page }) => {
-  await start(page, '#/chats/vip-tags', { stage: 'Watch' })
-  await expect(batchCard(page)).toBeVisible()
-})
-
 test('none on day one (no tools yet)', async ({ page }) => {
   await page.clock.install()
-  await fxFor(page, undefined).seed({ stage: 'Act', scenario: 'First day' })
+  await fxFor(page, undefined).seed({ scenario: 'First day' })
   await page.goto('/?demo#/approvals')
   await expect(page.getByText('Nothing to approve yet.')).toBeVisible()
   await expect(page.locator('[data-action-card]')).toHaveCount(0)

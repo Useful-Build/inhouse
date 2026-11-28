@@ -33,7 +33,6 @@ export const showsRemove = (row: Row, can: Can | undefined): boolean => !!row.re
 export function pageResources(tab: string, showGrant: boolean): ResourceKey[] {
   switch (tab) {
     case 'team-members': return ['members']
-    case 'team-approvals': return ['rules', 'members']
     case 'team-audit': return ['audit']
     case 'team-data': return showGrant ? ['grants', 'members'] : ['members']
     case 'you-memory': case 'team-memory': return ['memory']

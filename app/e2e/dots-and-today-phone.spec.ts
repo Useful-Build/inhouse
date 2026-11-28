@@ -6,7 +6,7 @@ import { join } from 'node:path'
 import { atRest } from './states.js'
 
 async function start(page: Page, hash: string) {
-  await fxFor(page, undefined).seed({ stage: 'Act', demo: { ambient: 'Always' } })
+  await fxFor(page, undefined).seed({ demo: { ambient: 'Always' } })
   await page.goto('/?demo' + hash)
 }
 

@@ -1,4 +1,4 @@
-// No persona name and no morning email. For every Demo switcher stage and scenario, at 1440 and 390, every route and
+// No persona name and no morning email. For every Demo switcher scenario, at 1440 and 390, every route and
 // every overlay shows neither "Ava" (a word, any case, since labels are uppercased in CSS) nor "morning email".
 // What counts: the visible text, every text node (hidden ones too), field values, placeholders, aria-labels, titles and alts.
 // Overlays: bell, account menu, Help (every guide), team window, Needs you panels, Activity (every row, every trace it
@@ -9,17 +9,14 @@ import type { Locator, Page } from '@playwright/test'
 import { everything } from './page-text.js'
 import { openTraceFrom } from './support/steps.js'
 
-const STAGES = ['Watch', 'Act', 'Run'] as const
 const SCENARIOS = ['Normal', 'First day', 'Loading', 'Tool disconnected', 'Cap reached'] as const
 const SIZES = [{ name: '1440', width: 1440, height: 900 }, { name: '390', width: 390, height: 844 }]
-type Stage = typeof STAGES[number]
 type Scenario = typeof SCENARIOS[number]
 
 const SETTINGS: [string, string][] = [
-  ['you-general', 'General'], ['you-notif', 'Notifications'], ['you-memory', 'Memory'], ['team-plan', 'Stage and plan'],
+  ['you-general', 'General'], ['you-memory', 'Memory'], ['you-permissions', 'Always allowed'],
   ['team-agent', 'Inhouse agent'], ['team-modes', 'Models'], ['team-memory', 'Team memory'], ['team-members', 'Members'],
-  ['team-approvals', 'Who approves what'], ['team-limits', 'Run limits'], ['team-spend', 'Spending cap'], ['team-data', 'Data and access'],
-  ['team-audit', 'Audit log'],
+  ['team-spend', 'Spending cap'], ['team-data', 'Data and access'], ['team-audit', 'Audit log'],
 ]
 /** Each route with the marker that proves that route has rendered (not the page before it). */
 const ROUTES: [string, (p: Page) => Locator][] = [
@@ -64,32 +61,31 @@ async function accountMenu(page: Page, phone: boolean) {
   await expect(page.getByRole('menu', { name: 'Account' })).toBeVisible()
 }
 
-/** Seed Watch / Normal, then pick the stage and scenario in the ?demo switcher itself, as a person would. */
-async function start(page: Page, fx: Fx, size: typeof SIZES[number], stage: Stage, scenario: Scenario) {
+/** Seed Normal, then pick the scenario in the ?demo switcher itself, as a person would. */
+async function start(page: Page, fx: Fx, size: typeof SIZES[number], scenario: Scenario) {
   await page.setViewportSize({ width: size.width, height: size.height })
-  await fx.seed({ stage: 'Watch', demo: { ambient: 'Always' } })
+  await fx.seed({ demo: { ambient: 'Always' } })
   await page.goto('/?demo#/today')
   await page.getByRole('button', { name: /^Demo switches:/ }).click()
   const panel = page.getByRole('dialog', { name: 'Demo switches' })
   await expect(panel).toBeVisible()
   // A new scenario must be added to this spec too.
   await expect(panel.locator('button[aria-pressed]')).toHaveCount(SCENARIOS.length)
-  await check(page, `${stage} ${size.name} ${scenario} demo switches`)
-  await panel.getByRole('radiogroup', { name: 'Stage' }).getByRole('radio', { name: stage, exact: true }).click()
+  await check(page, `${size.name} ${scenario} demo switches`)
   await panel.getByRole('button', { name: scenario, exact: true }).click()
   await panel.getByRole('button', { name: 'Close demo switches' }).click()
-  await expect(page.getByRole('button', { name: `Demo switches: ${stage}, ${scenario}` })).toBeVisible()
+  await expect(page.getByRole('button', { name: `Demo switches: ${scenario}` })).toBeVisible()
 }
 
 for (const size of SIZES) {
-  for (const stage of STAGES) {
+  {
     for (const scenario of SCENARIOS) {
       const phone = size.width < 600
-      const label = `${size.name} · ${stage} · ${scenario}`
+      const label = `${size.name} · ${scenario}`
 
       test(`${label}: routes and Settings dropdowns show no "Ava" and no "morning email"`, async ({ fx, page }) => {
         test.setTimeout(120_000)
-        await start(page, fx, size, stage, scenario)
+        await start(page, fx, size, scenario)
 
         for (const [route, marker] of ROUTES) {
           await go(page, route)
@@ -115,7 +111,7 @@ for (const size of SIZES) {
         // Every button in Settings that opens a window: the team window (each pre-fills different text) and, since P2, the
         // Members page's own Invite window.
         for (const [id, title, button, window] of [
-          ['team-plan', 'Stage and plan', 'Book a check-in', 'Your Inhouse team'], ['team-members', 'Members', 'Invite', 'Invite someone'], ['team-data', 'Data and access', 'Ask the team', 'Your Inhouse team'],
+          ['team-members', 'Members', 'Invite', 'Invite someone'], ['team-data', 'Data and access', 'Ask the team', 'Your Inhouse team'],
         ]) {
           await go(page, `#/settings/${id}`)
           await expect(page.getByRole('heading', { level: 1, name: title, exact: true })).toBeVisible()
@@ -129,7 +125,7 @@ for (const size of SIZES) {
 
       test(`${label}: overlays, Activity, traces, Library, chats and menus show no "Ava" and no "morning email"`, async ({ fx, page }) => {
         test.setTimeout(240_000)
-        await start(page, fx, size, stage, scenario)
+        await start(page, fx, size, scenario)
         const main = page.getByRole('main')
         // On day one and while loading the agent has no notifications and no Library files yet (PR 3, M16).
         const noData = scenario === 'First day' || scenario === 'Loading'
@@ -141,7 +137,7 @@ for (const size of SIZES) {
         await page.keyboard.press('Escape')
         await expect(page.getByRole('dialog', { name: 'Notifications' })).toHaveCount(0)
 
-        // Top bar pill, where this stage and size show one: Pause, then Resume.
+        // Top bar pill, where this scenario and size show one: Pause, then Resume.
         const pause = page.getByRole('status').getByRole('button', { name: 'Pause', exact: true })
         if (await pause.count()) {
           await check(page, `${label} running pill`)

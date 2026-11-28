@@ -1,6 +1,6 @@
 // Approvals' Stage 1 M2-H sections: the questions the agent asked this person (N16) and the actions waiting on them, in
 // their hold or needing a check (N11, N18). Each list is read when the page opens. Nothing shows until both are read and
-// at least one holds something, so the demo (whose lists are empty) looks exactly as before. A card answered here stays
+// at least one holds something (the demo's actions are its sample cards, mock-actions.ts). A card answered here stays
 // on the page, showing where it got to, until the page is opened again. An admin also sees members' cards (their facts,
 // no buttons, N15): those are listed apart, under "Waiting on your team", each saying whose it is. Stage 1 M3-U (N25): a
 // member's admins card that this admin may answer is theirs to act on, so it's listed under "Actions for you", saying

@@ -84,8 +84,8 @@
         12
       ],
       [
-        "Run jobs",
-        "Handled by itself",
+        "Long jobs",
+        "Carried on by itself",
         7.2,
         59
       ]
@@ -241,8 +241,8 @@
           12
         ],
         [
-          "Run jobs",
-          "Handled by itself",
+          "Long jobs",
+          "Carried on by itself",
           23.12,
           213
         ]

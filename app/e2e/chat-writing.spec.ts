@@ -36,7 +36,7 @@ test.afterEach(async ({ page }) => { await page.clock.resume() })
 test('Chat while it writes: the steps build up row by row, the words show a few at a time, then the measures and no Sources pill', async ({ page }) => {
   await page.setViewportSize({ width: 1440, height: 900 })
   await page.clock.install()
-  await fxFor(page, undefined).seed({ stage: 'Act', scenario: 'Normal', demo: { ambient: 'Always' } })
+  await fxFor(page, undefined).seed({ scenario: 'Normal', demo: { ambient: 'Always' } })
   await page.goto('/?demo#/today')
   const field = page.getByRole('textbox', { name: 'Ask Inhouse' })
   await expect(field).toBeVisible()

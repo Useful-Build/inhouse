@@ -24,16 +24,16 @@
     {
       "name": "Monday reorder list",
       "by": "Inhouse team",
-      "what": "Drafts a reorder for anything with under 21 days of stock.",
+      "what": "Flags anything with under 21 days of stock and suggests a reorder.",
       "freq": "Weekly",
       "day": "Monday",
       "time": "07:00",
       "next": "+7d 07:00",
       "need": 1,
       "money": true,
-      "last": { "at": "0d 07:00", "result": "nothing beyond the Ridge 30L draft" },
+      "last": { "at": "0d 07:00", "result": "nothing beyond Ridge 30L" },
       "runs": [
-        { "at": "0d 07:00", "outcome": "done", "result": "Nothing beyond the Ridge 30L draft" }
+        { "at": "0d 07:00", "outcome": "done", "result": "Nothing beyond Ridge 30L" }
       ]
     },
     {

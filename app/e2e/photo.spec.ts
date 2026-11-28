@@ -6,7 +6,7 @@ import path from 'node:path'
 import { atRest } from './states.js'
 
 async function start(page: Page, fx: Fx, hash = '#/settings/you-general') {
-  await fx.seed({ stage: 'Act', demo: { ambient: 'Always' } })
+  await fx.seed({ demo: { ambient: 'Always' } })
   await page.goto('/?demo' + hash)
   await expect(page.getByRole('heading', { level: 1 }).first()).toBeVisible()
 }
@@ -23,7 +23,7 @@ async function resetDemo(page: Page) {
   await page.getByRole('button', { name: /Demo switches/ }).click()
   await page.getByRole('button', { name: 'Reset demo' }).click()
   await page.getByRole('button', { name: 'Close demo switches' }).click()
-  await expect(page.getByRole('heading', { level: 1 }).first()).toContainText('things need you')
+  await expect(page.getByRole('heading', { level: 1 }).first()).toContainText('left to approve today')
 }
 
 test('Sample photos show for Sam and the team; Sam uploads, reloads, removes and resets', async ({ fx, page }) => {
@@ -91,9 +91,10 @@ test('Sample photos show for Sam and the team; Sam uploads, reloads, removes and
   await expect(sidebarImg(page)).toHaveAttribute('src', '/avatars/sam.svg')
 })
 
-test('Who approves what and Usage show photos; bad files get an error toast', async ({ fx, page }) => {
-  await start(page, fx, '#/settings/team-approvals')
-  await expect(page.locator('img[src="/avatars/dana.svg"]')).toHaveCount(1) // Orders over $5,000 is Dana
+// Who approves what (this check's first page) left with the demo's stages (decision A13): Members shows the photos now.
+test('Members and Usage show photos; bad files get an error toast', async ({ fx, page }) => {
+  await start(page, fx, '#/settings/team-members')
+  await expect(page.locator('main img[src="/avatars/dana.svg"]')).toHaveCount(1)
   await page.goto('/?demo#/settings/you-general')
   const file = page.locator('input[type=file]')
 

@@ -3,8 +3,8 @@
 // admin's view of someone else's card; every open question asked of them counts. Read when the app starts, when the
 // window gets focus again or the tab is shown, when the socket is live again, on an `action.updated`, after each answer
 // or conflict, when a card read again changes state, and whenever the bell's list changes (a run ended, or a new notice:
-// a question waiting on them is one); Approvals hands over what it read itself. The demo has none, so
-// its badge is as before.
+// a question waiting on them is one); Approvals hands over what it read itself. The demo's cards are its sample ones
+// (mock-actions.ts).
 import { useEffect, useSyncExternalStore } from 'react'
 import { agent } from '../agent'
 import type { ActionCard, Question } from '../agent/types'

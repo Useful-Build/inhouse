@@ -3,13 +3,14 @@
 // changed (PR #58). The keys name where the string shows. This test writes the same strings with the C1 formatters in
 // format.ts, fed the new `{ iso, ms }`, `{ minor, currency }`, `{ hour, minute }` and ms values, and checks they equal
 // the file exactly. The file is never rewritten: a string that differs is a change on screen.
-// The strings that change with the stage or the scenario (chats, Library, Activity, the audit log, the bell, problems,
-// tools and routines) are captured in Act on a normal day, then again in Watch, in Run and on the First day: a variant
-// is written as `<key>@<variant>` only where its string differs from Act's or Act has no such key.
+// The strings that change with the scenario (chats, Library, Activity, the audit log, the bell, problems, tools and
+// routines) are captured on a normal day, then again on the First day: a variant is written as `<key>@<variant>` only
+// where its string differs from the normal day's or it has no such key. The demo has no stages since decision A13 (option
+// B): the Watch and Run variants it once wrote are gone with them, and every view is the product's (Act, `noStages`).
 import { expect, test, vi } from 'vitest'
 import tracesJson from '@sample/traces.json'
 import golden from './format.golden.json'
-import type { AgentData, AgentState, Instant, RoutineCard, RunEvent, Scenario, Stage, StageIndex, Trace } from '../agent/types'
+import type { AgentData, AgentState, Instant, RoutineCard, RunEvent, Scenario, Trace } from '../agent/types'
 
 // The mock reads and writes localStorage when it starts: an empty one in memory, so it starts fresh and quietly.
 const store = new Map<string, string>()
@@ -38,12 +39,12 @@ const usageMoney = (major: number) => F.fmtUsageMoney(major, 'USD', d)
 const agent = new MockAgent()
 await agent.preload() // the chat engine loads in the background in the app; the fake clock mustn't wait on it
 const SCENARIO_KEY: Record<Scenario, string> = { Normal: 'normal', 'First day': 'firstDay', Loading: 'loading', 'Tool disconnected': 'toolDisconnected', 'Cap reached': 'capReached' }
-/** The data, state and a Ctx for a stage and scenario. */
-const at = (stage: Stage, scenario: Scenario) => {
-  agent.setDemo({ stage, scenario })
+/** The data, state and a Ctx for a scenario, in the product's view (Act, no stages). */
+const at = (scenario: Scenario) => {
+  agent.setDemo({ scenario })
   const data: AgentData = agent.read()
   const st: AgentState = agent.getSnapshot()
-  return { data, ctx: { S: (['Watch', 'Act', 'Run'] as const).indexOf(stage) as StageIndex, scenario, agent: st, data } }
+  return { data, ctx: { S: 1 as const, noStages: true, scenario, agent: st, data } }
 }
 
 /** A `put` into `out` that refuses a key written twice. */
@@ -52,14 +53,14 @@ const putter = (out: Record<string, string>) => (k: string, v: string) => {
   out[k] = v
 }
 
-/** The variants of the stage sections, each with the tag its keys carry. */
-const VARIANTS: [Stage, Scenario, string][] = [['Watch', 'Normal', 'watch'], ['Run', 'Normal', 'run'], ['Act', 'First day', 'firstDay'], ['Watch', 'First day', 'watch.firstDay']]
+/** The variants of the scenario sections, each with the tag its keys carry. */
+const VARIANTS: [Scenario, string][] = [['First day', 'firstDay']]
 
-/** The strings that change with the stage and scenario: chats, Library, Activity, the audit log, the bell, problems, tools and routines. */
-function stageSections(stage: Stage, scenario: Scenario): Record<string, string> {
+/** The strings that change with the scenario: chats, Library, Activity, the audit log, the bell, problems, tools and routines. */
+function scenarioSections(scenario: Scenario): Record<string, string> {
   const out: Record<string, string> = {}
   const put = putter(out)
-  const { data, ctx } = at(stage, scenario)
+  const { data, ctx } = at(scenario)
 
   // ---------- chats: the list's time or date and its group, the work rows and the routine cards
   for (const c of data.chat.chats) {
@@ -182,15 +183,15 @@ async function capture(): Promise<Record<string, string>> {
   put('clock.plus3min.time', F.fmtTime(demoNow(0, 3 * 60_000).getTime(), d))
   put('clock.plus1h59.time', F.fmtTime(demoNow(0, 119 * 60_000).getTime(), d))
 
-  // ---------- the stage sections: Act on a normal day in full, then each variant where it differs
-  const base = stageSections('Act', 'Normal')
+  // ---------- the scenario sections: a normal day in full, then each variant where it differs
+  const base = scenarioSections('Normal')
   for (const [k, v] of Object.entries(base)) put(k, v)
-  for (const [stage, scenario, tag] of VARIANTS) {
-    for (const [k, v] of Object.entries(stageSections(stage, scenario))) if (base[k] !== v) put(`${k}@${tag}`, v)
+  for (const [scenario, tag] of VARIANTS) {
+    for (const [k, v] of Object.entries(scenarioSections(scenario))) if (base[k] !== v) put(`${k}@${tag}`, v)
   }
 
   // ---------- Tools: the disconnected scenario
-  const disc = at('Act', 'Tool disconnected')
+  const disc = at('Tool disconnected')
   // The keys keep their names from before the scenario data left the contract, so the golden file doesn't change.
   const lost = lostTool(disc.ctx)!
   put('scenarios.toolDisconnected.at', F.fmtTime(lost.since, d))
@@ -215,18 +216,18 @@ async function capture(): Promise<Record<string, string>> {
     })
   }
   const traceIds = Object.keys(tracesJson.traces)
-  at('Act', 'Normal')
+  at('Normal')
   for (const id of traceIds) {
     const t = await agent.getTrace(id)
     if (!t) throw new Error(`No trace ${id}`)
     traceLines(`traces.${id}`, t)
   }
-  at('Act', 'Tool disconnected')
+  at('Tool disconnected')
   traceLines('traces.morning@toolDisconnected', (await agent.getTrace('morning'))!)
 
   // ---------- Usage: every month and every scenario with spend
   for (const sc of ['Normal', 'Cap reached', 'First day'] as const) {
-    const u = at('Act', sc)
+    const u = at(sc)
     const status = capStatus(u.ctx)
     const s = SCENARIO_KEY[sc]
     put(`usage.${s}.capBanner`, status.bannerText)
@@ -256,7 +257,7 @@ async function capture(): Promise<Record<string, string>> {
   }
 
   // ---------- routines made in a chat: the card, the Routines page row and the answer bar, on the demo clock
-  at('Act', 'Normal')
+  at('Normal')
   await agent.createChat({ id: 'golden', title: 'Golden' })
   const t0 = Date.now()
   for (const [i, [q, afterMin]] of ROUTINE_ASKS.entries()) {
@@ -278,7 +279,7 @@ async function capture(): Promise<Record<string, string>> {
   // The chat the person starts, stamped on the demo clock (store.ts) and listed by src/ui/chat.tsx.
   put('created.chatListAt', F.fmtWhen(instantOf(now()), now(), d))
 
-  at('Act', 'Normal')
+  at('Normal')
   return Object.fromEntries(Object.entries(out).sort(([a], [b]) => (a < b ? -1 : 1)))
 }
 
@@ -288,7 +289,14 @@ test('the C1 formatters write exactly the golden strings for every time, amount,
   try {
     const out = await capture()
     // 693: the 12 strings of the demo's batch chat and its trace (Stage 1 M3-U) joined the 681 captured before C1.
-    expect(Object.keys(out).length).toBe(693)
+    // 694: the demo catch-up's PR 1 (decision A13) dropped the 36 Watch and Run strings (the `@watch`, `@run` and
+    // `@watch.firstDay` variants, the Watch-only trace) and added 37: the order-tags chat, its three traces and the
+    // bell's three approval notices. The stuck chat's routine card moved from turn 4 to turn 3 (the Watch turn before
+    // it is gone), its strings unchanged.
+    // 688: the review's High 1 (#726) took the agent-made PO, customer email and ShipBob note out of the Library (3 files, 6
+    // strings), moved the PO-1187 file to Dana's uploads (its date is now Nov 2) and reworded the Monday reorder routine's
+    // last run and the approval notice in the bell (the Summit Fleece reorder became a refund); one key renamed.
+    expect(Object.keys(out).length).toBe(688)
     expect(out).toEqual(golden)
   } finally {
     vi.useRealTimers()

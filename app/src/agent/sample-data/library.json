@@ -170,81 +170,22 @@
       "Ridge 30L Pack",
       "9",
       "600",
-      "Drafted at 6:08 AM, in Approvals"
+      "Flagged at the morning check"
      ],
      [
       "Summit Fleece",
       "12",
       "None",
-      "PO-1187 for 420 is late, 300 more ordered Nov 12"
+      "PO-1187 for 420 is late"
      ],
      [
       "Trail Shell · M · Olive",
       "Oversold by 5",
       "None",
-      "Variant pause waits in Approvals"
+      "Oversold by 5, on Today"
      ]
     ],
     "total": "3 rows, under 21 days"
-   }
-  },
-  {
-   "id": "a-po-1188",
-   "name": "PO-1188-ridge-30l-kestrel.pdf",
-   "type": "PDF",
-   "kind": "documents",
-   "place": "approvals",
-   "from": "Approval: Reorder 600 Ridge 30L Packs",
-   "by": "Inhouse agent",
-   "madeByAgent": true,
-   "size": "88 KB",
-   "at": "0d 06:08",
-   "link": {
-    "to": "approval",
-    "id": "stock"
-   },
-   "doc": {
-    "tag": "Purchase order",
-    "title": "PO-1188",
-    "meta": [
-     [
-      "To",
-      "Kestrel Supply"
-     ],
-     [
-      "From",
-      "Northline Outdoor"
-     ],
-     [
-      "Terms",
-      "Net 30"
-     ]
-    ],
-    "table": {
-     "head": [
-      "Item",
-      "Qty",
-      "Price"
-     ],
-     "rows": [
-      [
-       "Ridge 30L · Olive",
-       "400",
-       "$6,400"
-      ],
-      [
-       "Ridge 30L · Black",
-       "200",
-       "$3,200"
-      ]
-     ],
-     "total": [
-      "Total",
-      "600",
-      "$9,600"
-     ]
-    },
-    "note": "Deliver to the ShipBob Reno warehouse. Lead time 14 days."
    }
   },
   {
@@ -285,37 +226,16 @@
    }
   },
   {
-   "id": "a-stuck-md",
-   "name": "shipbob-ticket-order-4821.md",
-   "type": "MD",
-   "kind": "documents",
-   "place": "approvals",
-   "from": "Approval: Ask ShipBob why #4821 hasn't shipped",
-   "by": "Inhouse agent",
-   "madeByAgent": true,
-   "size": "0.5 KB",
-   "at": "0d 06:08",
-   "link": {
-    "to": "approval",
-    "id": "stuck"
-   },
-   "text": "Hi,\n\nOrder #4821 was released to you on Nov 12 and still shows as not picked. Can you check what's holding it and ship it today? It's for a repeat customer.\n\nThanks,\nNorthline Outdoor"
-  },
-  {
    "id": "a-po-1187",
    "name": "PO-1187-kestrel-summit-fleece.pdf",
    "type": "PDF",
    "kind": "documents",
-   "place": "approvals",
-   "from": "Approval: Chase Kestrel for a new ship date",
-   "by": "Inhouse agent",
-   "madeByAgent": true,
+   "place": "uploads",
+   "from": "Uploaded by Dana Kim",
+   "by": "Dana Kim",
+   "madeByAgent": false,
    "size": "74 KB",
-   "at": "0d 06:07",
-   "link": {
-    "to": "approval",
-    "id": "po"
-   },
+   "at": "-14d 10:05",
    "doc": {
     "tag": "Purchase order",
     "title": "PO-1187",
@@ -362,25 +282,8 @@
       "$5,100"
      ]
     },
-    "note": "6 days late. Your Inhouse agent drafted a note to Mei Chen for a new ship date."
+    "note": "Lead time 14 days."
    }
-  },
-  {
-   "id": "a-oversell-md",
-   "name": "oversold-customer-email.md",
-   "type": "MD",
-   "kind": "documents",
-   "place": "approvals",
-   "from": "Approval: Pause the variant and email 5 customers",
-   "by": "Inhouse agent",
-   "madeByAgent": true,
-   "size": "0.6 KB",
-   "at": "0d 06:07",
-   "link": {
-    "to": "approval",
-    "id": "oversell"
-   },
-   "text": "Hi Jamie,\n\nThanks for your order. The Trail Shell in Olive, size M, sold faster than we expected, so yours will ship on Tue, Dec 8.\n\nIf you'd rather not wait, reply and we'll refund you straight away.\n\nThe Northline team"
   },
   {
    "id": "a-amazon-claim",
@@ -388,7 +291,7 @@
    "type": "PDF",
    "kind": "documents",
    "place": "approvals",
-   "from": "Approval: Open a reimbursement case",
+   "from": "Today: Amazon paid out $1,240 less than expected",
    "by": "Inhouse agent",
    "madeByAgent": true,
    "size": "102 KB",

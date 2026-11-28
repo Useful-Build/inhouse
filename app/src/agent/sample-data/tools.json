@@ -75,8 +75,9 @@
         "What were last week's best sellers?"
       ],
       "read": "Orders, products, inventory, customers and discounts",
-      "draft": "Pause a variant, restock returns, update stock counts",
-      "run": "Restock returns and pause oversold variants, within your limits",
+      "draft": "Tag orders, add or remove stock, draft orders and refunds",
+      "run": "Nothing. Every change waits for your OK.",
+      "acts": true,
       "conn": "Custom app on your Shopify store, built by the Inhouse team",
       "site": "shopify.com",
       "since": "-14d 09:00"
@@ -90,8 +91,8 @@
         "Compare Amazon and Shopify sales this month."
       ],
       "read": "Orders, settlements, fees and inventory",
-      "draft": "Reimbursement cases and listing fixes",
-      "run": "Daily payout check. Cases still wait for you",
+      "draft": "Nothing. Amazon is read only for the agent.",
+      "run": "Nothing. The agent only reads.",
       "conn": "Amazon Selling Partner, connected with your seller login",
       "site": "sellercentral.amazon.com",
       "since": "-7d 09:00"
@@ -105,8 +106,8 @@
         "What's our average time to ship?"
       ],
       "read": "Inventory, shipments and returns",
-      "draft": "Support tickets and restock requests",
-      "run": "Nudge ShipBob on stuck orders",
+      "draft": "Nothing. ShipBob is read only for the agent.",
+      "run": "Nothing. The agent only reads.",
       "conn": "ShipBob official connection",
       "site": "shipbob.com",
       "since": "-14d 09:00"
@@ -120,8 +121,8 @@
         "How did margin change in October?"
       ],
       "read": "Invoices, bank feeds, payouts and accounts",
-      "draft": "Bills from supplier invoices",
-      "run": "Match payouts to orders",
+      "draft": "Nothing. Xero is read only for the agent.",
+      "run": "Nothing. The agent only reads.",
       "conn": "Xero official connection, read only by default",
       "site": "xero.com",
       "since": "-5d 09:00"
@@ -132,11 +133,11 @@
       "ex": [
         "Why did refund requests jump?",
         "What are customers asking about most?",
-        "Draft replies to the sizing tickets."
+        "Which sizing tickets should get a reply first?"
       ],
       "read": "Tickets, tags and customers",
-      "draft": "Replies in your tone",
-      "run": "Tag and sort new tickets. Replies always wait for you",
+      "draft": "Nothing. Gorgias is read only for the agent.",
+      "run": "Nothing. The agent only reads.",
       "conn": "Gorgias official connection",
       "site": "gorgias.com",
       "since": "-4d 09:00"
@@ -150,8 +151,8 @@
         "Which campaign should we pause?"
       ],
       "read": "Campaigns, spend and results",
-      "draft": "Pause or adjust a campaign",
-      "run": "Pause ads for out-of-stock products. Budget changes wait for you",
+      "draft": "Nothing. Meta Ads is read only for the agent.",
+      "run": "Nothing. The agent only reads.",
       "conn": "Meta Marketing connection, read only",
       "site": "facebook.com/business",
       "since": "-3d 09:00"
@@ -166,8 +167,8 @@
         "Should we feature the trail jacket this week?"
       ],
       "read": "Campaigns, flows and results",
-      "draft": "Campaign drafts and segment changes",
-      "run": "Pull low-stock products out of scheduled emails",
+      "draft": "Nothing. Klaviyo is read only for the agent.",
+      "run": "Nothing. The agent only reads.",
       "conn": "Klaviyo official connection, being set up by the Inhouse team",
       "site": "klaviyo.com",
       "liveBy": "+4d 09:00"
@@ -180,6 +181,7 @@
     "run": "what your Inhouse agent does by itself (Run)",
     "conn": "how it is connected",
     "catalog.need": "lowest stage index that includes it (0 Watch, 1 Act, 2 Run)",
-    "channels": "where the team hears from the agent (decision D6): not a tool it reads. need is the stage it starts at; since is when it was connected"
+    "channels": "where the team hears from the agent (decision D6): not a tool it reads. need is the stage it starts at; since is when it was connected",
+    "details.acts": "a write operation on this tool is on, so the agent may draft changes for approval (the product's `acts`). As in the product, only Shopify has one (#654)"
   }
 }
