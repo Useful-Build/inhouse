@@ -27,6 +27,13 @@ import {
 import { parseShopifyConfig, type Upstream } from './providers/shopify'
 import type { SlackPostExpect, SlackPostRequest } from '../connectors/slack/contract'
 import { SignInCore, type McpCallRequest, type McpProvider, type QueryRequest, type SyncStore } from './core'
+// Stage 1 M4-R1 (N35)
+import type { ConnectionBindingInput } from '../index/contract'
+import type { ConnectionCallRequest } from '../connections/call'
+import { dohResolver, type ResolvePublic } from '../connections/destinations'
+import { connectionHooks, objectOps } from '../connections/hooks'
+import { INDEX_OBJECT } from '../connections/index'
+import { addressVerdict } from '../../server/egress/ip'
 
 type HubEnv = Env & { INHOUSE_TEST_BUILD?: string }
 
@@ -133,6 +140,26 @@ export async function providerFor(env: HubEnv, accountId: string): Promise<McpPr
 
 export const signInFor = (env: Env, accountId: string) => env.SIGNIN.get(env.SIGNIN.idFromName(accountId))
 
+/** Stage 1 M4-R1 (N35): the `__connections__` index object. */
+export const connectionsIndexFor = (env: Env) => env.SIGNIN.get(env.SIGNIN.idFromName(INDEX_OBJECT))
+
+/**
+ * The DNS half of a connection's address check (connections/destinations.ts): the pinned DNS over HTTPS resolver. In the
+ * test build, a host the test seam registers counts as public and every other name is refused, so no test resolves a
+ * real name (an address literal is judged as anywhere: the private-address trap stays refused).
+ */
+export function resolverFor(env: HubEnv): ResolvePublic {
+  if (__INHOUSE_HUB_TEST__ && env.INHOUSE_TEST_BUILD === '1') {
+    return async host => {
+      const literal = addressVerdict(host)
+      if (literal !== null) return literal === 'public'
+      const { testUpstreams } = await import('../testing/index')
+      return testUpstreams.has(host)
+    }
+  }
+  return dohResolver(req => fetch(req))
+}
+
 /**
  * The ReadGateway's deps with readiness and the MCP proxy (P5 W1). index.ts's ReadGateway uses these through the
  * orchestrator's wiring line: `listReadyTools(await readyGatewayDeps(this.env))`, `callReadyTool(...)`. Every SignIn
@@ -218,7 +245,16 @@ export class SignIn extends DurableObject<Env> {
       kindFor: async accountId => kindFor(await loadRegistry(env), accountId),
       // P5 (p5-w4)
       appOrigin: () => (env as HubEnv & { APP_ORIGIN?: unknown }).APP_ORIGIN,
+      // Stage 1 M4-R1 (N35): the call's hooks, the object's operations and the address check's DNS half.
+      connectionHooks,
+      objectOps,
+      resolvePublic: resolverFor(hubEnv),
     })
+  }
+
+  /** Stage 1 M4-R1: only the `__connections__` object answers the index methods. */
+  #isIndex(): boolean {
+    return this.ctx.id.equals(this.env.SIGNIN.idFromName(INDEX_OBJECT))
   }
 
   async #guard<T>(fn: () => Promise<HubResult<T>> | HubResult<T>): Promise<HubResult<T>> {
@@ -312,6 +348,48 @@ export class SignIn extends DurableObject<Env> {
   }
   slackPost(accountId: string, req: SlackPostRequest, expect?: SlackPostExpect) {
     return this.#guard(() => this.#core.slackPost(accountId, req, expect))
+  }
+  // ---- Stage 1 M4-R1 (N35): connections. Each delegates to the core; the entry methods (oauth/entry.ts) parse first. ----
+  prepareConnection(req: { accountId: string; slug: string; adminMaySignIn: boolean; binding: ConnectionBindingInput; memberId: string }) {
+    return this.#guard(() => (this.#isIndex() ? err('invalid_args') : this.#core.prepareConnection(req)))
+  }
+  abandonConnection(accountId: string, generation: number) {
+    return this.#guard(() => this.#core.abandonConnection(accountId, generation))
+  }
+  getConnection(accountId: string) {
+    return this.#guard(() => this.#core.getConnection(accountId))
+  }
+  connectionSummary(accountId: string) {
+    return this.#guard(() => this.#core.connectionSummary(accountId))
+  }
+  updateConnection(req: { accountId: string; ifRev: number; adminMaySignIn?: boolean; settings?: Record<string, string> }) {
+    return this.#guard(() => this.#core.updateConnection(req))
+  }
+  removeConnection(accountId: string) {
+    return this.#guard(() => this.#core.removeConnection(accountId))
+  }
+  /** connectionCall (N35). Its answer carries `sent` beside a failure, so it isn't a plain HubResult: never through `#guard`'s internal. */
+  async connectionCall(accountId: string, req: ConnectionCallRequest) {
+    try {
+      return await this.#core.connectionCall(accountId, req)
+    } catch {
+      log('hub_internal', { accountId, code: 'internal' })
+      return { ok: false as const, error: { code: 'internal' as const, message: 'internal error' }, sent: 'unknown' as const }
+    } finally {
+      if (__INHOUSE_HUB_TEST__ && (this.env as HubEnv).INHOUSE_TEST_BUILD === '1') await flushTestLogs(this.env)
+    }
+  }
+  connectionOp(accountId: string, op: string, req: unknown) {
+    return this.#guard(() => this.#core.connectionOp(accountId, op, req))
+  }
+  indexAdd(entry: { accountId: string; slug: string; generation: number }) {
+    return this.#guard(() => (this.#isIndex() ? this.#core.indexAdd(entry) : err('invalid_args', 'index')))
+  }
+  indexRemove(accountId: string, upTo: number | null) {
+    return this.#guard(() => (this.#isIndex() ? this.#core.indexRemove(accountId, upTo) : err('invalid_args', 'index')))
+  }
+  indexList() {
+    return this.#guard(() => (this.#isIndex() ? this.#core.indexList() : err('invalid_args', 'index')))
   }
   override async alarm(): Promise<void> {
     try {

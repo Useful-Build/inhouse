@@ -5,8 +5,11 @@
 import type { KeyRing } from './keyring'
 
 export type Envelope = { kid: string; iv: string; ct: string }
-/** P5 (p5-w1) adds `client` (a dynamic client's registration) and `pkce` (a pending connect's verifier). */
-export type EnvelopeField = 'token' | 'refresh' | 'client' | 'pkce'
+/**
+ * P5 (p5-w1) adds `client` (a dynamic client's registration) and `pkce` (a pending connect's verifier). Stage 1 M4-R1
+ * (N35, N42) adds `key`: a connection's API key, so a key's envelope opens as nothing else.
+ */
+export type EnvelopeField = 'token' | 'refresh' | 'client' | 'pkce' | 'key'
 export type OpenResult = { ok: true; plaintext: string; kid: string } | { ok: false; reason: 'key_missing' | 'invalid' }
 
 const enc = new TextEncoder()

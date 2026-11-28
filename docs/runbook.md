@@ -101,7 +101,7 @@ Rotate the connector hub's token encryption keys without downtime:
 
 1. Add the new key to `keys` in `HUB_TOKEN_KEYS`, keeping `current` unchanged. Set it with `wrangler secret put HUB_TOKEN_KEYS` (through a secret card; this deploys a new version).
 2. Update `current` to the new `kid` and put again. New envelopes seal under the new key while old envelopes still decrypt.
-3. Wait for scheduled refreshes to re-seal existing records (Shopify refreshes about every 12 h; reads also re-seal lazily), or call `ServerGateway.reencrypt(scope, accountId)` per account.
-4. Once `ServerGateway.status` shows the new `kid` for every account, remove the old key from `keys` and put again.
+3. Wait for scheduled refreshes to re-seal existing records (Shopify refreshes about every 12 h; reads also re-seal lazily), or call `ServerGateway.reencrypt(scope, accountId)` per account. Connections by address (`mcp:<slug>`) are never refreshed into a new key: call `ServerGateway.reencryptConnections(scope)`, which walks the connections index and answers each connection's `kid` (or its error code).
+4. Once `ServerGateway.status` shows the new `kid` for every account, and `reencryptConnections` shows it for every connection, remove the old key from `keys` and put again.
 
 Removing a key still in use marks that record `key_unavailable`: a client-credentials account discards it and re-grants (`signin_key_missing`); an OAuth account requires a reconnect.

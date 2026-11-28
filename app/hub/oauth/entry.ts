@@ -13,7 +13,9 @@ import type {
 import { CardFactsRequestSchema } from '../index/schemas'
 import { err } from '../index/errors'
 import { log } from '../index/log'
-import { envRecord, flushTestLogs, isConfiguredFrom, loadRegistry, signInFor, signInName, TEST_FAKES_DO_NAME } from '../signin/signin'
+import { connectionsIndexFor, envRecord, flushTestLogs, isConfiguredFrom, loadRegistry, signInFor, signInName, TEST_FAKES_DO_NAME } from '../signin/signin'
+import { methodHooks } from '../connections/hooks'
+import type { ConnectionGatewayDeps, ConnectionObjectStub, IndexStub } from '../connections/gateway'
 import { isMcpConnector, type HubConnector } from '../registry/registry'
 import { decideTestShop } from '../index/test-shop'
 import { refuseTestFakes } from './test-gate'
@@ -75,12 +77,14 @@ async function deps(env: Env): Promise<G.ConnectDeps> {
   }
 }
 
-/**
- * Stage 1 M4 (M4-A): a connection method frozen in the contract before M4-R1 lands it. A `server` scope only, as every
- * method here; then `not_built`, with nothing read, parsed or kept.
- */
-async function notBuilt(env: Env, scope: CallerScope, method: string): Promise<HubResult<never>> {
-  return guarded(env, async () => (G.serverScope(scope) ? err('not_built', method) : err('invalid_args', 'scope')))
+/** Stage 1 M4-R1 (N35): the connection methods' deps (connections/gateway.ts): the objects, the index and the hooks. */
+export async function connectionDeps(env: Env): Promise<ConnectionGatewayDeps> {
+  return {
+    registry: await loadRegistry(env),
+    object: accountId => signInFor(env, accountId) as unknown as ConnectionObjectStub,
+    index: () => connectionsIndexFor(env) as unknown as IndexStub,
+    hooks: methodHooks,
+  }
 }
 
 export class ConnectGateway extends WorkerEntrypoint<Env> implements ConnectApi {
@@ -144,45 +148,47 @@ export class ConnectGateway extends WorkerEntrypoint<Env> implements ConnectApi 
       return err('not_configured', 'shopify_write')
     })
   }
-  // Stage 1 M4 (M4-A): every connection method answers `not_built` until M4-R1 lands it (contract.ts, N35).
-  async detectConnection(scope: CallerScope, _req: { actor: ConnectionActor; url: string }): Promise<HubResult<DetectResult>> {
-    return notBuilt(this.env, scope, 'detectConnection')
+  // Stage 1 M4-R1 (N35): every connection method, each parsed and scope-checked in connections/gateway.ts. Prepare, get,
+  // update, remove and the list are built here; the rest delegate to connections/hooks.ts, `not_built` until filled.
+  async detectConnection(scope: CallerScope, req: { actor: ConnectionActor; url: string }): Promise<HubResult<DetectResult>> {
+    return answered(this.env, async () => G.detectConnection(await connectionDeps(this.env), scope, req))
   }
-  async prepareConnection(scope: CallerScope, _req: PrepareConnectionRequest): Promise<HubResult<ConnectionView>> {
-    return notBuilt(this.env, scope, 'prepareConnection')
+  async prepareConnection(scope: CallerScope, req: PrepareConnectionRequest): Promise<HubResult<ConnectionView>> {
+    return answered(this.env, async () => G.prepareConnection(await connectionDeps(this.env), scope, req))
   }
-  async getConnection(scope: CallerScope, _req: { actor: ConnectionActor; accountId: string }): Promise<HubResult<ConnectionView>> {
-    return notBuilt(this.env, scope, 'getConnection')
+  async getConnection(scope: CallerScope, req: { actor: ConnectionActor; accountId: string }): Promise<HubResult<ConnectionView>> {
+    return answered(this.env, async () => G.getConnection(await connectionDeps(this.env), scope, req))
   }
-  async updateConnection(scope: CallerScope, _req: UpdateConnectionRequest): Promise<HubResult<ConnectionView>> {
-    return notBuilt(this.env, scope, 'updateConnection')
+  async updateConnection(scope: CallerScope, req: UpdateConnectionRequest): Promise<HubResult<ConnectionView>> {
+    return answered(this.env, async () => G.updateConnection(await connectionDeps(this.env), scope, req))
   }
-  async setTrusted(scope: CallerScope, _req: { actor: ConnectionActor; accountId: string; trusted: boolean; ifRev: number }): Promise<HubResult<{ trusted: boolean; policyRev: number }>> {
-    return notBuilt(this.env, scope, 'setTrusted')
+  async setTrusted(scope: CallerScope, req: { actor: ConnectionActor; accountId: string; trusted: boolean; ifRev: number }): Promise<HubResult<{ trusted: boolean; policyRev: number }>> {
+    return answered(this.env, async () => G.setTrusted(await connectionDeps(this.env), scope, req))
   }
-  async startConnectionSignIn(scope: CallerScope, _req: { actor: ConnectionActor; accountId: string }): Promise<HubResult<{ authorizeUrl: string; host: string; expiresAt: Instant }>> {
-    return notBuilt(this.env, scope, 'startConnectionSignIn')
+  async startConnectionSignIn(scope: CallerScope, req: { actor: ConnectionActor; accountId: string }): Promise<HubResult<{ authorizeUrl: string; host: string; expiresAt: Instant }>> {
+    return answered(this.env, async () => G.startConnectionSignIn(await connectionDeps(this.env), scope, req))
   }
-  async setConnectionCredential(scope: CallerScope, _req: { actor: ConnectionActor; accountId: string; credential: ConnectionCredential }): Promise<HubResult<{ state: ConnectionState }>> {
-    return notBuilt(this.env, scope, 'setConnectionCredential')
+  /** Not `answered`: a credential's request never lands in the test hook's list of answers, even refused. */
+  async setConnectionCredential(scope: CallerScope, req: { actor: ConnectionActor; accountId: string; credential: ConnectionCredential }): Promise<HubResult<{ state: ConnectionState }>> {
+    return guarded(this.env, async () => G.setConnectionCredential(await connectionDeps(this.env), scope, req))
   }
-  async checkConnection(scope: CallerScope, _req: { actor: ConnectionActor; accountId: string }): Promise<HubResult<{ listed: number }>> {
-    return notBuilt(this.env, scope, 'checkConnection')
+  async checkConnection(scope: CallerScope, req: { actor: ConnectionActor; accountId: string }): Promise<HubResult<{ listed: number }>> {
+    return answered(this.env, async () => G.checkConnection(await connectionDeps(this.env), scope, req))
   }
-  async listConnectionTools(scope: CallerScope, _req: { actor: ConnectionActor; accountId: string }): Promise<HubResult<ConnectionTools>> {
-    return notBuilt(this.env, scope, 'listConnectionTools')
+  async listConnectionTools(scope: CallerScope, req: { actor: ConnectionActor; accountId: string }): Promise<HubResult<ConnectionTools>> {
+    return answered(this.env, async () => G.listConnectionTools(await connectionDeps(this.env), scope, req))
   }
-  async confirmConnectionTools(scope: CallerScope, _req: ConfirmToolsRequest): Promise<HubResult<{ policyRev: number }>> {
-    return notBuilt(this.env, scope, 'confirmConnectionTools')
+  async confirmConnectionTools(scope: CallerScope, req: ConfirmToolsRequest): Promise<HubResult<{ policyRev: number }>> {
+    return answered(this.env, async () => G.confirmConnectionTools(await connectionDeps(this.env), scope, req))
   }
-  async removeConnection(scope: CallerScope, _req: { actor: ConnectionActor; accountId: string }): Promise<HubResult<{ revoked: boolean }>> {
-    return notBuilt(this.env, scope, 'removeConnection')
+  async removeConnection(scope: CallerScope, req: { actor: ConnectionActor; accountId: string }): Promise<HubResult<{ revoked: boolean }>> {
+    return answered(this.env, async () => G.removeConnection(await connectionDeps(this.env), scope, req))
   }
   async listConnections(scope: CallerScope): Promise<HubResult<ConnectionSummary[]>> {
-    return notBuilt(this.env, scope, 'listConnections')
+    return answered(this.env, async () => G.listConnections(await connectionDeps(this.env), scope))
   }
   async listWriteTools(scope: CallerScope): Promise<HubResult<WriteToolInfo[]>> {
-    return notBuilt(this.env, scope, 'listWriteTools')
+    return answered(this.env, async () => G.listWriteTools(await connectionDeps(this.env), scope))
   }
   /**
    * TEST BUILD ONLY (contract.ts `testFakes`): refused with `not_configured` outside the test bundle whatever the scope,

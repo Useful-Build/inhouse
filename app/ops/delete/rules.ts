@@ -99,7 +99,7 @@ export const deletionRules: Readonly<Record<string, DeletionRule>> = {
   notify_channels: { action: 'keep', why: 'the brand owns the channel list and its history; attribution stays pseudonymous', kept: ['added_by', 'removed_by'] },
   notify_channel_list: { action: 'keep', why: 'the brand channel list revision contains no member data' },
   notify_sends: { action: 'keep', why: 'keep caps and deduplication intact through retention; member references stay pseudonymous', kept: ['actor_id', 'target'] },
-  SignIn: { action: 'keep', why: 'the brand owns the sealed credential; connectedBy resolves through the pseudonymised member row and pending items expire', kept: ['connectedBy', 'pending.memberId'] },
+  SignIn: { action: 'keep', why: 'the brand owns the sealed credential and its connections; connectedBy and preparedBy resolve through the pseudonymised member row and pending items expire', kept: ['connectedBy', 'pending.memberId', 'preparedBy'] },
   // Stage 1 M2-C: the write-scoped Shopify app's one sealed token record; it names no member.
   ShopifyWriteSignIn: { action: 'keep', why: 'the brand owns the sealed write credential; no member id' },
   // P8a: the egress record names a host, a runner and a container generation, never a member, a run or a turn (one

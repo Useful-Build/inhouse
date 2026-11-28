@@ -6,6 +6,8 @@
 // - Every SignIn answer is read through `settledAnswer`: copied as plain data and released, never passed on as is (an
 //   answer passed on as is carries its disposer, which keeps the call open until the product's caller, maybe a Durable
 //   Object, disposes it).
+// - Stage 1 M4-R1 (N35): the connection methods are connections/gateway.ts's, re-exported here; pause and disconnect
+//   (routes 71, 72) also take a connection's account id (`mcp:<slug>`), which no registry module names.
 import type { AccountStatus, AccountSummary, CallerScope, HubResult, Instant } from '../index/contract'
 import { err, ok } from '../index/errors'
 import { log } from '../index/log'
@@ -13,6 +15,12 @@ import { AccountIdSchema, AuthCodeSchema, CallerScopeSchema, ConnectErrorSchema,
 import { isMcpConnector, type HubConnector, type Registry } from '../registry/registry'
 import { stateAccount } from './protocol'
 import { settledAnswer } from '../../shared/rpc-answer'
+import { isConnectionAccount } from '../signin/core'
+
+export {
+  checkConnection, confirmConnectionTools, detectConnection, getConnection, listConnections, listConnectionTools, listWriteTools, prepareConnection,
+  reencryptConnections, removeConnection, setConnectionCredential, setTrusted, startConnectionSignIn, teardownConnections, updateConnection,
+} from '../connections/gateway'
 
 /** The SignIn stub methods the gateway calls. */
 export type ConnectStub = {
@@ -100,8 +108,8 @@ export async function disconnect(deps: ConnectDeps, scope: CallerScope, accountI
   if (!serverScope(scope)) return err('invalid_args', 'scope')
   if (!AccountIdSchema.safeParse(accountId).success) return err('invalid_args', 'accountId')
   const mods = modulesFor(deps, accountId)
-  if (mods.length === 0) return err('unknown_tool')
-  if (!mods.some(isMcpConnector)) return err('invalid_args', 'accountId')
+  if (mods.length === 0 && !isConnectionAccount(accountId)) return err('unknown_tool')
+  if (mods.length > 0 && !mods.some(isMcpConnector)) return err('invalid_args', 'accountId')
   const r = await settledAnswer(deps.signIn(accountId).disconnect(accountId))
   if (!r.ok) return r
   return ok({ revoked: r.value.revoked === true })
@@ -111,7 +119,7 @@ export async function setPaused(deps: ConnectDeps, scope: CallerScope, accountId
   if (!serverScope(scope)) return err('invalid_args', 'scope')
   if (!AccountIdSchema.safeParse(accountId).success) return err('invalid_args', 'accountId')
   if (typeof paused !== 'boolean') return err('invalid_args', 'paused')
-  if (modulesFor(deps, accountId).length === 0) return err('unknown_tool')
+  if (modulesFor(deps, accountId).length === 0 && !isConnectionAccount(accountId)) return err('unknown_tool')
   return settledAnswer(deps.signIn(accountId).setPaused(accountId, paused))
 }
 

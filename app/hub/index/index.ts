@@ -2,6 +2,9 @@
 // - Default export: 404 for every method and path. The config has no route, so nothing outside the account reaches it.
 // - ReadGateway (named WorkerEntrypoint): listTools, callTool. Read tools only. Bound by H1's egress route.
 // - ServerGateway (named): status, reencrypt. Product Worker server code only; the egress route never holds it (OC 9).
+//   Stage 1 M4-R1 (N35) adds the two walks of the connections index: key rotation (`reencryptConnections`) and teardown
+//   (`teardownConnections`). Both are outside contract.ts's frozen interface: ops code calls them by name, and the
+//   product's typed binding doesn't name them.
 // Every method parses its arguments (schemas.ts) and returns a HubResult; an unexpected exception is logged as
 // `internal` without its text and returned as `internal`. RPC error serialization is never the contract.
 // Docs read 2026-11-20: service bindings RPC (named entrypoints), RPC error handling.
@@ -19,6 +22,8 @@ import { flushTestLogs, loadRegistry, readyGatewayDeps } from '../signin/signin'
 import { codeModeFor } from '../codemode/run'
 import { decideTestShop } from './test-shop'
 import { settledAnswer } from '../../shared/rpc-answer'
+import { connectionDeps } from '../oauth/entry'
+import { reencryptConnections, teardownConnections } from '../connections/gateway'
 
 export { SignIn } from '../signin/signin'
 export { ConnectGateway } from '../oauth/entry'
@@ -120,5 +125,22 @@ export class ServerGateway extends WorkerEntrypoint<Env> implements ServerApi {
       if (!AccountIdSchema.safeParse(accountId).success) return err('invalid_args', 'accountId')
       return (await settledAnswer(signInFor(this.env, accountId).reencrypt(accountId))) as HubResult<{ kid: string; changed: boolean }>
     })
+  }
+
+  /**
+   * Stage 1 M4-R1 (N35), key rotation: every connection the index lists, re-sealed under the current key (the runbook's
+   * `reencrypt` per account, for the accounts no registry module names). A `server` scope only. One failure doesn't stop
+   * the walk; each row names its account and its code.
+   */
+  async reencryptConnections(scope: CallerScope): Promise<HubResult<{ accountId: string; kid: string | null; changed: boolean; code: string | null }[]>> {
+    return guarded(this.env, async () => reencryptConnections(await connectionDeps(this.env), scope))
+  }
+
+  /**
+   * Stage 1 M4-R1 (N35), teardown: every connection the index lists, removed (revoked where it can be, tombstoned,
+   * unlisted) before the deployment goes. A `server` scope only. One failure doesn't stop the walk.
+   */
+  async teardownConnections(scope: CallerScope): Promise<HubResult<{ accountId: string; revoked: boolean; code: string | null }[]>> {
+    return guarded(this.env, async () => teardownConnections(await connectionDeps(this.env), scope))
   }
 }
