@@ -5,7 +5,7 @@
 import { z } from 'zod'
 import { shopScope, TagsSchema } from './shopify-order-tags.ts'
 import type { OperationEntry } from './types.ts'
-import { countOf } from '../words.ts'
+import { countOf } from './count-words.ts'
 
 const VARIANT_ID = /^gid:\/\/shopify\/ProductVariant\/[1-9][0-9]{0,19}$/
 /** A staff note: up to 500 characters, line breaks allowed, no other control or format character (bidi, zero-width). */

@@ -4,7 +4,7 @@
 // item, so its line names every order in it (at most the bulk threshold, 5). The hub checks the arguments again,
 // strictly, and takes at most 5 orders in one call (hub/connectors/shopify/write/ops/tags.ts).
 import { z } from 'zod'
-import { andList, countOf } from '../words.ts'
+import { andList, countOf } from './count-words.ts'
 import type { ResolveFacts } from '../../permissions/types.ts'
 
 /** A Shopify order's GraphQL id, the form the read tools return. */

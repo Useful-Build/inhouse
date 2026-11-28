@@ -5,7 +5,7 @@
 import { RestockArgsSchema, stockCard, stockItemLine, stockItemRow, STOCK_ROW_HEADS, type RestockArgs } from './shopify-inventory.ts'
 import { shopScope } from './shopify-order-tags.ts'
 import type { OperationEntry } from './types.ts'
-import { countOf } from '../words.ts'
+import { countOf } from './count-words.ts'
 
 export const shopifyInventoryRestock: OperationEntry<RestockArgs> & { key: 'shopify.inventory.restock' } = {
   key: 'shopify.inventory.restock',
