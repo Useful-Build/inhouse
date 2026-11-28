@@ -6,8 +6,5 @@ import { expect, type Locator } from '@playwright/test'
 export async function openTraceFrom(line: Locator): Promise<void> {
   await line.click()
   await expect(line).toHaveAttribute('aria-expanded', 'true')
-  const details = line.locator('xpath=..').getByRole('button', { name: 'Details', exact: true })
-  // The list opens with a height animation: click Details once it has settled, not while it moves.
-  await details.evaluate(el => Promise.all(el.closest('[data-slot="trace-collapsible-content"]')!.getAnimations({ subtree: true }).map(a => a.finished.catch(() => undefined))))
-  await details.click()
+  await line.locator('xpath=..').getByRole('button', { name: 'Details', exact: true }).click()
 }

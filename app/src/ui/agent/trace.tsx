@@ -6,7 +6,7 @@ import { cn } from '@/lib/utils'
 import { Badge } from '@/components/ui/badge'
 import {
   Trace,
-  TraceCollapsible,
+  TraceCollapsible as BaseTraceCollapsible,
   TraceCollapsibleContent,
   TraceCollapsibleTrigger,
   TraceDescription,
@@ -19,13 +19,23 @@ import { Icon, LogoTile } from '../index'
 export {
   Badge,
   Trace,
-  TraceCollapsible,
   TraceCollapsibleContent,
   TraceCollapsibleTrigger,
   TraceDescription,
   TraceIcon,
   TraceLine,
   TraceTitle,
+}
+
+/**
+ * The base Trace collapsible, its content clipped with `overflow: clip` instead of the base's `overflow: hidden`. While the
+ * content opens with its height animation it is clipped, and a `hidden` box is still a scroll container: focus or a
+ * scroll-into-view (a keyboard Tab, a test's click) could scroll the rows up inside the clip, and then the browser pulls
+ * them back down as the box grows, so a button there moves under the pointer between press and release (#607). A `clip`
+ * box can't be scrolled, so every row stays where it is laid out and only appears once the box reaches it.
+ */
+export function TraceCollapsible(props: ComponentProps<typeof BaseTraceCollapsible>) {
+  return <BaseTraceCollapsible {...props} className={cn('*:data-[slot=trace-collapsible-content]:overflow-clip', props.className)} />
 }
 
 /** A tool logo tile when `tool` is connected, or a round neutral tile with an icon when it isn't. */
