@@ -110,6 +110,7 @@ test('S3: Approvals lists each draft as one card with its risk, and the review w
   await expect(page.getByRole('button', { name: /^Approve all low-risk\s*3$/ })).toBeVisible()
   const claim = draft(page, 'Ask Dana to claim $1,240 from Amazon')
   await expect(claim.getByText('Urgent', { exact: true })).toBeVisible()
+  await expect(claim.getByText('Claims $1,240', { exact: true })).toBeVisible()
   await expect(claim).toContainText('From Amazon · Xero')
   const emails = draft(page, 'Pause the variant and email 5 customers')
   await emails.scrollIntoViewIfNeeded()

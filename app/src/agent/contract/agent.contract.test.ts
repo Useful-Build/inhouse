@@ -1120,10 +1120,12 @@ describe.each(targets)('contract: $name', (t: ContractTarget) => {
       }
       // Nothing a target doesn't have can be answered, read or removed: not found, on every target.
       let refusedCount = 0
-      for (const refused of [c.action('ac_AAAAAAAAAAAAAAAAAAAAAA'), c.answerAction('ac_AAAAAAAAAAAAAAAAAAAAAA', 1, 'once'), c.undoAction('ac_AAAAAAAAAAAAAAAAAAAAAA', 1),
-        c.resolveAction('ac_AAAAAAAAAAAAAAAAAAAAAA', 1, 'sent'), c.withdrawAction('ac_AAAAAAAAAAAAAAAAAAAAAA', 1), c.actionItems('ac_AAAAAAAAAAAAAAAAAAAAAA', 0),
-        c.removePermission('pg_AAAAAAAAAAAAAAAAAAAAAA', 1)]) {
-        const e = await refused.then(() => null, (x: unknown) => x)
+      // One call at a time, each awaited as it starts: a call started early and refused before its handler is attached would
+      // be an unhandled rejection on a slower target.
+      for (const refused of [() => c.action('ac_AAAAAAAAAAAAAAAAAAAAAA'), () => c.answerAction('ac_AAAAAAAAAAAAAAAAAAAAAA', 1, 'once'), () => c.undoAction('ac_AAAAAAAAAAAAAAAAAAAAAA', 1),
+        () => c.resolveAction('ac_AAAAAAAAAAAAAAAAAAAAAA', 1, 'sent'), () => c.withdrawAction('ac_AAAAAAAAAAAAAAAAAAAAAA', 1), () => c.actionItems('ac_AAAAAAAAAAAAAAAAAAAAAA', 0),
+        () => c.removePermission('pg_AAAAAAAAAAAAAAAAAAAAAA', 1)]) {
+        const e = await refused().then(() => null, (x: unknown) => x)
         expect(e).toBeInstanceOf(AgentError)
         expect(e).toMatchObject({ code: 'not_found' })
         refusedCount++

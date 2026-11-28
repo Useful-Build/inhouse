@@ -341,6 +341,10 @@
       "draft": {
         "kind": "Slack post",
         "summary": "Asks Dana to claim back the large-item fee on 18 orders.",
+        "amount": {
+          "money": { "minor": 124000, "currency": "USD" },
+          "direction": "claim"
+        },
         "destination": "#ops-alerts",
         "title": "Ask Dana to claim $1,240 from Amazon",
         "lines": [
