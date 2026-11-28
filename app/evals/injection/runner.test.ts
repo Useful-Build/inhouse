@@ -8,6 +8,7 @@ import { mkdtempSync, readFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import path from 'node:path'
 import { gateLine } from './report.ts'
+import { DoorRefusal } from '../targets/sql.ts'
 import { StartUndoFailed, gateOf, runInjection, summarise, type InjectionRow, type InjectionSession, type InjectionTarget } from './runner.ts'
 
 const pick = (...ids: string[]) => INJECTION_CASES.filter((c) => ids.includes(c.id))
@@ -312,5 +313,52 @@ describe('Neon\'s #618 review: the transcript\'s word, the cancel signal, one ca
     await expect(target.close!()).rejects.toThrow('boom')
     await expect(target.close!()).rejects.toThrow('boom')
     expect(calls).toBe(1)
+  })
+})
+
+describe('#662 and #664: a door that refuses stops the run; the beside-turn polls hear the cancel', () => {
+  it('a preflight that refuses stops the run before any repeat starts', async () => {
+    const base = createFakeInjectionTarget()
+    let starts = 0
+    const target: InjectionTarget = { ...base, async preflight() { throw new DoorRefusal('R2 list answered 403') }, async start(c, run) { starts++; return base.start(c, run) } }
+    await expect(runInjection({ target, cases: pick('W06', 'P01'), reps: 1, canary: fixed })).rejects.toThrow('R2 list answered 403')
+    expect(starts).toBe(0)
+  })
+
+  it('a door refusal mid-run (the transcript, the evidence) stops the run there, never "not exercised"', async () => {
+    const base = createFakeInjectionTarget()
+    for (const where of ['plant', 'evidence'] as const) {
+      const target: InjectionTarget = {
+        ...base,
+        async start(c, run) {
+          const s = await base.start(c, run)
+          if (c.id !== 'W06') return s
+          const refuse = async (): Promise<never> => { throw new DoorRefusal('R2 list answered 403') }
+          return where === 'plant' ? { ...s, plantDelivered: refuse } : { ...s, evidence: refuse }
+        },
+      }
+      const out = await runInjection({ target, cases: pick('W06', 'W07', 'P01'), reps: 2, canary: fixed })
+      const last = out.rows.at(-1)!
+      expect(last).toMatchObject({ caseId: 'W06', rep: 1, pass: false, stopErr: 'a door refused: R2 list answered 403' })
+      expect(last.err).not.toMatch(/not exercised/)
+      expect(out.rows.filter((r) => r.stopErr)).toHaveLength(1)
+      expect(gateOf(out).why).toContain('a door refused at W06 r1, so the run stopped')
+    }
+  })
+
+  it('the control and the admins-card probe get the run\'s cancel signal', async () => {
+    const cancel = new AbortController()
+    const base = createFakeInjectionTarget()
+    const got: (AbortSignal | undefined)[] = []
+    const target: InjectionTarget = {
+      ...base,
+      async start(c, run) {
+        const s = await base.start(c, run)
+        return { ...s, approveControl: async (ctl, o) => { got.push(o?.signal); return s.approveControl(ctl, o) }, probeAdminsCard: async (_m, o) => { got.push(o?.signal) } }
+      },
+    }
+    await runInjection({ target, cases: pick('P01', 'W04'), reps: 1, canary: fixed, signal: cancel.signal })
+    expect(got.length).toBeGreaterThanOrEqual(2)
+    expect(got.every((g) => g === cancel.signal)).toBe(true)
   })
 })

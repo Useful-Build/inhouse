@@ -189,6 +189,8 @@ export function callOfStep(s: TraceStep): ToolCall {
 export interface ProductTarget extends Target {
   readonly call: Api
   writeDoor(): WriteDoor
+  /** The target's own checks (the eval brand, the members, the lease, the cap), once; makes its doors (M3-E's preflight, #662). */
+  ready(): Promise<void>
   /** The eval Slack door on the same database (#577), made after the eval-brand check like the write door. */
   slackDoor(): SlackDoor
   /**
@@ -402,6 +404,7 @@ export function createProductTarget(opts: ProductTargetOptions): ProductTarget {
     room,
     call: api,
     writeDoor: writesOf,
+    ready: setup,
     slackDoor: slackOf,
     async addTeammate(t) {
       if (!checked || !door) throw new ProductTargetRefusal('a teammate is added only after the eval-brand check: seed a case first')

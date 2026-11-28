@@ -32,6 +32,24 @@ import { PRODUCT_PLANTS, type EvAction, type HarnessAnswer, type InjectionCase, 
 export const CLOCK_SLACK_MS = 2_000
 /** How long the control's card may take to appear after the turn, and its send after the answer (the 10 s hold and the send). */
 export const CONTROL_WAIT_MS = 90_000
+/** How long a close waits for the running repeat to end (#663): its turn is already stopped, so this is its quiesce and reset. */
+export const REPEAT_END_WAIT_MS = 150_000
+
+/** A sleep a cancel ends at once (#664). */
+const abortableSleep = async (sleep: (ms: number) => Promise<void>, ms: number, signal?: AbortSignal): Promise<void> => {
+  if (!signal) return sleep(ms)
+  if (signal.aborted) return
+  let onAbort!: () => void
+  const aborted = new Promise<void>((r) => { onAbort = r })
+  signal.addEventListener('abort', onAbort, { once: true })
+  try {
+    await Promise.race([sleep(ms), aborted])
+  } finally {
+    // One listener per poll would pile up over a 90 s wait (Node warns past 10): each goes when its sleep ends.
+    signal.removeEventListener('abort', onAbort)
+  }
+}
+const cancelled = (signal?: AbortSignal) => signal?.aborted === true
 
 /**
  * #584: the eval log holds a Slack post as the outbox sent it (`{ channelId, text, title? }`), the outbox rows as the
@@ -98,6 +116,8 @@ export interface ProductInjectionOptions extends Pick<ProductTargetOptions, 'pai
   slackLink?: { connect(api: InhouseApi): Promise<void>; disconnect(api: InhouseApi): Promise<void> }
   sleep?: (ms: number) => Promise<void>
   now?: () => number
+  /** How long a close waits for the running repeat to end (tests); default REPEAT_END_WAIT_MS. */
+  repeatEndWaitMs?: number
 }
 
 export function createProductInjectionTarget(o: ProductInjectionOptions): InjectionTarget {
@@ -180,26 +200,53 @@ export function createProductInjectionTarget(o: ProductInjectionOptions): Inject
    * in flight is waited for, so it can't outlive the close; the running repeat's turns are stopped before the lease goes.
    */
   let closed = false
+  /** Starts in flight and the running repeat's end (its reset), which the close waits for (#663). */
+  const starting = new Set<Promise<unknown>>()
+  let repeatDone: Promise<void> | null = null
   let sessions: SessionReader | undefined = o.sessions
   let connecting: Promise<void> | null = null
   let active: { stopTurns?(): Promise<void> } | null = null
   const closingRefusal = () => new Error('the target is closing (a cancel): no case starts and Slack stays off')
-  return {
+  const target: InjectionTarget = {
     name: 'product',
     provides,
     serves: (c) => (c.plant && !plants.includes(c.plant.via) ? `planting through ${c.plant.via} needs a per-case dataset on the eval hub (not built)` : null),
     spentUsd: () => base.spentUsd?.() ?? 0,
     notes: () => [...notes],
+    async preflight() {
+      // The product target's own checks first (the eval brand, the lease, the cap: targets/product.ts setup), which make
+      // its doors; then one read through each door the run uses, and one R2 LIST of the session transcripts (as the
+      // read-side and store-data suites do). A refusal throws here, before any paid turn.
+      await base.ready()
+      await base.writeDoor().now()
+      if (inhouse) await base.slackDoor().read()
+      sessions ??= createSessionReader({ env: o.env, bucket: EVAL_BUCKET })
+      await sessions.preflight()
+    },
     close: async () => {
       closed = true
       const failed: unknown[] = []
-      // A connect in flight ends first (its own failure is start()'s to report); then Slack is left off for good.
-      if (connecting) await connecting.then(() => undefined, () => undefined)
+      // A start in flight (seeding, connecting, listing) ends first, refused at its next step and undone by itself; its
+      // failure is start()'s to report (#663). Then a connect in flight.
+      await Promise.all([...starting].map((p) => p.then(() => undefined, () => undefined)))
+      const connectInFlight = connecting as Promise<void> | null
+      if (connectInFlight) await connectInFlight.then(() => undefined, () => undefined)
       try {
         // The running repeat's turns stop before the lease goes back.
         await active?.stopTurns?.()
       } catch (e) {
         failed.push(e)
+      }
+      // The running repeat's own quiesce, evidence and reset (the runner keeps them going after the cancel aborts its
+      // turn) end before the lease goes back and Slack is left, so none of its writes lands after (#663). Bounded: a
+      // runner that never resets can't hold the close forever.
+      if (repeatDone) {
+        const waitMs = o.repeatEndWaitMs ?? REPEAT_END_WAIT_MS
+        let timer: ReturnType<typeof setTimeout> | undefined
+        const late = new Promise<'late'>((r) => { timer = setTimeout(() => r('late'), waitMs) })
+        const ended = await Promise.race([repeatDone.then(() => 'ended' as const), late])
+        clearTimeout(timer)
+        if (ended === 'late') failed.push(new Error(`the running repeat did not end within ${waitMs / 1000} s of the close`))
       }
       try {
         // #583: leave the shared eval deployment without Slack (a cancel mid-repeat lands here too).
@@ -215,12 +262,28 @@ export function createProductInjectionTarget(o: ProductInjectionOptions): Inject
       if (failed.length === 1) throw failed[0]
       if (failed.length > 1) throw new AggregateError(failed, 'the target\'s close failed in more than one step')
     },
-    async start(c: InjectionCase, run): Promise<InjectionSession> {
+    async start(c, run) {
+      // Every start is tracked while it runs, so a close waits for it (#663).
+      const p = startCase(c, run)
+      starting.add(p)
+      try {
+        return await p
+      } finally {
+        starting.delete(p)
+      }
+    },
+  }
+
+  async function startCase(c: InjectionCase, run: { rep: number; canary: string }): Promise<InjectionSession> {
+    {
       if (closed) throw closingRefusal()
       const slackCase = c.needs.includes('slack_post') || c.plant?.via === 'slack'
       const plant: ExfilSpec | undefined = c.plant && c.plant.via !== 'slack' ? { kind: 'memory', via: c.plant.via as ExfilSpec['via'], hosts: [], plant: c.plant.text } : undefined
       const session = await base.seed([], { caseId: c.id, rep: run.rep, canary: run.canary, writes: true }, plant)
       active = session
+      // The repeat's end, which a close waits for (#663): settled by its reset, or by an undone start.
+      let markDone!: () => void
+      repeatDone = new Promise<void>((r) => { markDone = r })
       const w = base.writeDoor()
       const asker = base.people.current
       const seeded = new Set<string>()
@@ -229,6 +292,8 @@ export function createProductInjectionTarget(o: ProductInjectionOptions): Inject
       let teammate: string | undefined
       let ceilingsBefore: WriteEvidence['ceilingsBefore'] = null
       try {
+        // A close that began while the seed ran: this case stops here, undone below (#663).
+        if (closed) throw closingRefusal()
         if (base.room) {
           const room = await base.room()
           if (room.spentUsd + 0.25 > room.capUsd) throw new Error(`this month's spend ($${room.spentUsd.toFixed(2)}) leaves no room under the $${room.capUsd} cap`)
@@ -272,6 +337,8 @@ export function createProductInjectionTarget(o: ProductInjectionOptions): Inject
           }
         }
         // A failed undo leaves state the next repeat would inherit: the runner records it as a reset failure and stops.
+        active = null
+        markDone()
         if (failed.length) throw new StartUndoFailed([e, ...failed], 'the seed failed, and undoing it failed too')
         throw e
       }
@@ -328,9 +395,11 @@ export function createProductInjectionTarget(o: ProductInjectionOptions): Inject
           if (!session.quiesce) throw new Error('the product session has no quiesce')
           await session.quiesce()
         },
-        async approveControl(control) {
+        async approveControl(control, opts = {}) {
           // A grant's control has no card: the seeded grant runs it (the grader checks it did).
           if (control.via === 'grant') return
+          const stop = () => { if (cancelled(opts.signal)) throw new Error('cancelled') }
+          stop()
           const want = canonical(control.args)
           const deadline = now() + CONTROL_WAIT_MS
           let action: EvAction | undefined
@@ -339,8 +408,10 @@ export function createProductInjectionTarget(o: ProductInjectionOptions): Inject
             if (action?.state === 'waiting') break
             if (action && action.state !== 'waiting') throw new Error(`the control's action is ${action.state}, not waiting for an answer`)
             if (now() > deadline) throw new Error('the control\'s card never appeared')
-            await sleep(2_000)
+            await abortableSleep(sleep, 2_000, opts.signal)
+            stop()
           }
+          stop()
           const answer = async (who: 'current' | 'lena', choice: 'once' | 'approve', rev: number) => {
             const r = await base.call(who, 'POST', `/api/actions/${encodeURIComponent(action!.id)}/answer`, { json: { choice, ifRev: rev } })
             answers.push({ actionId: action!.id, choice, by: who === 'lena' ? base.people.lena : asker, byRole: who === 'lena' ? 'admin' : 'member', accepted: r.status === 200 })
@@ -361,7 +432,8 @@ export function createProductInjectionTarget(o: ProductInjectionOptions): Inject
             const a = (await read()).actions.find((x) => x.id === action!.id)
             if (a && ['sent', 'failed', 'needs_check'].includes(a.state)) return
             if (now() > deadline + CONTROL_WAIT_MS) throw new Error(`the control's send never ended (${a?.state ?? 'gone'})`)
-            await sleep(2_000)
+            await abortableSleep(sleep, 2_000, opts.signal)
+            stop()
           }
         },
         evidence: read,
@@ -373,9 +445,10 @@ export function createProductInjectionTarget(o: ProductInjectionOptions): Inject
           for (const id of chatIds) parts.push(await sessions.parts(id))
           return plantVerdict(parts, plant)
         },
-        async probeAdminsCard(m) {
+        async probeAdminsCard(m, opts = {}) {
           const deadline = now() + CONTROL_WAIT_MS
           for (;;) {
+            if (cancelled(opts.signal)) return // a cancel: nothing more to probe (the repeat fails on its cancelled turn)
             const a = (await read()).actions.find((x) => x.operation === m.operation && x.approverKind === 'admins' && x.state === 'waiting')
             if (a) {
               const r = await base.call('current', 'POST', `/api/actions/${encodeURIComponent(a.id)}/answer`, { json: { choice: 'approve', ifRev: a.rev } })
@@ -383,7 +456,7 @@ export function createProductInjectionTarget(o: ProductInjectionOptions): Inject
               return
             }
             if (now() > deadline) return // no card: the grader says so (mustAsk)
-            await sleep(2_000)
+            await abortableSleep(sleep, 2_000, opts.signal)
           }
         },
         settledCostUsd: session.settledCostUsd ? () => session.settledCostUsd!() : undefined,
@@ -395,12 +468,17 @@ export function createProductInjectionTarget(o: ProductInjectionOptions): Inject
               if (teammate) await base.removeTeammate(teammate)
             } finally {
               active = null
-              // Slack off again before the next case: a later non-Slack case must not see Slack in its tools.
-              await leaveSlack()
+              try {
+                // Slack off again before the next case: a later non-Slack case must not see Slack in its tools.
+                await leaveSlack()
+              } finally {
+                markDone()
+              }
             }
           }
         },
       }
-    },
+    }
   }
+  return target
 }
