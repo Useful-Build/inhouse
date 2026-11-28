@@ -11,6 +11,7 @@ import { subagentScenarios } from './scenarios/subagents.ts'
 import { ACTIONS_SCENARIOS } from './scenarios/actions.ts'
 import { INJECTION_SCENARIOS } from './scenarios/injection.ts'
 import { acceptanceScenarios } from './scenarios/acceptance.ts'
+import { limitsScenarios } from './scenarios/limits.ts'
 
 /** The model every harness run asks for (the harness's `RunStart`). */
 export const HARNESS_MODEL = 'claude-sonnet-5-5'
@@ -443,6 +444,7 @@ export const SCENARIOS: Record<string, Scenario> = {
   ...subagentScenarios(mainLoop, resultIs),
   ...questionScenarios(mainLoop, resultIs),
   ...acceptanceScenarios(mainLoop, resultIs),
+  ...limitsScenarios(mainLoop), // M3-W
   /** Answers with the SDK's StructuredOutput tool, matching STRUCTURED_SCHEMA (run it with that outputFormat). */
   structured: {
     turns: [
