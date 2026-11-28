@@ -84,6 +84,8 @@ const ProductOpSchema = z.discriminatedUnion('op', [
   z.strictObject({ op: z.literal('systemNotice'), notice: z.unknown() }),
   z.strictObject({ op: z.literal('logs'), since: z.strictObject({ product: z.number().int().min(0).optional(), hub: z.number().int().min(0).optional() }).optional() }),
   z.strictObject({ op: z.literal('transcripts') }),
+  // Stage 1 M3-W: a batch's items with their failure codes, so a sandbox spec can say why an item didn't go out.
+  z.strictObject({ op: z.literal('items'), actionId: z.string().regex(/^ac_[A-Za-z0-9_-]{22}$/) }),
   z.strictObject({
     op: z.literal('ceiling'), operation: WriteOperationArgSchema, enabled: z.boolean(), perDayMax: z.number().int().min(1).max(10_000),
     unitsMax: CeilingValuesSchema.shape.unitsMax.optional(), bulkThreshold: CeilingValuesSchema.shape.bulkThreshold.optional(),
@@ -393,6 +395,12 @@ export async function runTestFakes(body: unknown, env: TestFakesEnv): Promise<Te
       return logsOp(env, op)
     case 'transcripts':
       return transcriptsOp(env)
+    case 'items': {
+      // The test build only: the items route shows a failed item's words, never its code.
+      const rows = await env.DB.prepare('SELECT n, state, error_code, attempt, throttles FROM outbox_items WHERE action_id = ? ORDER BY n')
+        .bind(op.actionId).all<{ n: number; state: string; error_code: string | null; attempt: number; throttles: number }>()
+      return ok({ items: rows.results.map(r => ({ n: r.n, state: r.state, errorCode: r.error_code, attempt: r.attempt, throttles: r.throttles })) })
+    }
     case 'ceiling':
       return ceilingOp(env, op)
     case 'action':

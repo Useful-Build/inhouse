@@ -194,7 +194,14 @@ test('the agent\'s loop of 500 allowed writes stops at the limit and becomes one
   const items = await itemsOf(request, batch.id)
   expect(items.map(i => i.n)).toEqual(Array.from({ length: 200 }, (_, k) => k + 1))
   const itemFailed = items.filter(i => i.state !== 'sent')
-  if (itemFailed.length > 0) console.log(`write-loop: ${itemFailed.length} of the 200 items didn't go out: ${JSON.stringify(itemFailed.slice(0, 10))}`)
+  if (itemFailed.length > 0) {
+    // Why, by each item's failure code (the test-fakes hook's `items`, test build only: the route shows only words).
+    const codes = await hook(request, { op: 'items', actionId: batch.id })
+    const failedCodes = codes.status === 200
+      ? (codes.json.items as { n: number; state: string; errorCode: string | null }[]).filter(i => i.state !== 'sent').slice(0, 10)
+      : codes.text
+    console.log(`write-loop: ${itemFailed.length} of the 200 items didn't go out: ${JSON.stringify(itemFailed.slice(0, 10))}; codes: ${JSON.stringify(failedCodes)}`)
+  }
   expect(itemFailed, 'every approved item went out').toEqual([])
   expect((await call(request, dana, 'GET', `/api/actions/${batch.id}`)).json).toMatchObject({ state: 'sent', result: 'Sent. 200 of 200 went out' })
   // Nothing more went out: the rest wait, untouched, for their own answer, and a No ends them.
