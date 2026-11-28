@@ -13,6 +13,12 @@
 // stored record's `kind`, else the registry's `kindFor`), never by whether a provider happens to be configured. H0's
 // Shopify path, its records and `#stillCurrent` are unchanged. OAuth records are v2 (every field written); a v1 record
 // reads with the v2 defaults (`normalize`). `connectEpoch` guards only the connect callback's write (`#connectCurrent`).
+//
+// Stage 1 M4-R1 (N35) adds a connection's record, version 3 (`kind: 'mcp_runtime'`, connections/record.ts), in an
+// `mcp:<slug>` object's same `record` key, and `connectionCall` (connections/call.ts). The two never mix: every v1 and
+// v2 path refuses a connection account up front, `#read` throws on a v3 record (so a path that slipped past fails loud,
+// as `internal`, and writes nothing), `#write` never puts a v1 or v2 record for a connection account, and a v3 record is
+// written only through `#putConnection`, whole and checked. Later packages fill connections/hooks.ts, never this file.
 import type { AccountStatus, HubErrorCode, HubResult, Instant, SignInState } from '../index/contract'
 import type { McpClientConfig, McpConnectorModule, McpToolResult } from '../registry/registry'
 import { MCP_SCOPE, requestedScopes, sameScopeSet, type Readiness } from '../registry/registry'
@@ -52,9 +58,21 @@ import { callWeb, LIST_LIMIT, parseChannel, POSTABLE_CHANNEL, refusalFor, type W
 import type { SlackChannel, SlackPostExpect, SlackPostRequest } from '../connectors/slack/contract'
 import { boundNotice, composeSlack, isAppOrigin } from '../../shared/notify/bound'
 import { linkPath } from '../../shared/notify/links'
+// Stage 1 M4-R1 (N35)
+import { CONNECTION_ACCOUNT_ID } from '../index/schemas'
+import { changeCode, connectionCall as runConnectionCall, stopCode, type CallHost, type CallResult, type ConnectionCallRequest, type Fence } from '../connections/call'
+import { connectionHooks as defaultConnectionHooks, objectOps as defaultObjectOps, type ConnectionHooks, type ObjectOps } from '../connections/hooks'
+import { indexAdd, indexList, indexRemove, type IndexAdd, type IndexEntry } from '../connections/index'
+import type { ResolvePublic } from '../connections/destinations'
+import { guardedSender } from '../connections/send'
+import {
+  bindingOf, checkRecord, checkTransition, isStoredConnection, preparedRecord, sameBinding, summaryOf, tombstoneOf, viewOf, withoutCredential, withPolicy,
+  type ConnectionRecord, type ConnectionTombstone, type StoredConnection,
+} from '../connections/record'
+import type { ConnectionBindingInput, ConnectionState, ConnectionSummary, ConnectionView } from '../index/contract'
 
 export type SignInRecord = {
-  /** 1: H0's shape (client credentials). 2: P5's OAuth records, every field below written. */
+  /** 1: H0's shape (client credentials). 2: P5's OAuth records, every field below written. 3 is a connection's (connections/record.ts). */
   v: 1 | 2
   accountId: string
   state: SignInState
@@ -146,7 +164,19 @@ export type SignInDeps = {
   // ---- P5 (p5-w4) ----
   /** The hub var `APP_ORIGIN` (the brand's product origin, from the ops repo); never from a request. */
   appOrigin?: () => unknown
+  // ---- Stage 1 M4-R1 (N35): connections ----
+  /** The call's hooks (connections/hooks.ts); tests pass their own. */
+  connectionHooks?: ConnectionHooks
+  /** Operations inside a connection's object (connections/hooks.ts `objectOps`). */
+  objectOps?: ObjectOps
+  /** The DNS half of the address check (connections/destinations.ts). Absent: every name is refused (fail closed). */
+  resolvePublic?: ResolvePublic
+  /** A connection call's per-request deadline (the SDK's default when absent). */
+  callTimeoutMs?: number
 }
+
+/** A connection's account id (`mcp:<slug>`, N35): only the v3 paths below serve it. */
+export const isConnectionAccount = (accountId: unknown): accountId is string => typeof accountId === 'string' && CONNECTION_ACCOUNT_ID.test(accountId)
 
 /** A pending connect (the `state`'s item). The verifier is sealed under field `pkce`. */
 export type ConnectItem = {
@@ -232,11 +262,16 @@ export class SignInCore {
 
   // ---------- the record ----------
 
+  /** A v1 or v2 record. Throws on a connection's (v3): a v1 or v2 path never reads one (the handler answers `internal`). */
   #read(): SignInRecord | undefined {
-    return this.#d.store.get<SignInRecord>(RECORD)
+    const raw = this.#d.store.get<SignInRecord | StoredConnection>(RECORD)
+    if (isStoredConnection(raw)) throw new Error('a v1 or v2 path reached a connection record')
+    return raw
   }
 
+  /** A v1 or v2 record, whole. Never for a connection account (N35): that object holds only a v3 record. */
   #write(r: SignInRecord): void {
+    if (isConnectionAccount(r.accountId)) throw new Error('a v1 or v2 record for a connection account')
     this.#d.store.put(RECORD, r)
   }
 
@@ -431,7 +466,7 @@ export class SignInCore {
     return { ok: false, code: 'upstream_unavailable' }
   }
 
-  async #lazyReseal(accountId: string, ring: KeyRing, r: SignInRecord, field: Exclude<EnvelopeField, 'pkce'>, plaintext: string) {
+  async #lazyReseal(accountId: string, ring: KeyRing, r: SignInRecord, field: Exclude<EnvelopeField, 'pkce' | 'key'>, plaintext: string) {
     const before = r[field] ?? null
     const resealed = await seal(ring, accountId, field, plaintext)
     const now = this.#stillCurrent(accountId, r.generation)
@@ -477,6 +512,7 @@ export class SignInCore {
     if (!vars.ok) return err('invalid_args', 'variables')
     if (!checkShopifyFields(document as string, vars.value).ok) return err('invalid_args', FIELD_NOT_ALLOWED)
 
+    if (isConnectionAccount(accountId)) return err('not_configured')
     const r = this.#recordFor(accountId)
     if (!r) return err('internal')
     // P5: a Shopify read never runs on an OAuth account.
@@ -513,6 +549,7 @@ export class SignInCore {
    * prompt reads its status, so the prompt names what the turn's reads will use). The token endpoint only, no read.
    */
   async warm(accountId: string): Promise<HubResult<{ state: SignInState }>> {
+    if (isConnectionAccount(accountId)) return err('not_configured')
     if ((await this.#kind(accountId)) !== 'client_credentials') return err('not_configured')
     if (!this.#recordFor(accountId)) return err('internal')
     if (!this.#d.shopify()) return err('not_configured')
@@ -524,6 +561,10 @@ export class SignInCore {
   }
 
   status(accountId: string): HubResult<CoreStatus> {
+    if (isConnectionAccount(accountId)) {
+      const s = this.#connectionStatus(accountId)
+      return s.ok ? ok({ accountId, state: s.value.state, kid: s.value.kid, expiresAt: s.value.expiresAt, scopes: s.value.scopes, lastError: s.value.lastError }) : s
+    }
     const r = this.#recordFor(accountId)
     if (!r) return err('internal')
     return ok({
@@ -537,6 +578,7 @@ export class SignInCore {
   }
 
   async reencrypt(accountId: string): Promise<HubResult<{ kid: string; changed: boolean }>> {
+    if (isConnectionAccount(accountId)) return this.#reencryptConnection(accountId)
     const r = this.#recordFor(accountId)
     if (!r) return err('internal')
     const ring = await this.#d.keyring()
@@ -566,6 +608,7 @@ export class SignInCore {
 
   /** P5's caller. Token and refresh deleted, generation + 1, alarm deleted; only P5's connect leaves this state. */
   async disconnect(accountId: string): Promise<HubResult<{ generation: number; revoked?: boolean }>> {
+    if (isConnectionAccount(accountId)) return this.#disconnectConnection(accountId)
     if ((await this.#kind(accountId)) === 'oauth_mcp') return this.#disconnectMcp(accountId)
     const r = this.#recordFor(accountId)
     if (!r) return err('internal')
@@ -670,6 +713,12 @@ export class SignInCore {
   async alarm(): Promise<void> {
     try {
       this.#sweepPending()
+      // A connection's object (N35) and the index object: only the one-time items are swept.
+      const raw = this.#d.store.get<unknown>(RECORD)
+      if (isStoredConnection(raw)) {
+        await this.#ensureSweepAlarm(raw.accountId)
+        return
+      }
       const r = this.#read()
       if (r?.kind === 'oauth_mcp') return await this.#mcpAlarm(r)
       if (!r || r.state === 'disconnected') {
@@ -772,6 +821,8 @@ export class SignInCore {
 
   /** For the gateway (P5 W1 section 6): whether this account's tools are served now. Writes nothing. */
   async ready(accountId: string): Promise<HubResult<Readiness>> {
+    // A connection's tools aren't the registry's (connectionCall serves them, N35).
+    if (isConnectionAccount(accountId)) return ok({ ready: false, code: 'not_configured' })
     if ((await this.#kind(accountId)) === 'client_credentials') {
       const r = this.#read()
       if (r && r.accountId !== accountId) return err('internal')
@@ -790,6 +841,7 @@ export class SignInCore {
 
   /** H0's status plus P5's fields. Async because `needsReconnect` compares with the current requested scopes. */
   async accountStatus(accountId: string): Promise<HubResult<AccountStatus>> {
+    if (isConnectionAccount(accountId)) return this.#connectionStatus(accountId)
     const base = this.status(accountId)
     if (!base.ok) return base
     // Kind first (it may await the registry), so the backfill below runs only for a client-credentials account.
@@ -823,6 +875,7 @@ export class SignInCore {
   /** Pause keyed by account, any kind (OC-W1-8). Doesn't touch the token or either counter. */
   async setPaused(accountId: string, paused: boolean): Promise<HubResult<{ paused: boolean }>> {
     if (typeof paused !== 'boolean') return err('invalid_args', 'paused')
+    if (isConnectionAccount(accountId)) return this.#pauseConnection(accountId, paused)
     const kind = await this.#kind(accountId)
     const r = kind === 'oauth_mcp' ? this.#mcpRecord(accountId) : this.#recordFor(accountId)
     if (!r) return err('internal')
@@ -838,6 +891,8 @@ export class SignInCore {
       return err('invalid_args')
     }
     const { accountId, memberId } = req
+    // A connection's sign-in is M4-O1a's (connections/hooks.ts), never this flow.
+    if (isConnectionAccount(accountId)) return err('not_configured')
     if ((await this.#kind(accountId)) !== 'oauth_mcp') return err('not_configured')
     const p = await this.#provider(accountId)
     if (!p) return err('not_configured')
@@ -1279,6 +1334,7 @@ export class SignInCore {
     const { accountId, upstream: name, args } = req
     if (typeof name !== 'string' || !UPSTREAM_TOOL.test(name)) return err('invalid_args', 'upstream')
     if (typeof args !== 'object' || args === null || Array.isArray(args)) return err('invalid_args', 'args')
+    if (isConnectionAccount(accountId)) return err('not_configured')
     if ((await this.#kind(accountId)) !== 'oauth_mcp') return err('not_configured')
     const p = await this.#provider(accountId)
     if (!p) return err('not_configured')
@@ -1342,6 +1398,7 @@ export class SignInCore {
 
   /** Readiness, then a usable token (refreshed first when it expired), for the Slack account only. */
   async #slackGate(accountId: string): Promise<HubResult<{ token: string; upstream: Upstream }>> {
+    if (isConnectionAccount(accountId)) return err('not_configured')
     if ((await this.#kind(accountId)) !== 'oauth_mcp') return err('not_configured')
     const p = await this.#provider(accountId)
     if (!p || p.connector.id !== 'slack') return err('not_configured')
@@ -1471,6 +1528,326 @@ export class SignInCore {
     if (out.kind !== 'ok') return this.#webError(out)
     const ts = out.body.ts
     return typeof ts === 'string' && /^\d{1,12}\.\d{1,8}$/.test(ts) ? ok({ ts }) : err('upstream_unavailable')
+  }
+
+  // ======================================================================================================
+  // Stage 1 M4-R1 (N35): a connection's record (v3) and connectionCall. The record's rules are connections/record.ts's;
+  // each method below reads and writes it with no await between the read and the put.
+  // ======================================================================================================
+
+  /** The stored v3 record or tombstone for this account, or null (none, or a v1 or v2 record: refused by the callers). */
+  /**
+   * The stored v3 record or tombstone for this account, or null (none, or a v1 or v2 record: refused by the callers).
+   * Throws when this object holds another account's connection (#734): a request for one account never reads, let alone
+   * replaces, another's record (the handler answers `internal`).
+   */
+  #stored(accountId: string): StoredConnection | null {
+    const raw = this.#d.store.get<unknown>(RECORD)
+    if (!isStoredConnection(raw)) return null
+    if (raw.accountId !== accountId) {
+      log('hub_internal', { accountId, code: 'account_mismatch' })
+      throw new Error("another account's connection record")
+    }
+    return raw
+  }
+
+  /** The live record (not a tombstone), or null. */
+  #connection(accountId: string): ConnectionRecord | null {
+    const s = this.#stored(accountId)
+    return s && !s.removed ? s : null
+  }
+
+  /**
+   * The only write of a v3 record: whole, checked (its shape and caps, and the change from what is stored: record.ts
+   * `checkTransition`), one put. Throws on a record that fails either check.
+   */
+  #putConnection(r: StoredConnection): void {
+    const c = checkRecord(r)
+    const t = checkTransition(this.#d.store.get<unknown>(RECORD), r)
+    if (!c.ok || !t.ok) {
+      log('hub_internal', { accountId: r.accountId, code: 'connection_record_refused' })
+      throw new Error('a connection record failed its check')
+    }
+    this.#d.store.put(RECORD, r)
+  }
+
+  /** The DNS half of the address check; absent, every name is refused (fail closed). */
+  #resolvePublic(): ResolvePublic {
+    return this.#d.resolvePublic ?? (async () => false)
+  }
+
+  /** Whether this object holds a v1 or v2 record (a connection never takes its place). */
+  #holdsOtherRecord(): boolean {
+    const raw = this.#d.store.get<unknown>(RECORD)
+    return raw !== undefined && !isStoredConnection(raw)
+  }
+
+  /**
+   * Route 161's object half: a new record (untrusted, no credential, the first generation after any abandoned prepare).
+   * The same request on a record that already exists answers it again (so a prepare that crashed before its index write
+   * can be retried); another request is refused. A removed slug is never prepared again.
+   */
+  async prepareConnection(req: { accountId: string; slug: string; adminMaySignIn: boolean; binding: ConnectionBindingInput; memberId: string }): Promise<HubResult<{ view: ConnectionView; fresh: boolean }>> {
+    if (typeof req !== 'object' || req === null || !isConnectionAccount(req.accountId) || req.accountId !== `mcp:${req.slug}`) return err('invalid_args', 'accountId')
+    if (typeof req.memberId !== 'string' || req.memberId.length === 0 || typeof req.adminMaySignIn !== 'boolean') return err('invalid_args')
+    if (this.#holdsOtherRecord()) return err('invalid_args', 'account')
+    const stored = this.#stored(req.accountId)
+    if (stored && !stored.removed) {
+      const asked = bindingOf(req.binding)
+      const same = sameBinding(stored.binding, asked) && stored.adminMaySignIn === req.adminMaySignIn && JSON.stringify(stored.binding.settings) === JSON.stringify(asked.settings)
+      return same ? ok({ view: viewOf(stored), fresh: false }) : err('invalid_args', 'exists')
+    }
+    if (stored?.removed && stored.reason === 'removed') return err('invalid_args', 'slug_removed')
+    const r = preparedRecord({ slug: req.slug, input: req.binding, adminMaySignIn: req.adminMaySignIn, memberId: req.memberId, nowMs: this.#d.now(), after: stored })
+    this.#putConnection(r)
+    return ok({ view: viewOf(r), fresh: true })
+  }
+
+  /**
+   * A prepare's index write succeeded: marked here, in this record's generation. From then on no prepare the cap refused
+   * may abandon it. False when the record is gone or another generation (the caller unlists and answers stale).
+   */
+  async markListed(accountId: string, generation: number): Promise<HubResult<{ listed: boolean }>> {
+    const r = this.#connection(accountId)
+    if (!r || r.generation !== generation) return ok({ listed: false })
+    if (!r.listed) this.#putConnection({ ...r, listed: true })
+    return ok({ listed: true })
+  }
+
+  /**
+   * A prepare the index refused (the cap): tombstoned as abandoned, only while it is that generation, still unlisted
+   * (no prepare that joined it has listed it) and holds nothing.
+   */
+  async abandonConnection(accountId: string, generation: number): Promise<HubResult<{ abandoned: boolean }>> {
+    const r = this.#connection(accountId)
+    if (!r || r.generation !== generation || r.listed || r.key || r.client || r.token || r.refresh) return ok({ abandoned: false })
+    this.#putConnection(tombstoneOf(r, 'abandoned', this.#d.now(), true))
+    return ok({ abandoned: true })
+  }
+
+  async getConnection(accountId: string): Promise<HubResult<ConnectionView>> {
+    const r = this.#connection(accountId)
+    return r ? ok(viewOf(r)) : err('unknown_tool')
+  }
+
+  async connectionSummary(accountId: string): Promise<HubResult<ConnectionSummary>> {
+    const r = this.#connection(accountId)
+    return r ? ok(summaryOf(r)) : err('unknown_tool')
+  }
+
+  /** Route 163's object half: against the `policyRev` the caller last read; any change bumps it. */
+  async updateConnection(req: { accountId: string; ifRev: number; adminMaySignIn?: boolean; settings?: Record<string, string> }): Promise<HubResult<ConnectionView>> {
+    if (typeof req !== 'object' || req === null) return err('invalid_args')
+    const r = this.#connection(req.accountId)
+    if (!r) return err('unknown_tool')
+    if (r.policyRev !== req.ifRev) return err('connect_stale', 'ifRev')
+    const next = withPolicy(r, { ...(req.adminMaySignIn !== undefined ? { adminMaySignIn: req.adminMaySignIn } : {}), ...(req.settings !== undefined ? { settings: req.settings } : {}) })
+    if (next !== r) this.#putConnection(next)
+    return ok(viewOf(next))
+  }
+
+  /**
+   * Route 171's object half: in one synchronous step the record becomes a tombstone (a new generation and policy
+   * revision, so every call in flight stops at its next check; no credential). Then what it held is revoked where it can
+   * be (the `revoke` hook), and the outcome noted on the tombstone if it's still the same one. A slug never prepared
+   * is left as it is (generation 0, nothing written). Removing a removed connection changes nothing.
+   */
+  async removeConnection(accountId: string): Promise<HubResult<{ revoked: boolean; generation: number }>> {
+    if (!isConnectionAccount(accountId)) return err('invalid_args', 'accountId')
+    if (this.#holdsOtherRecord()) return err('invalid_args', 'account')
+    const stored = this.#stored(accountId)
+    // Never prepared: nothing to remove, and the slug stays free (generation 0 tells the gateway so).
+    if (!stored) return ok({ revoked: true, generation: 0 })
+    if (stored.removed && stored.reason === 'removed') return ok({ revoked: stored.revoked, generation: stored.generation })
+    if (stored.removed) {
+      // An abandoned prepare (never listed, nothing held): removed for good now.
+      const t: ConnectionTombstone = { ...stored, reason: 'removed', generation: stored.generation + 1, policyRev: stored.policyRev + 1, removedAtMs: this.#d.now() }
+      this.#putConnection(t)
+      return ok({ revoked: t.revoked, generation: t.generation })
+    }
+    const captured = { key: stored.key, client: stored.client, token: stored.token, refresh: stored.refresh }
+    const held = Object.values(captured).some(e => e !== null)
+    const t: ConnectionTombstone = tombstoneOf(stored, 'removed', this.#d.now(), !held)
+    this.#putConnection(t)
+    try {
+      await this.#d.alarm.delete()
+    } catch {
+      log('hub_internal', { accountId, code: 'alarm_op', generation: t.generation })
+    }
+    if (!held) return ok({ revoked: true, generation: t.generation })
+    const revoked = await this.#revokeCaptured(accountId, stored, captured)
+    const now = this.#stored(accountId)
+    if (now?.removed && now.generation === t.generation) this.#putConnection({ ...now, revoked })
+    return ok({ revoked, generation: t.generation })
+  }
+
+  async #revokeCaptured(accountId: string, r: ConnectionRecord, captured: { key: Envelope | null; client: Envelope | null; token: Envelope | null; refresh: Envelope | null }): Promise<boolean> {
+    try {
+      const revoked = await (this.#d.connectionHooks ?? defaultConnectionHooks).revoke({
+        accountId,
+        binding: r.binding,
+        captured,
+        keyring: () => this.#d.keyring(),
+        send: guardedSender({ destinations: () => r.binding.destinations, upstream: () => this.#d.upstream(), resolvePublic: this.#resolvePublic(), bound: true }),
+        resolvePublic: this.#resolvePublic(),
+      })
+      if (!revoked) log('revoke_failed', { accountId, generation: r.generation })
+      return revoked
+    } catch {
+      log('revoke_failed', { accountId, generation: r.generation })
+      return false
+    }
+  }
+
+  /** Disconnect (route 72) on a connection: every credential dropped, a new generation, back to waiting for one. */
+  async #disconnectConnection(accountId: string): Promise<HubResult<{ generation: number; revoked: boolean }>> {
+    const r = this.#connection(accountId)
+    if (!r) return err('unknown_tool')
+    const captured = { key: r.key, client: r.client, token: r.token, refresh: r.refresh }
+    const next = withoutCredential(r)
+    this.#putConnection(next)
+    const held = Object.values(captured).some(e => e !== null)
+    return ok({ generation: next.generation, revoked: held ? await this.#revokeCaptured(accountId, r, captured) : true })
+  }
+
+  /** Pause (route 71) on a connection: a policy change, so `policyRev` rises and any call in flight stops. */
+  async #pauseConnection(accountId: string, paused: boolean): Promise<HubResult<{ paused: boolean }>> {
+    const r = this.#connection(accountId)
+    if (!r) return err('unknown_tool')
+    const next = withPolicy(r, { paused })
+    if (next !== r) this.#putConnection(next)
+    return ok({ paused })
+  }
+
+  /** Key rotation on a connection: each envelope re-sealed if it is still the one opened. Not a credential change. */
+  async #reencryptConnection(accountId: string): Promise<HubResult<{ kid: string; changed: boolean }>> {
+    const ring = await this.#d.keyring()
+    if (!ring.ok) return err('key_unavailable')
+    if (!this.#stored(accountId)) return ok({ kid: ring.ring.current, changed: false })
+    let changed = false
+    for (const field of ['key', 'client', 'token', 'refresh'] as const) {
+      const r = this.#connection(accountId)
+      if (!r) break
+      const before = r[field]
+      if (!before || before.kid === ring.ring.current) continue
+      const opened = await open(ring.ring, accountId, field, before)
+      if (!opened.ok) {
+        log(opened.reason === 'key_missing' ? 'signin_key_missing' : 'hub_internal', { accountId, kid: before.kid, code: 'key_unavailable' })
+        return err('key_unavailable')
+      }
+      const resealed = await seal(ring.ring, accountId, field, opened.plaintext)
+      const now = this.#connection(accountId)
+      if (!now || !sameEnvelope(now[field], before)) {
+        log('signin_grant_discarded', { accountId, kid: resealed.kid })
+        continue
+      }
+      this.#putConnection({ ...now, [field]: resealed })
+      log('signin_reencrypt', { accountId, kid: resealed.kid, generation: now.generation })
+      changed = true
+    }
+    const after = this.#connection(accountId)
+    const envelopes = after ? [after.key, after.client, after.token, after.refresh] : []
+    const stale = envelopes.find(e => e && e.kid !== ring.ring.current)
+    return ok({ kid: stale?.kid ?? ring.ring.current, changed })
+  }
+
+  /** A connection's AccountStatus (N35): its state in H0's four words, and `kind: 'mcp_runtime'`. */
+  #connectionStatus(accountId: string): HubResult<AccountStatus> {
+    if (this.#holdsOtherRecord()) return err('internal')
+    const s = this.#stored(accountId)
+    const base: AccountStatus = {
+      accountId, state: 'empty', kid: null, expiresAt: null, scopes: [], lastError: null, paused: false, kind: 'mcp_runtime', connectedBy: null, connectedAt: null, revokeFailedAt: null, needsReconnect: false,
+    }
+    if (!s) return ok(base)
+    if (s.removed) return ok({ ...base, state: 'disconnected', revokeFailedAt: s.revoked ? null : instant(s.removedAtMs) })
+    const STATE: Record<ConnectionState, SignInState> = { waiting_signin: 'empty', waiting_key: 'empty', needs_review: 'active', live: 'active', unavailable: 'active', sign_in_again: 'failed', needs_key: 'failed' }
+    return ok({
+      ...base,
+      state: STATE[s.state],
+      kid: (s.key ?? s.token ?? s.refresh ?? s.client)?.kid ?? null,
+      lastError: s.lastError ? { code: s.lastError.code, at: instant(s.lastError.atMs) } : null,
+      paused: s.paused,
+      connectedBy: s.preparedBy,
+      connectedAt: instant(s.preparedAtMs),
+      needsReconnect: s.state === 'sign_in_again' || s.state === 'needs_key',
+    })
+  }
+
+  /** What connectionCall gets from this object (connections/call.ts). */
+  /**
+   * One synchronous re-read, check and put. `call`: a call's write (afterCall), held to the whole call fence, pause
+   * included. `op`: an operation on the record (objectOps), held to the record's half only, so it works while paused.
+   */
+  #commit(accountId: string, fence: Fence, change: (r: ConnectionRecord) => ConnectionRecord, kind: 'call' | 'op'): ConnectionRecord | null {
+    const r = this.#connection(accountId)
+    if ((kind === 'call' ? stopCode(r, fence) : changeCode(r, fence)) !== null) return null
+    const next = change(r!)
+    this.#putConnection(next)
+    return next
+  }
+
+  #callHost(accountId: string): CallHost {
+    return {
+      accountId,
+      read: () => this.#connection(accountId),
+      commit: (fence, change) => this.#commit(accountId, fence, change, 'call'),
+      now: () => this.#d.now(),
+      upstream: () => this.#d.upstream(),
+      resolvePublic: this.#resolvePublic(),
+      keyring: () => this.#d.keyring(),
+      eras: this.#eras,
+      hooks: this.#d.connectionHooks ?? defaultConnectionHooks,
+      ...(this.#d.callTimeoutMs !== undefined ? { timeoutMs: this.#d.callTimeoutMs } : {}),
+    }
+  }
+
+  /** The one call into a connection (N35): connections/call.ts over this object's record. */
+  async connectionCall(accountId: string, req: ConnectionCallRequest): Promise<CallResult> {
+    if (!isConnectionAccount(accountId)) return { ok: false, error: { code: 'invalid_args', message: 'invalid arguments: accountId' }, sent: 'no' }
+    if (typeof req !== 'object' || req === null || !['list', 'read', 'write'].includes((req as { kind?: unknown }).kind as string)) {
+      return { ok: false, error: { code: 'invalid_args', message: 'invalid arguments: req' }, sent: 'no' }
+    }
+    return runConnectionCall(this.#callHost(accountId), req)
+  }
+
+  /** An operation a later package runs inside this object (connections/hooks.ts `objectOps`); `not_built` until one does. */
+  async connectionOp(accountId: string, op: string, req: unknown): Promise<HubResult<unknown>> {
+    if (!isConnectionAccount(accountId) || typeof op !== 'string') return err('invalid_args')
+    const ops = this.#d.objectOps ?? defaultObjectOps
+    const fn = Object.hasOwn(ops, op) ? ops[op] : undefined
+    if (!fn) return err('not_built', /^[a-zA-Z]{1,40}$/.test(op) ? op : undefined)
+    // Unusable until its prepare listed it (#733): no credential or trust lands on a record the index can't see.
+    const r = this.#connection(accountId)
+    if (!r) return err('unknown_tool')
+    if (!r.listed) return err('not_configured', 'unlisted')
+    const host = this.#callHost(accountId)
+    return fn({
+      accountId,
+      read: host.read,
+      commit: (fence, change) => this.#commit(accountId, fence, change, 'op'),
+      now: host.now,
+      keyring: host.keyring,
+      // The record's destinations as they are at each send (a rebind between two sends narrows the next one).
+      send: guardedSender({ destinations: () => this.#connection(accountId)?.binding.destinations ?? null, upstream: host.upstream, resolvePublic: host.resolvePublic, bound: true }),
+      resolvePublic: host.resolvePublic,
+      call: req2 => runConnectionCall(host, req2),
+    }, req)
+  }
+
+  // ---------- the `__connections__` object (connections/index.ts); signin.ts lets only that object call these ----------
+
+  async indexAdd(entry: { accountId: string; slug: string; generation: number }): Promise<HubResult<IndexAdd>> {
+    if (typeof entry !== 'object' || entry === null || !isConnectionAccount(entry.accountId) || entry.accountId !== `mcp:${entry.slug}` || !Number.isSafeInteger(entry.generation) || entry.generation < 1) return err('invalid_args')
+    return ok(indexAdd(this.#d.store, { accountId: entry.accountId, slug: entry.slug, generation: entry.generation }, this.#d.now()))
+  }
+
+  async indexRemove(accountId: string, upTo: number | null): Promise<HubResult<{ removed: boolean }>> {
+    if (!isConnectionAccount(accountId) || (upTo !== null && !Number.isSafeInteger(upTo))) return err('invalid_args')
+    return ok({ removed: indexRemove(this.#d.store, accountId, upTo) })
+  }
+
+  async indexList(): Promise<HubResult<IndexEntry[]>> {
+    return ok(indexList(this.#d.store))
   }
 }
 

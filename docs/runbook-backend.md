@@ -210,6 +210,8 @@ its container applications behind, so the script must:
 2. Pause the brand and take a final backup, and check that backup proves.
 3. **Verify the account and list the container applications before** the teardown. Review and record their IDs.
 4. Recheck the account and the reviewed ID set, then delete each container application **explicitly**, one by one.
+   Before the hub goes, call `ServerGateway.teardownConnections(scope)`: it walks the connections index and removes
+   each connection by address (revoking what it can), and answers one row per connection with its code.
 5. Delete the Workers, the Durable Object classes, D1, R2 prefixes or buckets, queues and secrets, in the order the
    dependencies need.
 6. Remove the Access applications, the DNS records and the custom domain.
