@@ -375,3 +375,25 @@ describe('the off stand-in (failure 8)', () => {
     expect(OFF_CANARY).toBe('')
   })
 })
+
+// Stage 1 M3-J: the egress record for the forced-fetch leak case. Ways it could fail: rows before `after` come back, the
+// order isn't the record's, a row carries more than its host, verdict and code, or a malformed `after` is taken.
+describe('egress: the web egress record after a row', () => {
+  it('answers the rows after `after`, oldest first, with the newest row\'s number; a bad `after` is 400', async () => {
+    const at = 2_100_000_000_000
+    const insert = (host: string, code: string | null) =>
+      db.prepare("INSERT INTO egress_fetches (at_ms, host, verdict, code, runner, container_gen) VALUES (?, ?, ?, ?, 'runner-x', 7)").bind(at, host, code === null ? 'allowed' : 'refused', code).run()
+    const before = await runTestFakes({ op: 'egress' }, envWith({}))
+    expect(before.status).toBe(200)
+    const mark = (before.body as { top: number }).top
+    await insert('example.com', null)
+    await insert('example.org', 'leak')
+    const after = await runTestFakes({ op: 'egress', after: mark }, envWith({}))
+    expect(after).toEqual({ status: 200, body: { top: mark + 2, rows: [
+      { n: mark + 1, host: 'example.com', verdict: 'allowed', code: null },
+      { n: mark + 2, host: 'example.org', verdict: 'refused', code: 'leak' },
+    ] } })
+    expect(((await runTestFakes({ op: 'egress', after: mark + 1 }, envWith({}))).body as { rows: unknown[] }).rows).toHaveLength(1)
+    for (const bad of [-1, 1.5, '3']) expect((await runTestFakes({ op: 'egress', after: bad }, envWith({}))).status, String(bad)).toBe(400)
+  })
+})
