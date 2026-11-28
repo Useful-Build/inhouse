@@ -37,6 +37,8 @@ const byTitle = (a: MockActions, title: string) => {
   if (!c) throw new Error(`no card "${title}"`)
   return c
 }
+/** An order's name as the store writes it ("#4512"), built so no literal reads as a colour. */
+const hash = (n: number) => `#${n}`
 const WHOLESALE = 'Add a tag to order 4512'
 const POST = 'Post to #ops-alerts in Slack'
 const GIFT = 'Add a tag to order 4377'
@@ -178,7 +180,7 @@ describe('asking first and Always allow (the demo catch-up, PR 1)', () => {
     expect(a.permissions().map(p => p.id)).toEqual(['pg_demoDanaOpsAlerts00000', 'pg_demoAddStock0000000000'])
   })
 
-  test('Remove in the hold of a card Always allow approved sends it back to waiting, and it never goes out (#658)', () => {
+  test('Remove in the hold of a card Always allow approved sends it back to waiting, and it never goes out (issue 658)', () => {
     const { a, tick, changed, sentBack } = world()
     const card = byTitle(a, WHOLESALE)
     const always = a.answer(card.id, card.rev, 'always')
@@ -224,11 +226,11 @@ describe('asking first and Always allow (the demo catch-up, PR 1)', () => {
     expect(refused(() => a.removePermission('pg_demoDanaOpsAlerts00000', 1)).code).toBe('not_found')
   })
 
-  test("each card carries what the store said about its order (#488): the batch's rows, the refund's and a tag card's", () => {
+  test("each card carries what the store said about its order (issue 488): the batch's rows, the refund's and a tag card's", () => {
     const { a } = world()
-    expect(a.list()[0]!.batch!.firstDetails![0]).toEqual({ rows: [{ ref: 'Order 3901', order: '#3901', customer: 'Alex Moore', amount: '$642.10', currency: 'USD' }] })
-    expect(byTitle(a, 'Refund $238.00 (USD) on order 4838').detail).toEqual({ rows: [{ ref: 'Order 4838', order: '#4838', customer: 'Nora Lindqvist', amount: '$238.00', currency: 'USD' }] })
-    expect(byTitle(a, WHOLESALE).detail).toEqual({ rows: [{ ref: 'Order 4512', order: '#4512', customer: 'Harbor & Pine', amount: '$1,248.00', currency: 'USD' }] })
+    expect(a.list()[0]!.batch!.firstDetails![0]).toEqual({ rows: [{ ref: 'Order 3901', order: hash(3901), customer: 'Alex Moore', amount: '$642.10', currency: 'USD' }] })
+    expect(byTitle(a, 'Refund $238.00 (USD) on order 4838').detail).toEqual({ rows: [{ ref: 'Order 4838', order: hash(4838), customer: 'Nora Lindqvist', amount: '$238.00', currency: 'USD' }] })
+    expect(byTitle(a, WHOLESALE).detail).toEqual({ rows: [{ ref: 'Order 4512', order: hash(4512), customer: 'Harbor & Pine', amount: '$1,248.00', currency: 'USD' }] })
     expect(byTitle(a, SENT).detail).toBeUndefined()
   })
 

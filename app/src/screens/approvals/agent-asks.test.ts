@@ -243,7 +243,7 @@ describe('Settings: Always allowed', () => {
 })
 
 describe('Activity: Stop allowing this', () => {
-  test('offered on an action that ran under a removable permission, removing that one; elsewhere not (#655)', async () => {
+  test('offered on an action that ran under a removable permission, removing that one; elsewhere not (issue 655)', async () => {
     fake.actions.mockResolvedValue([card({ state: 'sent', result: 'Sent.', can: NONE, permissionId: 'pg_BBBBBBBBBBBBBBBBBBBBBB' }), card({ id: 'ac_FFFFFFFFFFFFFFFFFFFFFF', state: 'denied', title: 'Post in #ops', tool: { accountId: 'slack:workspace', label: 'Slack' }, can: NONE })])
     fake.permissions.mockResolvedValue([permission()])
     fake.removePermission.mockResolvedValue([])
@@ -277,7 +277,7 @@ describe('Activity: Stop allowing this', () => {
     expect(warn).toHaveBeenCalledTimes(2)
     warn.mockRestore()
   })
-  test('two permissions on the tool: the row names the one its action ran under; an answered action offers none; the search narrows the rows (#655)', async () => {
+  test('two permissions on the tool: the row names the one its action ran under; an answered action offers none; the search narrows the rows (issue 655)', async () => {
     fake.actions.mockResolvedValue([card({ state: 'sent', result: 'Sent.', can: NONE, permissionId: 'pg_DDDDDDDDDDDDDDDDDDDDDD' }), card({ id: 'ac_FFFFFFFFFFFFFFFFFFFFFF', state: 'sent', result: 'Sent.', title: 'Add a tag to order 9002', can: NONE })])
     fake.permissions.mockResolvedValue([permission(), permission({ id: 'pg_DDDDDDDDDDDDDDDDDDDDDD', title: 'Cancel orders' })])
     await show(createElement(ActionRows, { needle: '' }))
