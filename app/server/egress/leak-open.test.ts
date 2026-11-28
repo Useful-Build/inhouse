@@ -5,7 +5,7 @@
 // request that would leave is seen here. And it runs with the brand's settings as a new brand has them, no fetch mode
 // and no host list, so it proves M3-J's default (`open`) is the mode the egress decides by. Ways it could fail:
 //  1. the default with no mode and no list isn't `open` (the control fetch to an unlisted host is refused), or a mode
-//     set to `list`, or hosts listed, or a bad stored mode, reads as `open`;
+//     set to `list`, or hosts listed, or a list saved empty (#744: blocks), or a bad stored mode, reads as `open`;
 //  2. the order's name, read through the hub, goes out in the path or the query: anything but `leak`, or a DNS lookup
 //     or a page request before the refusal, or no `refused leak` row in the egress record;
 //  3. a header carrying the name reaches the host (the egress sends only its own fixed headers);
@@ -74,10 +74,11 @@ beforeEach(async () => {
 })
 
 describe('the fetch mode a brand gets (M3-J, failure 1)', () => {
-  it('no mode and no host list is open; an empty list is too; a list, `list` set, or a bad mode or list is the list', async () => {
+  it('no mode and no list row is open; a saved list (empty included, #744), `list` set, or a bad mode or list is the list', async () => {
     expect(await storedFetchMode(db)).toBe('open')
+    // A list saved empty on purpose ("Leave empty to block all websites") is a row, so it blocks.
     await setting('t:webfetch', '')
-    expect(await storedFetchMode(db)).toBe('open')
+    expect(await storedFetchMode(db)).toBe('list')
     await setting('t:webfetch', 'docs.example.com')
     expect(await storedFetchMode(db)).toBe('list')
     await setting('t:webfetch', '')
@@ -90,11 +91,23 @@ describe('the fetch mode a brand gets (M3-J, failure 1)', () => {
     await setting('t:webfetch_mode', 'open')
     await setting('t:webfetch', 'docs.example.com')
     expect(await storedFetchMode(db)).toBe('open')
+    await setting('t:webfetch', '')
+    expect(await storedFetchMode(db), 'open with a saved empty list').toBe('open')
     await clearWebSettings()
     for (const brokenList of ['not a list!', 7]) {
       await setting('t:webfetch', brokenList)
       expect(await storedFetchMode(db), String(brokenList)).toBe('list')
     }
+  })
+
+  it('a list saved empty refuses every fetch at the egress (blocked, as the Settings screen says), while a brand with no row still fetches', async () => {
+    await setting('t:webfetch', '')
+    const blocked = await webFetch(new Request(LEAK_OPEN_URLS.control))
+    expect([blocked.res.status, blocked.body]).toEqual([403, 'WebFetch refused: not_listed'])
+    expect(blocked.requests).toEqual([])
+    await clearWebSettings()
+    const open = await webFetch(new Request(LEAK_OPEN_URLS.control))
+    expect(open.res.status).toBe(200)
   })
 })
 

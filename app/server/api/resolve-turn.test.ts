@@ -26,8 +26,12 @@ describe('resolveTurnSettings (F)', () => {
       model: 'claude-sonnet-5-5', pickerId: 'sonnet', effort: 'medium', sideModel: 'claude-haiku-5-5', maxTurns: 25, webFetchDomains: null, webSearch: false,
       subagentModel: 'claude-sonnet-5-5',
     })
-    for (const list of [{ 't:webfetch': '' }, { 't:webfetch': null }, { 't:webfetch': '', 't:webfetch_mode': null }])
+    // A brand that never set a list is open: no row, or a value reset to null.
+    for (const list of [{ 't:webfetch': null }, { 't:webfetch': null, 't:webfetch_mode': null }, { 't:webfetch_mode': null }])
       expect(await resolveTurnSettings(store(list), 'sonnet'), JSON.stringify(list)).toMatchObject({ webFetchDomains: null, webSearch: false })
+    // #744: a list saved empty on purpose ("Leave empty to block all websites") stays blocked with no mode set, as with a null mode.
+    for (const list of [{ 't:webfetch': '' }, { 't:webfetch': '', 't:webfetch_mode': null }])
+      expect(await resolveTurnSettings(store(list), 'sonnet'), JSON.stringify(list)).toMatchObject({ webFetchDomains: [], webSearch: false })
     // The Inhouse team can still keep a brand to no host: `list` set on purpose with an empty or missing list.
     for (const list of [{ 't:webfetch': '' }, {}]) expect(await resolveTurnSettings(store({ ...list, 't:webfetch_mode': 'list' }), 'sonnet'), JSON.stringify(list)).toMatchObject({ webFetchDomains: [] })
     // A host list that breaks the rule is a list, not "no list": none, fail closed.

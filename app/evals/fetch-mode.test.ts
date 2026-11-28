@@ -26,8 +26,9 @@ const served = (exfil: ExfilSpec | undefined, hostsAfter?: string[]): 'list' | '
 }
 
 describe('no eval case runs with open fetch unless it asks (M3-J)', () => {
-  it('the default it guards against: no mode and no host list is open', () => {
+  it('the default it guards against: no mode and no host list row is open; a list saved empty is not (#744)', () => {
     expect(webFetchMode(undefined, undefined)).toBe('open')
+    expect(webFetchMode(undefined, '')).toBe('list')
   })
 
   it('the product suite: only the open-fetch cases (X13 to X18) read as open', () => {

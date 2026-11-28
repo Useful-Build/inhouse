@@ -120,12 +120,19 @@ describe('route 29: send a turn', () => {
     })
   })
 
-  it('an empty t:webfetch with no mode is any public host (M3-J, JSON null), web search is off, and the default maxTurns is 25', async () => {
-    await setting('t:webfetch', '')
+  it('no t:webfetch row and no mode is any public host (M3-J, JSON null), web search is off, and the default maxTurns is 25', async () => {
     const id = `c-${uniq()}`
     await chat(id, alice)
     const r = await send(sendPriced, alice, id, { clientTurnKey: key(), text: 'hi', model: 'haiku' })
     expect(await turnRow(r.body.turnId as string)).toMatchObject({ model: 'claude-haiku-5-5', effort: 'low', max_turns: 25, web_fetch_json: 'null', web_search: null })
+  })
+
+  it('a t:webfetch saved empty with no mode is no host ([], #744): "Leave empty to block all websites" holds', async () => {
+    await setting('t:webfetch', '')
+    const id = `c-${uniq()}`
+    await chat(id, alice)
+    const r = await send(sendPriced, alice, id, { clientTurnKey: key(), text: 'hi', model: 'haiku' })
+    expect(await turnRow(r.body.turnId as string)).toMatchObject({ max_turns: 25, web_fetch_json: '[]', web_search: null })
   })
 
   it('an empty t:webfetch with the mode set to list is no host ([]): the Inhouse team can still keep a brand to none (P8a S)', async () => {

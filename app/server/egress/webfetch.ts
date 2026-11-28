@@ -1,10 +1,10 @@
 // The WebFetch egress (HTTPS catch-all, p3-design 8.8 and 6.2): a session's web reads, best effort. GET and HEAD only,
 // no body, cookies or authorization forwarded, port 443 only. Two modes (M3-F, N29), resolved by `webFetchMode` from the
 // Inhouse team's `t:webfetch_mode` and the brand's `t:webfetch` list:
-//  - `list`: only an exact host on the brand's `t:webfetch` list (an empty list, set to `list` on purpose, is no host);
-//    the default for a brand with hosts listed;
+//  - `list`: only an exact host on the brand's `t:webfetch` list (an empty list is no host, saved on purpose or set to
+//    `list`); the default for a brand that saved a list, an empty one included (#744);
 //  - `open`: any public host name (a valid DNS name of two or more labels, never an address literal); the default for a
-//    brand with no host list since M3-J. Every other check stays: the off switch, scheme, port, the leak check before
+//    brand that never saved a host list since M3-J. Every other check stays: the off switch, scheme, port, the leak check before
 //    DNS, DNS and the private-address block, on every hop.
 // Every host is resolved first through DNS over HTTPS to a pinned resolver, and any non-public answer refuses it; address
 // literals are judged directly. Redirects: at most 3, each hop checked the same way. Response bytes capped at 10 MB.
@@ -248,8 +248,8 @@ async function storedHostList(db: D1Database): Promise<string | null> {
 }
 
 /**
- * The brand's fetch mode now (M3-F, `webFetchMode`): its `t:webfetch_mode` when set, else `open` with no host listed and
- * `list` with hosts listed (M3-J). Both rows are read in one query, so the mode and the list it was decided on agree.
+ * The brand's fetch mode now (M3-F, `webFetchMode`): its `t:webfetch_mode` when set, else `open` for a brand that never saved
+ * a host list (no row) and `list` for one that did, an empty list included (M3-J, #744). Both rows are read in one query, so the mode and the list it was decided on agree.
  */
 export async function storedFetchMode(db: D1Database): Promise<WebFetchMode> {
   const rows = await db.prepare("SELECT key, value_json FROM settings WHERE owner = 'brand' AND key IN ('t:webfetch_mode', 't:webfetch')").all<{ key: string; value_json: string }>()

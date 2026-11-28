@@ -1,9 +1,10 @@
 // The "Websites it may open" field (`t:webfetch`, a host list). Ways it could fail, written first:
 //  - a value the server refuses is saved from here (a URL, a single word, an IP address, more than 50 hosts), so the save fails after it showed;
 //  - a tidy-up that changes what the person meant (case, commas, repeats) or keeps a blank line the server refuses;
-//  - an empty list refused: empty is valid and means any public website (design 4.9);
-//  - (M3-J) the row's words or read-only text say an empty list blocks every website while it doesn't (no mode set: any
-//    public website), or say any public website while the Inhouse team set the mode to `list`.
+//  - an empty list refused: empty is valid and means no website (P8a S, #744: a saved empty list blocks, only a brand that
+//    never saved a list is open);
+//  - (M3-J) the row's words or read-only text disagree with the server's `webFetchMode`: "Any public website" while the
+//    server reads `list` (a saved empty list, the mode set to `list`, an invalid mode: #744, #745), or the reverse.
 // The expected values are written out here.
 import { describe, expect, it, vi } from 'vitest'
 
@@ -16,7 +17,7 @@ describe('checkField for a host list', () => {
     ['one host a line, lowercased', 'Example.com\nShop.Example.org', 'example.com\nshop.example.org'],
     ['commas, spaces and blank lines as line breaks', 'a.example.com, b.example.com  c.example.com\n\n', 'a.example.com\nb.example.com\nc.example.com'],
     ['a host written twice once', 'a.example.com\nA.example.com', 'a.example.com'],
-    ['nothing at all: any public website', '   \n ', ''],
+    ['nothing at all: an empty list, which blocks every website', '   \n ', ''],
   ])('%s', (_n, raw, saved) => { expect(checkField('hosts', raw)).toEqual({ value: saved }) })
 
   it.each([
@@ -41,17 +42,31 @@ describe('the read-only text of the row (a phone)', () => {
 })
 
 describe('the web rows\' words follow the fetch mode (M3-J)', () => {
-  it('no mode: the list narrows, empty is any public website; `list`: empty blocks all; `open`: the list is unused', async () => {
+  it('no mode: no saved list is open, a saved list (even empty) blocks all but its hosts; `list`: the list; `open`: unused; an invalid mode is `list`', async () => {
     const { webFetchWords } = await import('./content')
     const { webFetchMode } = await import('../../../shared/contract/settings-table')
-    for (const [mode, hosts] of [[undefined, undefined], [undefined, ''], [null, ''], [undefined, 'a.example.com'], ['list', ''], ['list', 'a.example.com'], ['open', ''], ['open', 'a.example.com']] as const) {
+    const modes = [undefined, null, 'list', 'open', 'OPEN', 'any', true, 0, ''] as const
+    const lists = [undefined, null, '', 'a.example.com', 'not a list!', 7] as const
+    for (const mode of modes) for (const hosts of lists) {
       const w = webFetchWords(mode, hosts)
       const open = webFetchMode(mode, hosts) === 'open'
       const at = `${String(mode)} ${String(hosts)}`
       // Whatever the words, read-only says "Any public website" exactly when the server reads it as open.
       expect(w.readOnly === 'Any public website', at).toBe(open)
-      expect(/block all websites/.test(w.list), at).toBe(mode === 'list')
+      // "Leave empty to block all websites" whenever the list is what decides; never a promise that empty is open.
+      expect(/Leave empty to block all websites/.test(w.list), at).toBe(!open)
+      expect(/Leave empty to allow/.test(w.list), at).toBe(false)
     }
-    expect(webFetchWords(undefined, '').list).toBe('Enter one website name per line to allow only those. Leave empty to allow any public website.')
+  })
+
+  it('the words in each case', async () => {
+    const { webFetchWords } = await import('./content')
+    // No mode, no saved list (#744): open, and saving it empty says it blocks.
+    expect(webFetchWords(undefined, undefined).list).toBe('Until a list is saved, any public website is allowed. Enter one website name per line to allow only those. Saving it empty blocks all websites.')
+    // A saved empty list with no mode blocks (the screen's promise), not "any public website".
+    expect(webFetchWords(undefined, '')).toEqual({ read: 'Let your Inhouse agent open the websites listed below. Off blocks them all.', list: 'Enter one website name per line. Leave empty to block all websites.' })
+    // An invalid stored mode is what the server reads: the list (#745).
+    expect(webFetchWords('any', '')).toEqual(webFetchWords('list', ''))
+    expect(webFetchWords('any', undefined).readOnly).toBeUndefined()
   })
 })

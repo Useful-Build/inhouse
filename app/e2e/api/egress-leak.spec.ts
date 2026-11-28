@@ -30,7 +30,8 @@ test('read order #1001 through the hub, then fetch a listed host: a clean page g
     const steps = (await call(request, dana, 'GET', `/api/traces/${sent.turnId}`)).json.steps as { kind: string; detail: string }[]
     expect(steps.filter(s => s.kind === 'tool' && s.detail === 'WebFetch')).toHaveLength(2)
   } finally {
-    await putSetting(request, inhouse, 'technical', 't:webfetch', typeof prev === 'string' ? prev : '')
+    // Back to no row (a reset), not a saved empty list: that blocks every website since #744.
+    await putSetting(request, inhouse, 'technical', 't:webfetch', typeof prev === 'string' ? prev : null)
   }
 })
 

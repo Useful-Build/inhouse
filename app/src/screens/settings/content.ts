@@ -14,7 +14,7 @@ import { calendarOf, fmtAuditDay, fmtCapSetting, fmtDayWord, fmtMoney, fmtNearDa
 import { display, nowOf } from '../../state/display'
 import { AUDIT_CSV_HEADER, csvCell } from '../../../shared/csv'
 import { grantStatus } from './grant-status'
-import { DEFAULT_JOB_BUDGET_USD, HOSTLIST_MAX_HOSTS, MAX_JOB_BUDGET_USD, MAX_TURNS, MIN_JOB_BUDGET_USD, parseHostlist } from '../../../shared/contract/settings-table'
+import { DEFAULT_JOB_BUDGET_USD, HOSTLIST_MAX_HOSTS, MAX_JOB_BUDGET_USD, MAX_TURNS, MIN_JOB_BUDGET_USD, parseHostlist, webFetchMode } from '../../../shared/contract/settings-table'
 import { dataExportFileName, nextCleanupMs } from '../../../shared/contract/data-access'
 import { demoExport } from './demo-export'
 
@@ -322,19 +322,20 @@ export function exportRefused(e: unknown): string {
 }
 
 /**
- * What the web rows say (M3-F, N29; the default flipped by M3-J), from the Inhouse team's `t:webfetch_mode` as saved:
- * with none set, the list narrows reading to its hosts and an empty list leaves any public website open; set to `list`,
- * an empty list blocks every website; set to `open`, any public website, the list unused. `readOnly` is the host row's
- * text when read-only and its list isn't what decides (else the hosts, or "No websites").
+ * What the web rows say (M3-F, N29; the default flipped by M3-J), from the Inhouse team's `t:webfetch_mode` and
+ * `t:webfetch` as saved (undefined for no row). It decides with the server's own `webFetchMode`, so the words never
+ * disagree with what the agent can open: `open` set, or no mode and no list ever saved, is any public website (the list
+ * unused when `open` is set); everything else is the list, and an empty saved list blocks every website, an invalid
+ * mode included (#744, #745). `readOnly` is the host row's text when read-only and its list isn't what decides (else
+ * the hosts, or "No websites").
  */
 export function webFetchWords(mode: unknown, hosts: unknown): { read: string; list: string; readOnly?: string } {
-  if (mode === 'list') return { read: 'Let your Inhouse agent open the websites listed below. Off blocks them all.', list: 'Enter one website name per line. Leave empty to block all websites.' }
   if (mode === 'open') return { read: 'Let your Inhouse agent open any public website. Off blocks them all.', list: 'Your Inhouse team lets it open any public website, so this list isn’t used.', readOnly: 'Any public website' }
-  const empty = hosts === undefined || hosts === null || hosts === ''
+  if (webFetchMode(mode, hosts) === 'list') return { read: 'Let your Inhouse agent open the websites listed below. Off blocks them all.', list: 'Enter one website name per line. Leave empty to block all websites.' }
   return {
     read: 'Let your Inhouse agent open web pages. Off blocks them all.',
-    list: 'Enter one website name per line to allow only those. Leave empty to allow any public website.',
-    ...(empty ? { readOnly: 'Any public website' } : {}),
+    list: 'Until a list is saved, any public website is allowed. Enter one website name per line to allow only those. Saving it empty blocks all websites.',
+    readOnly: 'Any public website',
   }
 }
 
