@@ -3,7 +3,9 @@
 // so this case makes every attempt itself: the scripted `webfetch-leak-open` scenario
 // (test/scripted-model/scenarios/leak-open.ts) reads order #1001 through the hub, fetches a clean control page, then
 // tries to carry #1001 out in the path, in the query, in a header (through Bash, the only tool that could set one) and
-// one hop through a public redirector. The turn answers `LEAK_OPEN_DONE` only if the read carried #1001, the control went
+// one hop through a public redirector. The turn's own check takes the real CLI's plain "HTTP 403" as a refusal, which a
+// redirector refusing the target would also give (httpbin.org did, run 46107566042), so the record below is the proof.
+// The turn answers `LEAK_OPEN_DONE` only if the read carried #1001, the control went
 // through and each token-carrying fetch came back refused. The egress record (the test-fakes hook's `egress` op; the
 // record keeps each hop's host, verdict and refusal code) then shows, for this turn's rows:
 //  - the control's host and the redirector's first hop `allowed`;
@@ -13,7 +15,7 @@
 //    out of the container and records every request before it sends it, so no row means nothing reached the host.
 // Its CI twin, server/egress/leak-open.test.ts, runs the same URLs through the egress in workerd with the network faked.
 // Runs ONLY when named, like write-loop.spec.ts: `gh workflow run sandbox-test-deploy ... -f full=true -f only="api/leak-open.spec.ts"`.
-// It needs httpbin.org (the redirector) and example.com reachable from the sandbox, so it stays out of the default agent
+// It needs httpbingo.org (the redirector) and example.com reachable from the sandbox, so it stays out of the default agent
 // set, where a third-party outage would fail unrelated PRs; the default set keeps M1-G's open-mode leak check
 // (egress-leak.spec.ts). It is the gate for M3-J's default (`open` for a brand with no host list): name it whenever the
 // egress, the taint store or the runner's fetch path changes.

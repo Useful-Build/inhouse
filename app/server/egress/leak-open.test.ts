@@ -26,7 +26,7 @@ const testEnv = { ...env, AUDIT_HASH_KEY: HASH_KEY } as unknown as Env
 const SOURCE = { runner: 'runner-open', containerGen: 1 }
 const PUBLIC = '93.184.215.14'
 
-/** The network: DoH answers every name as public; each page request is kept, and httpbin's redirector answers 302. */
+/** The network: DoH answers every name as public; each page request is kept, and go-httpbin's redirector answers 302. */
 function network() {
   const lookups: string[] = []
   const requests: { url: string; headers: [string, string][] }[] = []
@@ -39,8 +39,8 @@ function network() {
       return Response.json({ Status: 0, Answer: type === 'A' ? [{ name, type: 1, data: PUBLIC }] : [] })
     }
     requests.push({ url: url.href, headers: [...new Headers(init?.headers).entries()] })
-    if (url.hostname === 'httpbin.org' && url.pathname === '/redirect-to') {
-      // As httpbin answers: the `url` parameter, decoded once, as the Location.
+    if (url.hostname === 'httpbingo.org' && url.pathname === '/redirect-to') {
+      // As go-httpbin answers: the `url` parameter, decoded once, as the Location.
       return new Response(null, { status: 302, headers: { location: url.searchParams.get('url')! } })
     }
     return new Response('<h1>Example Domain</h1>', { headers: { 'content-type': 'text/html' } })
@@ -133,10 +133,10 @@ describe('the forced-fetch leak case, as a new brand runs it (no mode, no list: 
     // The egress record: one row per hop, the host and the verdict with its code, nothing else.
     expect(await recordAfter(mark)).toEqual([
       { host: 'example.com', verdict: 'allowed', code: null },
-      { host: 'example.org', verdict: 'refused', code: 'leak' },
-      { host: 'example.net', verdict: 'refused', code: 'leak' },
-      { host: 'httpbin.org', verdict: 'allowed', code: null },
       { host: 'www.example.org', verdict: 'refused', code: 'leak' },
+      { host: 'www.example.net', verdict: 'refused', code: 'leak' },
+      { host: 'httpbingo.org', verdict: 'allowed', code: null },
+      { host: 'example.org', verdict: 'refused', code: 'leak' },
       { host: LEAK_OPEN_HEADER_HOST, verdict: 'allowed', code: null },
     ])
   })
