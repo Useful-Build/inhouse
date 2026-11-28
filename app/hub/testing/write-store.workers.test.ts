@@ -6,6 +6,7 @@
 //  3. a `timeout` write, logged before the fake hangs, is lost if the isolate restarts while it hangs;
 //  4. `reset` stops holding: its cleared logs come back after a restart, or it forgets the tokens (it keeps them);
 //  5. over any mix of requests and restarts, the restored fake differs from one that never restarted.
+// The kept copy from other code (#687) has its own list below.
 // Storage is an in-memory stand-in for the DO's SyncKvStorage (get, put, delete, list by prefix in key order, values
 // copied in and out as the DO's structured clone does); the last test runs the same binding on the DO's real storage.
 import { env, runInDurableObject } from 'cloudflare:test'
@@ -19,6 +20,7 @@ import {
   SHOPIFY_WRITE_TEST_CLIENT_ID,
   SHOPIFY_WRITE_TEST_CLIENT_SECRET,
   WRITE_LOG_NAMES,
+  writeStateVersion,
 } from '../../test/upstreams/shopify/write/server'
 import { TEST_FAKES_DO_NAME, upstreamFor } from '../signin/signin'
 import { bindWriteStore, WRITE_STORE_CORE_KEY, type FakeKv } from './write-store'
@@ -65,9 +67,9 @@ const gqlRequest = (token: string, key: string, variables: Record<string, unknow
 }
 const tagAdd = (token: string, tag: string, signal?: AbortSignal) =>
   gqlRequest(token, 'shopify.order.tag_add', { tags: [tag], id0: 'gid://shopify/Order/9001' }, signal)
-const restock = (token: string, idempotencyKey: string) =>
+const restock = (token: string, idempotencyKey: string, delta = 3) =>
   gqlRequest(token, 'shopify.inventory.restock', {
-    input: { name: 'available', reason: 'restock', changes: [{ inventoryItemId: 'gid://shopify/InventoryItem/8001', locationId: 'gid://shopify/Location/601', delta: 3, changeFromQuantity: null }] },
+    input: { name: 'available', reason: 'restock', changes: [{ inventoryItemId: 'gid://shopify/InventoryItem/8001', locationId: 'gid://shopify/Location/601', delta, changeFromQuantity: null }] },
     idempotencyKey,
   })
 
@@ -168,44 +170,143 @@ describe('the fake write store across a restart (#619)', () => {
     expect(c.seam.shopifyWrite.issuedTokens).toEqual([token])
   })
 
-  // Failure 5. Each step is a token request, a tag write with the newest token, a reset or a restart (a fresh fake
-  // bound to the same storage). A reference fake gets the same requests and never restarts; the two must match.
+  // Failure 5 (#688 widened it). Each step is a token request, a tag write with the newest token, an idempotent restock
+  // (one of three keys, one of two deltas: a key reused with another delta is the fake's error), a fault set outside a
+  // request (as the hook's `set`), a write with a token never issued, a document that doesn't parse, a GET, a reset or
+  // a restart (a fresh fake bound to the same storage). A reference fake gets the same requests and never restarts; the
+  // two must answer alike and end alike, and storage must hold the core and exactly one key per log entry.
   const step = fc.oneof(
     fc.constant({ kind: 'token' as const }),
     fc.constant({ kind: 'restart' as const }),
     fc.constant({ kind: 'reset' as const }),
+    fc.constant({ kind: 'badToken' as const }),
+    fc.constant({ kind: 'badDoc' as const }),
+    fc.constant({ kind: 'get' as const }),
     fc.string({ minLength: 1, maxLength: 6 }).map(tag => ({ kind: 'tag' as const, tag })),
+    fc.record({ key: fc.constantFrom('k1', 'k2', 'k3'), delta: fc.constantFrom(1, 2) }).map(r => ({ kind: 'restock' as const, ...r })),
+    fc.record({
+      op: fc.constantFrom('shopify.order.tag_add' as const, 'shopify.inventory.restock' as const),
+      fault: fc.constantFrom('succeed' as const, 'refuse' as const, 'broken_body' as const, 'throttle' as const),
+    }).map(r => ({ kind: 'fault' as const, ...r })),
   )
-  test.prop([fc.array(step, { maxLength: 20 })], { numRuns: 60 })('over any mix of requests, resets and restarts, the restored fake matches one that never restarted', async steps => {
+  test.prop([fc.array(step, { maxLength: 25 })], { numRuns: 100 })('over any mix of requests, faults, resets and restarts, the restored fake matches one that never restarted', async steps => {
     const kv = new MemKv()
     const ref = new FakeShopifyWriteUpstream()
     let live = new FakeShopifyWriteUpstream()
     let store = bindWriteStore(live, kv)
     let token = 'never-issued'
+    const both = async (mk: () => Request) => {
+      const [r, l] = [await ref.fetch(mk()), await live.fetch(mk())]
+      expect(l.status).toBe(r.status)
+      expect(await l.text()).toBe(await r.text())
+    }
     for (const s of steps) {
       if (s.kind === 'restart') {
         live = new FakeShopifyWriteUpstream()
         store = bindWriteStore(live, kv)
+        expect(store.restored).toBe(true)
       } else if (s.kind === 'reset') {
         ref.reset()
         live.reset()
+        store.save()
+      } else if (s.kind === 'fault') {
+        for (const f of [ref, live]) Object.assign(f.faults, { [s.op]: s.fault })
         store.save()
       } else if (s.kind === 'token') {
         const [r, l] = [await ref.fetch(tokenRequest()), await live.fetch(tokenRequest())]
         token = ((await r.json()) as { access_token: string }).access_token
         expect(((await l.json()) as { access_token: string }).access_token).toBe(token)
-      } else {
-        const [r, l] = [await ref.fetch(tagAdd(token, s.tag)), await live.fetch(tagAdd(token, s.tag))]
-        expect(l.status).toBe(r.status)
-        expect(await l.text()).toBe(await r.text())
-      }
+      } else if (s.kind === 'tag') await both(() => tagAdd(token, s.tag))
+      else if (s.kind === 'restock') await both(() => restock(token, s.key, s.delta))
+      else if (s.kind === 'badToken') await both(() => tagAdd('shpat_write_never', 'x'))
+      else if (s.kind === 'badDoc') {
+        await both(() => new Request(`https://${SHOPIFY_WRITE_HOST}/admin/api/${SHOPIFY_WRITE_API_VERSION}/graphql.json`, {
+          method: 'POST', headers: { 'Content-Type': 'application/json', 'X-Shopify-Access-Token': token }, body: JSON.stringify({ query: 'mutation {' }),
+        }))
+      } else await both(() => new Request(`https://${SHOPIFY_WRITE_HOST}/admin/oauth/access_token`))
     }
     const restored = new FakeShopifyWriteUpstream()
-    bindWriteStore(restored, kv)
+    expect(bindWriteStore(restored, kv).restored).toBe(true)
     for (const f of [live, restored]) {
       expect(f.snapshot()).toEqual(ref.snapshot())
       for (const n of WRITE_LOG_NAMES) expect(f[n]).toEqual(ref[n])
     }
+    const keys = [...kv.m.keys()]
+    expect(keys.filter(k => !k.startsWith('test-fakes:shopify-write:log:'))).toEqual([WRITE_STORE_CORE_KEY])
+    expect(keys.length - 1).toBe(WRITE_LOG_NAMES.reduce((n, l) => n + ref[l].length, 0))
+  })
+})
+
+// #687: an eval or candidate hub's DO storage can outlive a deploy, so a kept copy may come from other code. Ways it
+// can fail: a stale API version, credentials, scope or fixture keeps answering after the code changed; a kept copy of
+// an older shape is restored half or throws; `reset` can't clear a stale API version or credentials.
+describe('kept state from other code (#687)', () => {
+  const LOG_PREFIX = 'test-fakes:shopify-write:log:'
+  const staleLog = { operation: 'shopify.order.tag_add', variables: { tags: ['old'], id0: 'gid://shopify/Order/9001' }, outcome: 'succeed' }
+  const older = {
+    // #649's first shape: no version, and the code-owned values kept beside the rest.
+    orders: [{ id: 'gid://shopify/Order/9001', name: '#9001', tags: ['existing', 'old'] }], drafts: [], variants: [], products: [], orderFacts: [],
+    stock: [], adjustments: 4, refundOrders: [], refunds: [], currency: 'EUR', faults: { 'shopify.order.tag_add': 'refuse' }, idempotent: [],
+    issuedTokens: ['shpat_write_test_1'], scope: ['read_orders'], credentials: { clientId: 'old', clientSecret: 'old' }, apiVersion: '2025-01',
+    tokens: ['shpat_write_test_1'], issued: 1,
+  }
+  test.each([
+    ['an older shape (no version)', older],
+    ['another version', { ...new FakeShopifyWriteUpstream().snapshot(), version: '0-deadbeef', tokens: ['shpat_write_test_1'], issued: 1 }],
+    ['a foreign value', 'not a snapshot'],
+    ['null', null],
+  ])('%s is dropped with its logs, and the fake starts clean', async (_name, core) => {
+    const kv = new MemKv()
+    kv.put(WRITE_STORE_CORE_KEY, core)
+    kv.put(`${LOG_PREFIX}writes:0000000000`, staleLog)
+    kv.put(`${LOG_PREFIX}requests:0000000000`, { path: '/old', method: 'POST' })
+    const fake = new FakeShopifyWriteUpstream()
+    expect(bindWriteStore(fake, kv).restored).toBe(false)
+    const fresh = new FakeShopifyWriteUpstream()
+    expect(fake.snapshot()).toEqual(fresh.snapshot())
+    for (const n of WRITE_LOG_NAMES) expect(fake[n]).toEqual([])
+    expect([...kv.m.keys()]).toEqual([WRITE_STORE_CORE_KEY])
+    expect(kv.get(WRITE_STORE_CORE_KEY)).toEqual(fresh.snapshot())
+    // The dropped token is unknown; the code's API version, credentials and scope answer.
+    expect((await fake.fetch(tagAdd('shpat_write_test_1', 'x'))).status).toBe(401)
+    const res = await fake.fetch(tokenRequest())
+    expect(res.status).toBe(200)
+    const body = (await res.json()) as { access_token: string; scope: string }
+    expect(body.scope).toBe(fresh.scope.join(','))
+    const write = await fake.fetch(tagAdd(body.access_token, 'new'))
+    expect(write.headers.get('X-Shopify-API-Version')).toBe(SHOPIFY_WRITE_API_VERSION)
+    expect(((await write.json()) as { data: { o0: { userErrors: unknown[] } } }).data.o0.userErrors).toEqual([])
+  })
+
+  test('a kept copy of this version never brings back a code-owned value, even one written beside it', async () => {
+    const first = new FakeShopifyWriteUpstream()
+    const token = ((await (await first.fetch(tokenRequest())).json()) as { access_token: string }).access_token
+    const kv = new MemKv()
+    kv.put(WRITE_STORE_CORE_KEY, { ...first.snapshot(), apiVersion: '2025-01', credentials: { clientId: 'old', clientSecret: 'old' }, scope: ['read_orders'], currency: 'EUR', products: [], variants: [] })
+    const fake = new FakeShopifyWriteUpstream()
+    expect(bindWriteStore(fake, kv).restored).toBe(true)
+    const code = new FakeShopifyWriteUpstream()
+    expect([fake.apiVersion, fake.credentials, fake.scope, fake.currency, [...fake.products], [...fake.variants]])
+      .toEqual([code.apiVersion, code.credentials, code.scope, code.currency, [...code.products], [...code.variants]])
+    expect(fake.issuedTokens).toEqual([token])
+    expect((await fake.fetch(tagAdd(token, 'kept'))).status).toBe(200)
+    expect(Object.keys(kv.get<object>(WRITE_STORE_CORE_KEY)!)).not.toContain('apiVersion')
+  })
+
+  test('reset puts the API version and the credentials back, with the scope', () => {
+    const fake = new FakeShopifyWriteUpstream()
+    fake.apiVersion = '2025-01'
+    fake.credentials = { clientId: 'old', clientSecret: 'old' }
+    fake.scope = ['read_orders']
+    fake.reset()
+    const code = new FakeShopifyWriteUpstream()
+    expect([fake.apiVersion, fake.credentials, fake.scope]).toEqual([code.apiVersion, code.credentials, code.scope])
+  })
+
+  test('the version is stamped on every snapshot and is the same for every fake of this code', () => {
+    expect(writeStateVersion()).toMatch(/^1-[0-9a-f]{8}$/)
+    expect(new FakeShopifyWriteUpstream().snapshot().version).toBe(writeStateVersion())
+    expect(FakeShopifyWriteUpstream.versionSource()).toBe(FakeShopifyWriteUpstream.versionSource())
   })
 })
 

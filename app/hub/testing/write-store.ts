@@ -6,16 +6,16 @@
 // spec counts goes back to zero. Bound here, the fake reads its state back from the DO's storage on its first use in an
 // isolate and writes it there after every request, `set` and `reset`.
 //
-// Layout: one key for every field but the logs (the tokens, stores, faults and idempotency keys: small), and one key per
-// log entry (the logs grow with every request, so a request writes only its own entries, not the whole log again).
+// Layout: one key for what requests change but the logs (the tokens, stores, faults and idempotency keys: small), and
+// one key per log entry (the logs grow with every request, so a request writes only its own entries, not the whole log
+// again). The code-owned values (API version, credentials, scope, products) are never kept: they come from the code.
+//
+// #687: an eval or candidate hub's DO storage can outlive a deploy. The kept core carries the version of the code that
+// wrote it (server.ts writeStateVersion); one from other code (an older shape, another fixture or API version, or a
+// foreign value) is dropped with its logs, and the fake starts clean, as after a first deploy.
 //
 // Rules: as ./index.ts. Reached only from ./index.ts and ./fakes.ts, so the deployable bundle drops it.
-import {
-  WRITE_LOG_NAMES,
-  type FakeShopifyWriteCore,
-  type FakeShopifyWriteUpstream,
-  type WriteLogName,
-} from '../../test/upstreams/shopify/write/server'
+import { WRITE_LOG_NAMES, type FakeShopifyWriteUpstream, type WriteLogName } from '../../test/upstreams/shopify/write/server'
 
 export type FakeKv = Pick<SyncKvStorage, 'get' | 'put' | 'delete' | 'list'>
 
@@ -24,22 +24,21 @@ const logPrefix = (name: WriteLogName) => `test-fakes:shopify-write:log:${name}:
 /** Zero-padded, so the KV's key order is the log's order. */
 const logKey = (name: WriteLogName, i: number) => `${logPrefix(name)}${String(i).padStart(10, '0')}`
 
-export type WriteStore = { save: () => void }
+export type WriteStore = { save: () => void; restored: boolean }
 
 /**
- * Binds `fake` to `kv`: puts back the state kept there (none kept: keeps the fake's own, and writes it), then keeps
- * every later change. Returns `save`, for changes made outside a request (the hook's `set` and `reset`).
+ * Binds `fake` to `kv`: puts back the state kept there when the code that wrote it is this code (none kept, or kept by
+ * other code: keeps the fake's own and writes it over), then keeps every later change. Returns `save`, for changes
+ * made outside a request (the hook's `set` and `reset`), and whether kept state was put back.
  */
 export function bindWriteStore(fake: FakeShopifyWriteUpstream, kv: FakeKv): WriteStore {
-  const core = kv.get<FakeShopifyWriteCore>(WRITE_STORE_CORE_KEY)
-  if (core !== undefined) {
-    const logs = Object.fromEntries(WRITE_LOG_NAMES.map(n => [n, [...kv.list({ prefix: logPrefix(n) })].map(([, v]) => v)]))
-    fake.restore(core, logs as Pick<FakeShopifyWriteUpstream, WriteLogName>)
-  }
+  const core = kv.get<unknown>(WRITE_STORE_CORE_KEY)
+  const logs = () => Object.fromEntries(WRITE_LOG_NAMES.map(n => [n, [...kv.list({ prefix: logPrefix(n) })].map(([, v]) => v)]))
+  const restored = core !== undefined && fake.restore(core, logs() as Pick<FakeShopifyWriteUpstream, WriteLogName>)
   // Per log: the array the stored entries came from and how many of them are stored. A different array (a reset
-  // replaced it) or a shorter one is written again from the start.
+  // replaced it, or nothing was restored) or a shorter one is written again from the start, its old keys deleted.
   const kept = new Map<WriteLogName, { arr: unknown[]; n: number }>(
-    WRITE_LOG_NAMES.map(n => [n, { arr: core !== undefined ? fake[n] : [], n: core !== undefined ? fake[n].length : 0 }]),
+    WRITE_LOG_NAMES.map(n => [n, { arr: restored ? fake[n] : [], n: restored ? fake[n].length : 0 }]),
   )
   const save = () => {
     kv.put(WRITE_STORE_CORE_KEY, fake.snapshot())
@@ -56,5 +55,5 @@ export function bindWriteStore(fake: FakeShopifyWriteUpstream, kv: FakeKv): Writ
   }
   fake.onChange = save
   save()
-  return { save }
+  return { save, restored }
 }
