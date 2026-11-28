@@ -46,7 +46,7 @@ const SENT = 'Add 40 units of stock to item 8012'
 const SENT_TEXT = 'Sent.'
 const FAILED_TEXT = 'It didn’t go out.'
 const NEEDS_CHECK_TEXT = 'It isn’t clear whether this went out. Check in the tool, then say whether it did.'
-const LAPSE_TEXT = { paused: 'The agent was paused, so this needs your OK again.' }
+const LAPSE_TEXT = { paused: 'The agent was paused, so this needs your OK again.', permission_removed: 'The permission was removed, so this needs your OK again.' }
 const refused = (run: () => unknown) => { try { run() } catch (e) { return e as AgentError } throw new Error('not refused') }
 
 describe('the demo actions', () => {
@@ -176,6 +176,26 @@ describe('asking first and Always allow (the demo catch-up, PR 1)', () => {
     expect(a.permissions().filter(p => p.holder.kind === 'member' && p.holder.memberId === 'm_sam').map(p => p.title).sort()).toEqual(['Add stock', 'Add tags to orders', 'Post messages to a channel'])
     a.reset()
     expect(a.permissions().map(p => p.id)).toEqual(['pg_demoDanaOpsAlerts00000', 'pg_demoAddStock0000000000'])
+  })
+
+  test('Remove in the hold of a card Always allow approved sends it back to waiting, and it never goes out (#658)', () => {
+    const { a, tick, changed, sentBack } = world()
+    const card = byTitle(a, WHOLESALE)
+    const always = a.answer(card.id, card.rev, 'always')
+    const made = a.permissions().find(p => p.id === always.permissionId)!
+    // Another card Allow once approved, with no permission behind it, keeps its hold.
+    const post = byTitle(a, POST)
+    a.answer(post.id, post.rev, 'once')
+    tick(3_000)
+    a.removePermission(made.id, made.rev)
+    const back = a.get(card.id)
+    expect(back).toMatchObject({ state: 'waiting', rev: always.rev + 1, lapsed: LAPSE_TEXT.permission_removed, can: { allowOnce: true, alwaysAllow: true, deny: true, undo: false } })
+    expect(back.permissionId).toBeUndefined()
+    expect(changed).toEqual([{ actionId: card.id, rev: back.rev }])
+    expect(sentBack.map(n => n.actionId)).toEqual([card.id])
+    tick(60_000)
+    expect(a.get(card.id).state).toBe('waiting')
+    expect(a.get(post.id).state).toBe('sent')
   })
 
   test("the seeded permissions: Sam's Add stock and Dana's posts to #ops-alerts, each removable; Remove checks the rev", () => {

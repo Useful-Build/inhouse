@@ -76,7 +76,7 @@ test("Toasts: the first approval's sent notice shows on its own; the shared toas
   await expect(shared).toHaveCount(0)
   await expect(card(page, STUCK).getByRole('button', { name: /^Approve/ })).toBeVisible()
   await page.clock.runFor(6000)
-  await expect(toast(page, 'Message sent to ShipBob about #4821')).toHaveCount(0)
+  await expect(toast(page, 'Posted to #ops-alerts about #4821')).toHaveCount(0)
 })
 
 test('Toasts: delete two routines and undo both; a notice never pushes out an Undo', async ({ fx, page }) => {

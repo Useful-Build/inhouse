@@ -70,6 +70,23 @@ describe('the mock: asking first and Always allow', () => {
     }
   })
 
+  it('a Pause and then Reset demo in the same moment leave the fresh demo as it starts: no card sent back, no notice', async () => {
+    vi.useFakeTimers()
+    try {
+      const a = fresh()
+      const card = await a.action(WHOLESALE)
+      await a.answerAction(WHOLESALE, card.rev, 'once')
+      void a.pause()
+      a.reset()
+      await vi.advanceTimersByTimeAsync(0)
+      expect(a.listNotifications().some(n => n.text === 'Approval sent back')).toBe(false)
+      expect(await a.action(WHOLESALE)).toMatchObject({ state: 'waiting', rev: 1 })
+      expect((await a.action(WHOLESALE)).lapsed).toBeUndefined()
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
   it("the bell's approval notices show only where the demo shows its actions", () => {
     const a = fresh()
     const approvals = () => a.listNotifications().filter(n => n.link.to === 'page' && n.link.page === 'approvals' && n.who === 'Inhouse').map(n => n.text)

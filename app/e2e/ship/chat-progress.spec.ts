@@ -62,6 +62,6 @@ test('S2: A saved chat: the sources are one pill that opens a clean list, and th
   // The draft sits after the answer card, in its own card.
   const draft = log(page).locator('[data-approval]').first()
   await draft.scrollIntoViewIfNeeded()
-  await expect(draft).toContainText("Ask ShipBob why #4821 hasn't shipped")
-  await expect(draft.getByRole('button', { name: /^Approve and send to ShipBob/ })).toBeVisible()
+  await expect(draft).toContainText('Ask the team to chase ShipBob on #4821')
+  await expect(draft.getByRole('button', { name: /^Approve and post/ })).toBeVisible()
 })

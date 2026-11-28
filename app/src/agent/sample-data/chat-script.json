@@ -58,7 +58,7 @@
         "agent": [
           {
             "type": "text",
-            "text": "Done. I drafted a message to ShipBob for you to approve, and set up a morning check. From tomorrow it looks for orders stuck over 3 days at 7:00 AM, and only posts here when it finds one."
+            "text": "Done. I drafted a post to #ops-alerts asking the team to chase ShipBob, for you to approve, and set up a morning check. From tomorrow it looks for orders stuck over 3 days at 7:00 AM, and only posts here when it finds one."
           },
           {
             "type": "approval",

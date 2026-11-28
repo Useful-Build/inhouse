@@ -126,7 +126,7 @@ test('Masonry, grid and list show the same files; list has name, type, place, si
   for (const h of ['Name', 'Type', 'Place', 'Size', 'Date']) await expect(page.getByText(h, { exact: true }).first()).toBeVisible()
   const row = cards(page).filter({ hasText: 'amazon-fee-reimbursement-case.pdf' })
   await expect(row).toContainText('PDF')
-  await expect(row).toContainText('Approval: Open a reimbursement case')
+  await expect(row).toContainText('Approval: Ask Dana to claim $1,240 from Amazon')
   await expect(row).toContainText('102 KB')
   await expect(row).toContainText('6:06 AM')
   await shot(page, 'library-list')

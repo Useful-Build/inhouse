@@ -83,7 +83,8 @@ test('Tools: a disconnected tool reads as off on its page, in the count and in t
   await start(page, 'Tool disconnected', '#/tools/gorgias')
   await expect(page.locator('main')).toContainText('Disconnected · login expired at 5:41 AM')
   await expect(ability(page, 'read')).toContainText('Off')
-  await expect(ability(page, 'draft')).toContainText('Off')
+  // Gorgias has no write operation, so its page offers no drafts at all (#654: only Shopify and Slack act).
+  await expect(ability(page, 'draft')).toHaveCount(0)
   await expect(page.locator('main')).not.toContainText('Today, 6:00 AM')
   await expect(page.locator('[data-tool-example]')).toHaveCount(0)
   await shot(page, 'tool-disconnected-page')

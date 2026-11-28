@@ -893,6 +893,8 @@ export class MockAgent implements AgentClient {
     // A demo whose actions loaded starts them again; one that never read them has nothing to reset.
     void this.demoActionsLoad?.then(a => a.reset())
     this.sentBack = []
+    // A Pause sent just before (its cards' lapse still queued) belongs to the demo this reset ends.
+    this.resets++
     try { localStorage.removeItem(RUNS_KEY) } catch (e) { console.warn('Inhouse demo: could not clear saved runs.', e) }
     try { localStorage.removeItem(DATA_OVERRIDE_KEY) } catch (e) { console.warn('Inhouse demo: could not clear the data override.', e) }
     this.startedAt = Date.now()
@@ -967,7 +969,8 @@ export class MockAgent implements AgentClient {
     // its hold back to waiting (N12). Actions never read have none in a hold.
     if (this.state.paused === at) {
       this.engine?.fence(() => true, 'paused')
-      void this.demoActionsLoad?.then(a => a.pause())
+      const resets = this.resets
+      void this.demoActionsLoad?.then(a => { if (this.resets === resets) a.pause() })
     }
     return done
   }
@@ -1013,6 +1016,8 @@ export class MockAgent implements AgentClient {
   // (check-bundle).
   private demoActionsLoad: Promise<MockActions> | null = null
   private actionListeners = new Set<(u: { actionId: string; rev: number }) => void>()
+  /** Counts Reset demo, so a Pause queued before one never lapses the fresh demo's cards. */
+  private resets = 0
   private demoActions(): Promise<MockActions> {
     return this.demoActionsLoad ??= import('./mock-actions').then(m => new m.MockActions({
       now: () => demoNow(this.startedAt).getTime(),

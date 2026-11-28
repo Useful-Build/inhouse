@@ -132,7 +132,7 @@
           "detail": "Output: anyone who approves"
         },
         {
-          "label": "Drafted the message to ShipBob",
+          "label": "Drafted the post to #ops-alerts",
           "kind": "model",
           "startSeconds": 3.4,
           "endSeconds": 9.8,
@@ -140,7 +140,7 @@
           "detail": "Sonnet 5.5 · in your tone · waits for approval"
         },
         {
-          "label": "Message to ShipBob waits for approval",
+          "label": "The post waits for approval",
           "kind": "approval",
           "startSeconds": 9.8,
           "endSeconds": 41,

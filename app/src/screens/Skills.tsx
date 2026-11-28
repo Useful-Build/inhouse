@@ -1,7 +1,7 @@
 // Skills: the list, and each skill's own page (#/skills/<name>).
 import { agent, demo } from '../agent'
 import { keepUnitsTogether } from '../agent/clock'
-import { STAGE_TAGS, stageLocked, whenOf } from '../state/derive'
+import { stageLocked, whenOf } from '../state/derive'
 import { display } from '../state/display'
 import { fmtDay } from '../lib/format'
 import { skillBySlug, skillSlugs, useCtx, useUi } from '../state/store'
@@ -13,7 +13,7 @@ import { Badge } from '@/components/ui/badge'
 import { DropdownMenu, DropdownMenuContent, DropdownMenuTrigger } from '@/components/ui/dropdown-menu'
 import { Separator } from '@/components/ui/separator'
 import { cn } from '@/lib/utils'
-import { Button, CardGrid, EmptyState, Icon, IconButton, IconTile, LogoTile, MenuItem, Page, PageHeader, SectionHeader, Segmented, StageTag } from '../ui'
+import { Button, CardGrid, EmptyState, Icon, IconButton, IconTile, LogoTile, MenuItem, Page, PageHeader, SectionHeader, Segmented } from '../ui'
 import { Confirm, SearchBox, TAP } from '../ui/fields'
 import { rememberTrigger, triggerTogglesMenu } from '../ui/dialogs'
 import { Markdown } from './chat/markdown'
@@ -78,7 +78,6 @@ export function Skills() {
                 <div className={`flex items-center gap-2 text-md font-strong ${locked ? 'text-foreground-3' : ''}`}>
                   {/* The name opens the skill's page; its tap area covers the whole row. */}
                   <button type="button" onClick={() => openSkill(slugs.get(s)!)} className="min-w-0 text-left after:absolute after:inset-0 after:rounded-xl">{s.n}</button>
-                  {locked && <StageTag tag={STAGE_TAGS[s.need]} />}
                   {off && <Badge variant="muted">Off</Badge>}
                 </div>
                 <div className="text-sm text-pretty text-muted-foreground">{keepUnitsTogether(s.d)}</div>
@@ -130,9 +129,9 @@ export function byline(s: SkillDef): string {
 }
 
 /** The side rail's key-value rows for a skill's page. */
-export function skillFacts(s: SkillDef, isDemo: boolean): [string, string][] {
-  // "Works from" names a stage, so only the demo has it: the product has no stages (M2-I). "Used" shows only when there is one.
-  const facts: [string, string][] = isDemo ? [['Works from', STAGE_TAGS[s.need]]] : []
+export function skillFacts(s: SkillDef): [string, string][] {
+  // No "Works from": it named a stage, and no build has stages (M2-I; the demo since decision A13). "Used" shows only when there is one.
+  const facts: [string, string][] = []
   const maker = s.by.replace(/, in a chat$/, '')
   facts.push(['Made by', s.mine ? maker : s.by])
   // A brand skill: its maker and admins change it in a chat, or admins only once the maker's data is deleted. The Inhouse team's: only the Inhouse team.
@@ -178,7 +177,7 @@ export function SkillPage() {
   const example = s.example && !locked ? `Use the "${s.n}" skill: ${s.example}` : null
   const toolsOf = (s.tools ?? []).map(k => ({ k, name: data.tools.details[k]?.name ?? data.tools.catalog.find(c => c.k === k)?.name ?? k }))
   const usedBy = (s.routines ?? []).flatMap(id => data.routines.filter(r => r.id === id && !st.routinesDeleted[r.id] && !(r.inChat && stageLocked(ctx, r.need))))
-  const facts = skillFacts(s, demo !== null)
+  const facts = skillFacts(s)
   const canChange = !!s.mine && s.canChange === true
   // The switch is the demo's; the product has none. Delete is for a brand skill its maker or an admin may change.
   const switchable = demo !== null
@@ -207,13 +206,8 @@ export function SkillPage() {
             <Icon name={s.icon} size={30} />
           </span>
         )}
-        // The stage it works from, and the switch's Off: the demo's alone. The product has no stages (M2-I) and no switch.
-        tag={demo !== null ? (
-          <span className="flex items-center gap-2">
-            {locked ? <StageTag tag={STAGE_TAGS[s.need]} size="lg" /> : <Badge variant="outline" size="md">{STAGE_TAGS[s.need]}</Badge>}
-            {!locked && !on && <Badge variant="muted" size="md">Off</Badge>}
-          </span>
-        ) : undefined}
+        // The switch's Off: the demo's alone (the product has no switch). No stage badge: no build has stages (M2-I, A13).
+        tag={demo !== null && !locked && !on ? <Badge variant="muted" size="md">Off</Badge> : undefined}
         description={<>
           <span className="block text-lg leading-prose">{keepUnitsTogether(s.d)}</span>
           <span className="mt-2.5 block text-sm text-muted-foreground">{byline(s)}</span>

@@ -1101,29 +1101,34 @@ describe.each(targets)('contract: $name', (t: ContractTarget) => {
     // own `sendAt` and `serverNow`; Undo after the hold, or no Undo in it; Always allow that leaves no permission, or a
     // permission that a stale Remove takes away; a "Needs a check" that can't be resolved by its approver.
     const ACTIONS = ['actions', 'action', 'answerAction', 'undoAction', 'resolveAction', 'withdrawAction', 'actionItems', 'permissions', 'removePermission', 'questions', 'answerQuestion'] as const
-    only(...ACTIONS)('actions, permissions and questions: every list parses; with nothing seeded an answer is refused', async () => {
+    only(...ACTIONS)('actions, permissions and questions: every list parses, the demo lists its sample ones, and an unknown id is refused on every target', async () => {
       const c = t.client
       for (const a of await c.actions()) parse(ActionCardSchema, a, 'an action')
       for (const p of await c.permissions()) parse(PermissionSchema, p, 'a permission')
       for (const q of await c.questions()) parse(QuestionSchema, q, 'a question')
-      if (!t.seedAction) {
-        // The demo: no question to list; its actions and permissions are its sample ones (Stage 1 M3-U: a batch, a restock
-        // and a teammate's refund; the demo catch-up's PR 1: two ask cards, a teammate's, one that went out under a
-        // permission and one that needs a check; two permissions), and nothing it doesn't have can be answered.
+      // The demo's lists are its sample data, so only its target knows them: no question; its actions and permissions are
+      // its sample ones (Stage 1 M3-U: a batch, a restock and a teammate's refund; the demo catch-up's PR 1: two ask cards,
+      // a teammate's, one that went out under a permission and one that needs a check; two permissions). Keyed on the
+      // target's name: since the demo seeds an action too, `seedAction` no longer tells the targets apart.
+      if (t.name === 'mock') {
         expect(await c.questions()).toEqual([])
         expect((await c.permissions()).map(p => p.title)).toEqual(['Post messages to a channel', 'Add stock'])
         expect((await c.actions()).map(a => [a.kind, a.state, a.approverKind, a.batch?.itemCount ?? null])).toEqual([
           ['exact', 'waiting', 'person', 450], ['ask', 'waiting', 'person', null], ['ask', 'waiting', 'person', null], ['exact', 'waiting', 'person', 12],
           ['ask', 'waiting', 'person', null], ['exact', 'waiting', 'admins', null], ['ask', 'sent', 'person', null], ['ask', 'needs_check', 'person', null],
         ])
-        for (const refused of [c.action('ac_AAAAAAAAAAAAAAAAAAAAAA'), c.answerAction('ac_AAAAAAAAAAAAAAAAAAAAAA', 1, 'once'), c.undoAction('ac_AAAAAAAAAAAAAAAAAAAAAA', 1),
-          c.resolveAction('ac_AAAAAAAAAAAAAAAAAAAAAA', 1, 'sent'), c.withdrawAction('ac_AAAAAAAAAAAAAAAAAAAAAA', 1), c.actionItems('ac_AAAAAAAAAAAAAAAAAAAAAA', 0),
-          c.removePermission('pg_AAAAAAAAAAAAAAAAAAAAAA', 1)]) {
-          const e = await refused.then(() => null, (x: unknown) => x)
-          expect(e).toBeInstanceOf(AgentError)
-          expect(e).toMatchObject({ code: 'not_found' })
-        }
       }
+      // Nothing a target doesn't have can be answered, read or removed: not found, on every target.
+      let refusedCount = 0
+      for (const refused of [c.action('ac_AAAAAAAAAAAAAAAAAAAAAA'), c.answerAction('ac_AAAAAAAAAAAAAAAAAAAAAA', 1, 'once'), c.undoAction('ac_AAAAAAAAAAAAAAAAAAAAAA', 1),
+        c.resolveAction('ac_AAAAAAAAAAAAAAAAAAAAAA', 1, 'sent'), c.withdrawAction('ac_AAAAAAAAAAAAAAAAAAAAAA', 1), c.actionItems('ac_AAAAAAAAAAAAAAAAAAAAAA', 0),
+        c.removePermission('pg_AAAAAAAAAAAAAAAAAAAAAA', 1)]) {
+        const e = await refused.then(() => null, (x: unknown) => x)
+        expect(e).toBeInstanceOf(AgentError)
+        expect(e).toMatchObject({ code: 'not_found' })
+        refusedCount++
+      }
+      expect(refusedCount, 'every unknown id was tried').toBe(7)
       // A question nobody asked: not found, on every target.
       const e = await c.answerQuestion('q_AAAAAAAAAAAAAAAAAAAAAA', 'Yes').then(() => null, (x: unknown) => x)
       expect(e).toBeInstanceOf(AgentError)

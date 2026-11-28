@@ -22,7 +22,7 @@
         "amazon",
         "xero"
       ],
-      "example": "Run it now and tell me what changed since yesterday.",
+      "example": "Check everything now and tell me what changed since yesterday.",
       "routines": [
         "Morning check"
       ],
@@ -139,7 +139,7 @@
     },
     {
       "n": "Stuck order nudge",
-      "d": "Asks ShipBob about orders not picked after 3 days.",
+      "d": "Flags orders not picked after 3 days and asks the team to chase ShipBob.",
       "icon": "local_shipping",
       "need": 1,
       "by": "Sam Mercer, in a chat",
@@ -195,7 +195,7 @@
       "icon": "assignment_return",
       "need": 2,
       "by": "Inhouse team",
-      "used": "Runs by itself",
+      "used": "11 times this week",
       "tools": [
         "shopify",
         "shipbob"
@@ -216,7 +216,7 @@
       "icon": "block",
       "need": 2,
       "by": "Inhouse team",
-      "used": "Runs by itself",
+      "used": "Today",
       "tools": [
         "shopify",
         "shipbob"

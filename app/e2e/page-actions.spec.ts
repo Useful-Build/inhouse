@@ -38,10 +38,10 @@ const draft = (page: Page, title: string) => page.locator('[data-slot=card]').fi
 const D = {
   oversell: 'Pause the variant and email 5 customers',
   stock: 'Reorder 600 Ridge 30L Packs',
-  payout: 'Open a reimbursement case',
+  payout: 'Ask Dana to claim $1,240 from Amazon',
   po: 'Chase Kestrel for a new ship date',
   returns: 'Restock 11 units on Shopify',
-  stuck: "Ask ShipBob why #4821 hasn't shipped",
+  stuck: 'Ask the team to chase ShipBob on #4821',
 }
 const ALL = Object.values(D)
 /** The draft titles on Approvals, top to bottom. */
@@ -253,7 +253,7 @@ test('A set-aside problem approved from the chat card or the Library\'s approval
 
   // The chat still offers its approval card; approving there clears the set-aside.
   await go(page, '#/chats/stuck')
-  await page.getByRole('button', { name: 'Approve and send to ShipBob' }).click()
+  await page.getByRole('button', { name: 'Approve and post' }).click()
   await expect(toast(page, 'Approved. It goes out in 10 seconds.')).toBeVisible()
   await expect(badge(page)).toContainText(String(5 + ASKS))
   await go(page, '#/approvals')
@@ -322,6 +322,17 @@ test('Counts leave set-aside problems out: the bell and Approvals, and once ever
   await go(page, '#/approvals')
   await expect(waiting(page)).toHaveText(/·\s4$/)
   await shot(page, 'approvals-two-set-aside')
+
+  // Every card set aside (#657): Today says so, and the bell's drafts line is gone at 0.
+  await go(page, '#/today')
+  for (const t of titles.slice(2)) await snooze(t)
+  await expect(page.getByRole('heading', { level: 1 })).toContainText("You're all caught up.")
+  await expect(page.getByRole('status').filter({ hasText: 'Every card is set aside for today.' })).toBeVisible()
+  await shot(page, 'today-all-set-aside')
+  await page.getByRole('button', { name: /^Notifications/ }).click()
+  await expect(page.getByRole('dialog', { name: 'Notifications' })).toBeVisible()
+  await expect(page.getByText(/drafts? (is|are) waiting for your approval/)).toHaveCount(0)
+  await page.keyboard.press('Escape')
 
   // Act: one draft not sent and the rest approved says so, not "all approved".
   await page.getByRole('button', { name: /Demo switches/ }).click()

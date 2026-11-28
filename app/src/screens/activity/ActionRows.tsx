@@ -1,10 +1,9 @@
 // Activity's Stage 1 M2-H rows: the actions the Inhouse agent took or proposed, with where each got to, and "Stop
-// allowing this" where a permission of this person's lets the agent do it without asking. Read when the page opens.
+// allowing this" on an action that ran under a permission this person may remove. Read when the page opens.
 // Nothing shows until read and only when there is an action (the demo's are its sample cards, mock-actions.ts).
 //
-// An action's card names its tool account, not the permission behind it, so a row offers "Stop allowing this" only
-// when exactly one permission this person may remove covers that account; the question names that permission, so it
-// is clear what stops. Two or more: the row points to Settings > Always allowed instead.
+// The card names the permission it ran under (`permissionId`, #655); the question names that permission, so it is
+// clear what stops.
 import { useCallback, useEffect, useState } from 'react'
 import { agent } from '../../agent'
 import type { ActionCard, Permission } from '../../agent/types'
@@ -21,7 +20,6 @@ import type { Whose } from '../chat/ask-card'
 
 export function ActionRows({ needle }: { needle: string }) {
   const showToast = useUi(s => s.showToast)
-  const openSettings = useUi(s => s.openSettings)
   const [actions, setActions] = useState<ActionCard[] | null>(null)
   const [permissions, setPermissions] = useState<Permission[]>([])
   const { data } = useCtx()
@@ -64,8 +62,7 @@ export function ActionRows({ needle }: { needle: string }) {
               <Icon name="bolt" size={19} className="flex-none text-muted-foreground" />
               <span className="min-w-0 flex-1 basis-48 text-md text-pretty wrap-anywhere">{actionLine(a, whose(a))}</span>
               <span className="flex-none text-sm whitespace-nowrap text-muted-foreground tabular-nums">{fmtWhen(a.askedAt, now, d0)}</span>
-              {offer?.kind === 'one' && <Button variant="soft" size="sm" aria-label={`Stop allowing this: ${a.title}`} onClick={() => setAsking({ permission: offer.permission, whose: whose(a) })}>Stop allowing this</Button>}
-              {offer?.kind === 'many' && <Button variant="soft" size="sm" aria-label={`Stop allowing this: ${a.title}`} onClick={() => openSettings('you-permissions')}>Stop allowing this</Button>}
+              {offer && <Button variant="soft" size="sm" aria-label={`Stop allowing this: ${a.title}`} onClick={() => setAsking({ permission: offer, whose: whose(a) })}>Stop allowing this</Button>}
             </li>
           )
         })}

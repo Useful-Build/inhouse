@@ -40,7 +40,7 @@ const raw = actionsRaw as {
   operations: Record<string, RawOperation>
   singles: RawSingle[]
   resolved: Record<ActionResolution, string>
-  lapsed: { paused: string }
+  lapsed: { paused: string; permission_removed: string }
   permissions: RawPermission[]
 }
 
@@ -312,17 +312,22 @@ export class MockActions {
    * buttons back, and a notice to its approver. One that already went out stays sent.
    */
   pause() {
-    const atMs = this.h.now()
     for (const row of this.rows) {
       this.settled(row)
-      if (row.card.state !== 'approved') continue
-      const { permissionId: _p, ...card } = row.card
-      row.sendAtMs = null
-      row.card = { ...card, state: 'waiting', rev: card.rev + 1, can: row.waitingCan, lapsed: raw.lapsed.paused }
-      row.items = row.items.map(i => ({ ...i, state: 'pending' as const }))
-      this.h.changed({ actionId: card.id, rev: row.card.rev })
-      this.h.sentBack({ actionId: card.id, rev: row.card.rev, atMs })
+      if (row.card.state === 'approved') this.sendBack(row, raw.lapsed.paused)
     }
+  }
+  /**
+   * A card in its hold goes back to waiting (N12): with the server's words for why, its buttons back, no permission behind
+   * it any more, an `action.updated` and a notice to its approver.
+   */
+  private sendBack(row: Row, why: string) {
+    const { permissionId: _p, ...card } = row.card
+    row.sendAtMs = null
+    row.card = { ...card, state: 'waiting', rev: card.rev + 1, can: row.waitingCan, lapsed: why }
+    row.items = row.items.map(i => ({ ...i, state: 'pending' as const }))
+    this.h.changed({ actionId: card.id, rev: row.card.rev })
+    this.h.sentBack({ actionId: card.id, rev: row.card.rev, atMs: this.h.now() })
   }
 
   // ---------- permissions (Settings > Always allowed, Activity's "Stop allowing this") ----------
@@ -338,6 +343,11 @@ export class MockActions {
     if (!g) throw new AgentError(NOT_FOUND, 'This permission was already removed.')
     if (g.rev !== ifRev) throw new AgentError('conflict', 'This permission changed first.', { current: permissionOf(g) as unknown as Record<string, unknown> })
     this.grants = this.grants.filter(x => x !== g)
+    // A card still in its hold under this permission doesn't go out (#658): it waits for an OK again, as the server's.
+    for (const row of this.rows) {
+      this.settled(row)
+      if (row.card.state === 'approved' && row.card.permissionId === id) this.sendBack(row, raw.lapsed.permission_removed)
+    }
     return this.permissions()
   }
   /** The holder's permission for this operation, made now unless one stands already (one grant per holder, operation and scope). */

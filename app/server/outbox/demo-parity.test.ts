@@ -12,7 +12,7 @@ import { FAILED_TEXT, LAPSE_TEXT, NEEDS_CHECK_TEXT, SENT_TEXT } from './words.ts
 type RawOperation = { title: string; unitsLabel: string; perDay: number; unitsMax: number; ceilingPerDay: number; ceilingUnitsMax: number; reversible?: boolean }
 type RawSingle = { id: string; operation: string; title: string; lines: string[]; state: string; result?: string }
 const demo = JSON.parse(Object.values(import.meta.glob('../../src/agent/sample-data/actions.json', { query: '?raw', import: 'default', eager: true }))[0] as string) as {
-  operations: Record<string, RawOperation>; singles: RawSingle[]; resolved: Record<string, string>; lapsed: { paused: string }
+  operations: Record<string, RawOperation>; singles: RawSingle[]; resolved: Record<string, string>; lapsed: { paused: string; permission_removed: string }
 }
 const single = (id: string) => demo.singles.find(s => s.id === id)!
 
@@ -36,14 +36,16 @@ describe("the demo's actions say what the server says", () => {
     expect(words(single('ac_demoGiftTagCheck000000'))).toEqual(tagsCard('Add', { orderIds: ['gid://shopify/Order/4377'], tags: ['Gift'] }))
     expect(words(single('ac_demoPriyaHoldTag000000'))).toEqual(tagsCard('Remove', { orderIds: ['gid://shopify/Order/4470'], tags: ['Hold'] }))
     expect(words(single('ac_demoStockAdded00000000'))).toEqual(stockCard('Add', { inventoryItemId: 'gid://shopify/InventoryItem/8012', locationId: 'gid://shopify/Location/601', quantity: 40, reason: 'received' }))
-    // The Slack post's card: `Post to #<channel> in Slack`, its text the one line (slack-channel-post.ts `card`).
-    expect(single('ac_demoOpsAlertsPost00000').title).toBe('Post to #ops-alerts in Slack')
+    // The Slack post's card, from the operation's own `card` with the demo's listed channel.
+    const post = single('ac_demoOpsAlertsPost00000')
+    const facts = { listedChannels: [{ id: 'C0DEMO0001', name: 'ops-alerts' }] } as unknown as Parameters<typeof OPERATIONS['slack.channel.post']['card']>[1]
+    expect(words(post)).toEqual(OPERATIONS['slack.channel.post'].card({ channel: '#ops-alerts', text: post.lines[0]! }, facts))
     for (const s of demo.singles) expect(Object.hasOwn(demo.operations, s.operation), s.id).toBe(true)
   })
 
   test('the settled, needs-check and lapse words are the outbox\'s', () => {
     expect(demo.resolved).toEqual({ sent: SENT_TEXT, failed: FAILED_TEXT })
-    expect(demo.lapsed.paused).toBe(LAPSE_TEXT.paused)
+    expect(demo.lapsed).toEqual({ paused: LAPSE_TEXT.paused, permission_removed: LAPSE_TEXT.permission_removed })
     expect(demo.singles.filter(s => s.state === 'needs_check').map(s => s.result)).toEqual([NEEDS_CHECK_TEXT])
     expect(demo.singles.filter(s => s.state === 'sent').map(s => s.result)).toEqual([SENT_TEXT])
   })

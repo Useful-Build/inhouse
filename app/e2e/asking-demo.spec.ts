@@ -126,6 +126,25 @@ test('Always allow makes the permission; Always allowed shows it, and Remove tak
   await expect(page.locator('main [data-permission]')).toHaveCount(2)
 })
 
+test('Remove in the hold of a card Always allow approved sends it back to waiting; it never goes out (#658)', async ({ page }) => {
+  await start(page, '#/chats/order-tags')
+  await cardOf(page, WHOLESALE).getByRole('button', { name: 'Always allow', exact: true }).click()
+  await expect(cardOf(page, WHOLESALE)).toHaveAttribute('data-action-card', 'approved')
+  // Held, so the removal lands inside the 10 s hold however long the clicks take.
+  await page.clock.pauseAt(await page.evaluate(() => Date.now() + 500))
+  await go(page, '#/settings/you-permissions')
+  const made = permission(page, 'Add tags to orders')
+  await made.getByRole('button', { name: 'Remove: Add tags to orders' }).click()
+  await page.getByRole('dialog', { name: 'Stop allowing this?' }).getByRole('button', { name: 'Remove', exact: true }).click()
+  await expect(made).toHaveCount(0)
+  await go(page, '#/chats/order-tags')
+  await expect(cardOf(page, WHOLESALE)).toHaveAttribute('data-action-card', 'waiting')
+  await expect(cardOf(page, WHOLESALE)).toContainText('The permission was removed, so this needs your OK again.')
+  await page.clock.resume()
+  await page.clock.runFor(20_000)
+  await expect(cardOf(page, WHOLESALE)).toHaveAttribute('data-action-card', 'waiting')
+})
+
 test("Needs a check: It didn't go out settles the card", async ({ page }) => {
   await start(page, '#/chats/order-tags')
   await cardOf(page, GIFT).getByRole('button', { name: `It didn't go out: ${GIFT}` }).click()
@@ -173,6 +192,8 @@ test("Activity's Stop allowing this removes the permission behind an action", as
   await start(page, '#/activity')
   const row = page.locator('[data-activity-action]').filter({ hasText: 'Add 40 units of stock to item 8012' })
   await expect(row).toContainText('Sent.')
+  // Only the row whose action ran under a permission offers it (#655): never one Sam answered on the same tool.
+  await expect(page.getByRole('button', { name: /^Stop allowing this: / })).toHaveCount(1)
   await row.getByRole('button', { name: 'Stop allowing this: Add 40 units of stock to item 8012' }).click()
   const ask = page.getByRole('dialog', { name: 'Stop allowing this?' })
   await expect(ask).toContainText('Add stock. Your Inhouse agent will ask before it does this again.')

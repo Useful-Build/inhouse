@@ -274,10 +274,10 @@
       ],
       "cost": { "minor": 124000, "currency": "USD" },
       "costNote": "missing from the payout",
-      "next": "open a reimbursement case for 18 orders",
+      "next": "ask Dana to open a reimbursement case for 18 orders",
       "review": "18 orders to check",
       "wait": "a $1,240 claim",
-      "doneText": "Reimbursement case opened with Amazon",
+      "doneText": "Posted to #ops-alerts for Dana",
       "found": [
         [
           "Amazon's settlement for Oct 30 to Nov 12 paid $18,420",
@@ -339,31 +339,29 @@
         }
       ],
       "draft": {
-        "kind": "Amazon case",
-        "summary": "Claims back the large-item fee on 18 orders.",
-        "amount": {
-          "money": { "minor": 124000, "currency": "USD" },
-          "direction": "claim"
-        },
-        "destination": "Amazon",
-        "title": "Open a reimbursement case",
+        "kind": "Slack post",
+        "summary": "Asks Dana to claim back the large-item fee on 18 orders.",
+        "destination": "#ops-alerts",
+        "title": "Ask Dana to claim $1,240 from Amazon",
         "lines": [
           [
-            "Case",
-            "Fulfillment fee charged too high"
+            "To",
+            "#ops-alerts in Slack"
           ],
           [
             "Orders",
             "18, listed in the attachment"
           ],
           [
-            "Amount",
-            "$1,240"
+            "Claim",
+            "$1,240, the large-item fee"
           ]
         ],
+        "bodyLabel": "Post",
+        "body": "Dana, Amazon charged the large-item fee on 18 orders that ship as standard size, so the Nov 12 payout is $1,240 short. Could you open a reimbursement case with Seller Support? The orders are in the attachment.",
         "money": true,
         "memory": "Remembered: your Amazon rate card was last updated on Sep 30.",
-        "cta": "Approve and open the case"
+        "cta": "Approve and post"
       }
     },
     {
@@ -540,10 +538,10 @@
       ],
       "cost": { "minor": 31200, "currency": "USD" },
       "costNote": "order value",
-      "next": "ask ShipBob why it hasn't shipped",
+      "next": "ask the team to chase ShipBob",
       "isDraft": true,
       "done": { "text": "Asked ShipBob at {at:time}. Picked at {picked:time}", "times": { "at": "0d 06:06", "picked": "0d 07:40" } },
-      "doneText": "Message sent to ShipBob about #4821",
+      "doneText": "Posted to #ops-alerts about #4821",
       "found": [
         [
           "Order #4821 was paid on Thu, Nov 12",
@@ -577,23 +575,23 @@
         }
       ],
       "draft": {
-        "kind": "ShipBob ticket",
-        "summary": "A new support ticket asking them to ship it today.",
-        "destination": "ShipBob",
-        "title": "Ask ShipBob why #4821 hasn't shipped",
+        "kind": "Slack post",
+        "summary": "Asks the team to chase ShipBob so it ships today.",
+        "destination": "#ops-alerts",
+        "title": "Ask the team to chase ShipBob on #4821",
         "lines": [
           [
             "To",
-            "ShipBob support, new ticket"
+            "#ops-alerts in Slack"
           ],
           [
             "Order",
             "#4821, paid Nov 12"
           ]
         ],
-        "bodyLabel": "Support message",
-        "body": "Hi, order #4821 was released to you on Nov 12 and still shows as not picked. Can you check what's holding it and ship it today? It's for a repeat customer. Thanks, Northline Outdoor",
-        "cta": "Approve and send to ShipBob"
+        "bodyLabel": "Post",
+        "body": "Order #4821 was released to ShipBob on Nov 12 and still shows as not picked. Could someone ask ShipBob what's holding it, so it ships today? It's for a repeat customer.",
+        "cta": "Approve and post"
       }
     }
   ]

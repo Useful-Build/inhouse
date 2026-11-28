@@ -32,7 +32,7 @@
       "text": "Amazon payout check: found a $1,240 gap",
       "who": "Read only",
       "why": "Scheduled routine, every day at 6:00 AM.",
-      "result": "Amazon paid out $1,240 less than Xero expected. It's on Today with a drafted reimbursement case. Nothing was changed in any tool.",
+      "result": "Amazon paid out $1,240 less than Xero expected. It's on Today with a drafted post asking Dana to open a reimbursement case. Nothing was changed in any tool.",
       "by": { "text": "Inhouse agent, on schedule.", "times": {} }
     }
   ],

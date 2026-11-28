@@ -117,22 +117,23 @@ describe('a brand skill whose maker had their personal data deleted', () => {
     expect(SkillsScreen.madeBy(active)).toBe('Made by Dana Example')
     expect(SkillsScreen.madeBy(former)).toBe('Made by a former member')
     expect(SkillsScreen.byline(former)).toBe('Made by a former member in a chat.')
-    expect(SkillsScreen.skillFacts(active, false)).toEqual([['Made by', 'Dana Example'], ['Who can change it', 'Dana Example and admins']])
-    expect(SkillsScreen.skillFacts(former, false)).toEqual([['Made by', 'a former member'], ['Who can change it', 'Admins']])
+    expect(SkillsScreen.skillFacts(active)).toEqual([['Made by', 'Dana Example'], ['Who can change it', 'Dana Example and admins']])
+    expect(SkillsScreen.skillFacts(former)).toEqual([['Made by', 'a former member'], ['Who can change it', 'Admins']])
     // Demo mock skill with the same "a former member" attribution behaves identically.
     const mockFormer = { ...former, by: 'a former member, in a chat', canChange: true }
     expect(SkillsScreen.madeBy(mockFormer)).toBe('Made by a former member')
     expect(SkillsScreen.byline(mockFormer)).toBe('Made by a former member in a chat.')
-    expect(SkillsScreen.skillFacts(mockFormer, true)).toEqual([['Works from', 'Watch'], ['Made by', 'a former member'], ['Who can change it', 'Admins']])
+    expect(SkillsScreen.skillFacts(mockFormer)).toEqual([['Made by', 'a former member'], ['Who can change it', 'Admins']])
   })
 })
 
-describe("a skill's facts in the product (Stage 1 M2-I: no stages)", () => {
-  test('the product never says which stage a skill works from, at any need; the demo always does', () => {
+describe("a skill's facts (Stage 1 M2-I, and the demo since decision A13: no stages)", () => {
+  test('no build says which stage a skill works from, at any need', () => {
     const base = { n: 'reorder', d: 'Drafts it.', icon: 'menu_book', by: 'Inhouse team', used: '' }
     for (const need of [0, 1, 2] as const) {
-      expect(SkillsScreen.skillFacts({ ...base, need }, false).map(([k]) => k), `need ${need}`).not.toContain('Works from')
-      expect(SkillsScreen.skillFacts({ ...base, need }, true)[0], `need ${need}`).toEqual(['Works from', ['Watch', 'Act', 'Run'][need]])
+      const facts = SkillsScreen.skillFacts({ ...base, need })
+      expect(facts.map(([k]) => k), `need ${need}`).not.toContain('Works from')
+      expect(facts.flat().join(' '), `need ${need}`).not.toMatch(/\b(Watch|Act|Run)\b/)
     }
   })
 })

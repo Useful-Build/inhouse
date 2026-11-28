@@ -38,11 +38,11 @@ test('Phone 390: Today has no sort and no fixed card height; Approvals has one h
   expect(all!.y, 'the action starts on the title line').toBeLessThan(title!.y + title!.height)
 
   // A card's footer: the primary action and "···" share a row.
-  const stuck = draft(page, "Ask ShipBob why #4821 hasn't shipped")
-  const primary = await stuck.getByRole('button', { name: 'Approve and send to ShipBob' }).boundingBox()
+  const stuck = draft(page, 'Ask the team to chase ShipBob on #4821')
+  const primary = await stuck.getByRole('button', { name: 'Approve and post' }).boundingBox()
   const more = await stuck.getByRole('button', { name: /^More actions for/ }).boundingBox()
   expect(Math.abs(primary!.y - more!.y)).toBeLessThanOrEqual(8)
-  await stuck.getByRole('button', { name: 'Approve and send to ShipBob' }).click()
+  await stuck.getByRole('button', { name: 'Approve and post' }).click()
 
   // The approved row keeps its text on its own line, with the time under it and nothing running past the card's edge.
   const approved = page.getByRole('region', { name: 'Approved today' })
