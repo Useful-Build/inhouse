@@ -130,6 +130,8 @@ export interface ProductTargetOptions {
   /** Milliseconds between reads while a turn runs. */
   pollMs?: number
   sleep?: (ms: number) => Promise<void>
+  /** Each door read's retry on a transient error (#691), one line each, for the run's report. Default: stderr. */
+  onRetry?: (line: string) => void
 }
 
 /** True for an email on `example.test` or a subdomain: the invented domain the seeded brands use. */
@@ -233,6 +235,8 @@ export function createProductTarget(opts: ProductTargetOptions): ProductTarget {
 
   /** Calls ended so far, each counted once whatever its outcome (#685: the close's progress check). */
   let callsDone = 0
+  // A retry is progress too (#689): each try ended, so a close waiting on a setup keeps waiting while a read retries.
+  const retry = { onRetry: (line: string) => { callsDone++; (opts.onRetry ?? ((l: string) => process.stderr.write(`${l}\n`)))(line) } }
   const counted = (run: RunSql): RunSql => async (sql) => {
     try {
       return await run(sql)
@@ -290,12 +294,12 @@ export function createProductTarget(opts: ProductTargetOptions): ProductTarget {
   let slackDoor: SlackDoor | undefined = opts.slackDoor
   const slackOf = (): SlackDoor => {
     if (!checked) throw new ProductTargetRefusal('the Slack door is made only after the eval-brand check: seed a case first')
-    slackDoor ??= createSlackDoor(counted(wranglerRunner({ database: opts.env[EVAL_D1_NAME] ?? '', config: opts.env[EVAL_WRANGLER_CONFIG] ?? '', env: opts.env })))
+    slackDoor ??= createSlackDoor(counted(wranglerRunner({ database: opts.env[EVAL_D1_NAME] ?? '', config: opts.env[EVAL_WRANGLER_CONFIG] ?? '', env: opts.env, retry })))
     return slackDoor
   }
   const writesOf = (): WriteDoor => {
     if (!checked) throw new ProductTargetRefusal('the write door is made only after the eval-brand check: seed a case first')
-    writeDoor ??= createWriteDoor(counted(wranglerRunner({ database: opts.env[EVAL_D1_NAME] ?? '', config: opts.env[EVAL_WRANGLER_CONFIG] ?? '', env: opts.env })))
+    writeDoor ??= createWriteDoor(counted(wranglerRunner({ database: opts.env[EVAL_D1_NAME] ?? '', config: opts.env[EVAL_WRANGLER_CONFIG] ?? '', env: opts.env, retry })))
     return writeDoor
   }
   let ready: Promise<void> | undefined
@@ -357,7 +361,7 @@ export function createProductTarget(opts: ProductTargetOptions): ProductTarget {
     if (notServed !== null) throw new ProductTargetRefusal(`refusing: ${notServed}`)
     // (a) the door only after the check passed; (b) and (c) are door.ts's.
     if (!door || !fetchDoor) {
-      const sql = counted(wranglerRunner({ database: opts.env[EVAL_D1_NAME] ?? '', config: opts.env[EVAL_WRANGLER_CONFIG] ?? '', env: opts.env }))
+      const sql = counted(wranglerRunner({ database: opts.env[EVAL_D1_NAME] ?? '', config: opts.env[EVAL_WRANGLER_CONFIG] ?? '', env: opts.env, retry }))
       door ??= createDoor(sql)
       fetchDoor ??= createFetchDoor(sql)
     }

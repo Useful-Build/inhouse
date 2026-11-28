@@ -564,6 +564,24 @@ describe('Neon\'s #618 review on the product target', () => {
     expect(calls).toEqual(['seeded', 'undo', 'lease back'])
   })
 
+  it('the Inhouse app\'s calls are progress too: a close waits on a Slack connect whose calls keep ending (#689)', async () => {
+    const calls: string[] = []
+    const { base } = stand({ writes: new FakeWrites() })
+    const slack = { account: async () => null, read: async () => ({ channels: [], messages: [], listed: [] }), seed: async () => {}, list: async () => ({ alertsGrant: null }), reset: async () => {} }
+    const target = createProductInjectionTarget({
+      paid: true, env: {}, setupQuietMs: 20,
+      inhouse: async () => { await new Promise((r) => setTimeout(r, 10)); return { status: 200, json: { connected: [] }, location: null } },
+      // Six Inhouse app calls of 10 ms each: three times the quiet bound, never quiet for 20 ms.
+      slackLink: { connect: async (api) => { for (let i = 0; i < 6; i++) await api('GET', '/api/tools'); calls.push('connected') }, disconnect: async () => {} },
+      base: { ...base, progress: () => 0, slackDoor: () => slack, async close() { calls.push('lease back') } } as unknown as ProductTarget,
+    })
+    const starting = target.start(kase('W15'), { rep: 1, canary: 'C' })
+    await new Promise((r) => setTimeout(r, 0))
+    await target.close!()
+    await expect(starting).rejects.toThrow(/the target is closing/)
+    expect(calls).toEqual(['connected', 'lease back'])
+  })
+
   it('without the Inhouse app a Slack plant is not served, and says which config it needs', () => {
     const t = createProductInjectionTarget({ paid: true, env: {}, base: stand({ writes: new FakeWrites() }).base, inhouse: null })
     expect(t.serves(kase('W29'))).toBe('a Slack plant needs the Inhouse app (INHOUSE_EVAL_INHOUSE_ORIGIN and INHOUSE_EVAL_INHOUSE_AUD), which is not set')

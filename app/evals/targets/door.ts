@@ -18,7 +18,7 @@
 // Break-glass, only once no run is going: a dead run's lease lapses after EVAL_LEASE_TTL_MS, or is removed at once with
 //   npx wrangler d1 execute inhouse-sbx-eval-db --remote --config <the sandbox config> --command "DELETE FROM settings WHERE owner = 'test-control' AND key = 'eval:lease'"
 import { PLANTED_NAME_LIST } from '../injection/names.ts'
-import { spawnSync } from 'node:child_process'
+import { spawn as spawnChild } from 'node:child_process'
 import { readFileSync } from 'node:fs'
 import { randomBytes } from 'node:crypto'
 import path from 'node:path'
@@ -26,6 +26,7 @@ import { MAX_JOB_BUDGET_USD, MIN_JOB_BUDGET_USD, capOk, parseHostlist } from '..
 import { TEST_SHOP_KEY, TEST_SHOP_OWNER } from '../../server/egress/test-shop.ts'
 import { D1_NOW_MS, DoorRefusal, sqlString } from './sql.ts'
 import type { RunSql } from './sql.ts'
+import { TransientDoorError, withRetries, type RetryOptions } from './retry.ts'
 
 // Stage 1 M3-R: these live in ./sql.ts (no Node import, for the write door); re-exported so every caller is unchanged.
 export { D1_NOW_MS, DoorRefusal, sqlString }
@@ -298,19 +299,118 @@ export interface WranglerOptions {
   rule?: 'eval' | 'morning-check'
   /** Reads the config file (tests). */
   readConfig?: (file: string) => string
-  /** Replaces the process spawn (tests). Gets the argv after `wrangler`. */
-  spawn?: (args: string[], env: Record<string, string | undefined>) => { status: number | null; stdout: string }
+  /**
+   * Replaces the process spawn (tests). Gets the argv after `wrangler`; `output` is stdout and stderr together, read only to
+   * tell a transient failure from a permanent one (never logged).
+   */
+  spawn?: (args: string[], env: Record<string, string | undefined>) => WranglerResult | Promise<WranglerResult>
+  /** A read's retries (#691): where each is reported, the backoff (tests). */
+  retry?: RetryOptions
+}
+
+export interface WranglerResult {
+  status: number | null
+  stdout: string
+  output?: string
 }
 
 /**
- * How long one wrangler call may take (#672): it runs synchronously, so a hung one would hold the whole process (a
- * cancel's close included). Killed past this; its null status is a refusal.
+ * How long one wrangler call may take (#672): killed past this, its whole process group (#690: npx and the wrangler
+ * under it), and its null status is a refusal (a read retries it, #691).
  */
 export const WRANGLER_TIMEOUT_MS = 120_000
+const WRANGLER_MAX_OUTPUT = 16 * 1024 * 1024
 
-const defaultSpawn: NonNullable<WranglerOptions['spawn']> = (args, env) => {
-  const r = spawnSync('npx', ['--no-install', 'wrangler', ...args], { cwd: path.resolve(import.meta.dirname, '../..'), encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'], env: env as NodeJS.ProcessEnv, maxBuffer: 16 * 1024 * 1024, timeout: WRANGLER_TIMEOUT_MS, killSignal: 'SIGKILL' })
-  return { status: r.status, stdout: r.stdout ?? '' }
+/** Process groups of wrangler calls still running: killed when the process exits, so none outlives the run (#690). */
+const liveGroups = new Set<number>()
+let exitHooked = false
+const killGroup = (pid: number) => {
+  try {
+    process.kill(-pid, 'SIGKILL')
+  } catch {
+    // Already gone (ESRCH): nothing left in the group to stop.
+  }
+}
+
+/**
+ * One command in its own process group (#690): `detached` makes the child a group leader, so a timeout kills npx and
+ * the wrangler it starts together (killing npx alone left wrangler running, free to land its SQL after the lease went
+ * back). Whatever is left in the group when the leader exits is killed too, and so is every live group when this
+ * process exits. Asynchronous, so a cancel's close is never stuck behind a call. `bin` replaces `npx --no-install
+ * wrangler` (tests).
+ */
+export function spawnWrangler(args: string[], env: Record<string, string | undefined>, o: { bin?: readonly string[]; timeoutMs?: number } = {}): Promise<WranglerResult & { timedOut: boolean }> {
+  const [cmd, ...pre] = o.bin ?? ['npx', '--no-install', 'wrangler']
+  const timeoutMs = o.timeoutMs ?? WRANGLER_TIMEOUT_MS
+  if (!exitHooked) {
+    exitHooked = true
+    process.on('exit', () => { for (const pid of liveGroups) killGroup(pid) })
+  }
+  return new Promise((resolve, reject) => {
+    const child = spawnChild(cmd!, [...pre, ...args], { cwd: path.resolve(import.meta.dirname, '../..'), env: env as NodeJS.ProcessEnv, stdio: ['ignore', 'pipe', 'pipe'], detached: true })
+    const pid = child.pid
+    let stdout = ''
+    let stderr = ''
+    let timedOut = false
+    let tooBig = false
+    const timer = setTimeout(() => {
+      timedOut = true
+      if (pid !== undefined) killGroup(pid)
+    }, timeoutMs)
+    if (pid !== undefined) liveGroups.add(pid)
+    const take = (into: 'out' | 'err') => (d: string) => {
+      if (into === 'out') stdout += d
+      else stderr += d
+      if (stdout.length + stderr.length > WRANGLER_MAX_OUTPUT && !tooBig) {
+        tooBig = true
+        if (pid !== undefined) killGroup(pid)
+      }
+    }
+    child.stdout.setEncoding('utf8').on('data', take('out'))
+    child.stderr.setEncoding('utf8').on('data', take('err'))
+    // The leader's exit: anything it left in its group goes too (a grandchild holding the pipes open included).
+    child.on('exit', () => { if (pid !== undefined) killGroup(pid) })
+    child.on('error', (e) => {
+      clearTimeout(timer)
+      if (pid !== undefined) liveGroups.delete(pid)
+      // npx missing or not runnable: a refusal (a bad setup, never retried), naming only the error's code.
+      reject(new DoorRefusal(`wrangler could not start (${(e as NodeJS.ErrnoException).code ?? e.name})`))
+    })
+    child.on('close', (code) => {
+      clearTimeout(timer)
+      if (pid !== undefined) liveGroups.delete(pid)
+      if (tooBig) reject(new DoorRefusal(`wrangler d1 execute answered more than ${WRANGLER_MAX_OUTPUT} bytes`))
+      else resolve({ status: timedOut ? null : code, stdout, output: `${stdout}\n${stderr}`, timedOut })
+    })
+  })
+}
+
+const defaultSpawn: NonNullable<WranglerOptions['spawn']> = (args, env) => spawnWrangler(args, env)
+
+/** One wrangler call at a time, as when they ran synchronously: a read never races a write of the same run. */
+let wranglerTail: Promise<unknown> = Promise.resolve()
+const oneAtATime = <T>(work: () => Promise<T>): Promise<T> => {
+  const p = wranglerTail.then(work, work)
+  wranglerTail = p.then(() => undefined, () => undefined)
+  return p
+}
+
+/** A statement that only reads (one SELECT, nothing after it): the only kind a transient failure retries (#691). */
+export const readOnlySql = (sql: string): boolean => /^\s*SELECT\b/i.test(sql) && !/;\s*\S/.test(sql)
+
+/**
+ * Why a failed wrangler call is clearly transient, as a fixed label, or null (#691). An auth refusal is never transient,
+ * whatever else the output says; nor is anything unrecognised (a bad config, a SQL error): those stop the run at once.
+ */
+export function wranglerTransient(r: WranglerResult): string | null {
+  if (r.status === null) return 'a timeout'
+  const out = r.output ?? r.stdout
+  if (/\b(401|403)\b|unauthori[sz]ed|authentication|not authori[sz]ed|forbidden|invalid (api )?token/i.test(out)) return null
+  if (/\b429\b|too many requests|rate.?limit/i.test(out)) return 'a 429 from the API'
+  if (/\b50[0-4]\b|internal server error|bad gateway|service unavailable|gateway time-?out/i.test(out)) return 'a 5xx from the API'
+  if (/ECONNRESET|ECONNREFUSED|ETIMEDOUT|ENOTFOUND|EAI_AGAIN|EPIPE|socket hang up|fetch failed|network (error|connection)/i.test(out)) return 'a network error'
+  if (/timed? ?out/i.test(out)) return 'a timeout'
+  return null
 }
 
 /** `wrangler d1 execute <name> --remote --json --command <sql>`, for a database that passes its rule (`rule`) only. */
@@ -339,14 +439,19 @@ export function wranglerQueries(o: WranglerOptions): (sql: string) => Promise<Qu
   // Wrangler works in the sandbox account named by CF_SANDBOX_ACCOUNT_ID, never one the shell happens to default to.
   const env = { ...o.env, CLOUDFLARE_ACCOUNT_ID: o.env.CF_SANDBOX_ACCOUNT_ID }
   const spawn = o.spawn ?? defaultSpawn
-  return async (sql) => {
-    const r = spawn(['d1', 'execute', database, '--remote', '--config', configPath, '--json', '--yes', '--command', sql], env)
-    if (r.status === null) throw new DoorRefusal(`wrangler d1 execute did not end (killed after ${WRANGLER_TIMEOUT_MS / 1000} s, or by a signal)`)
-    if (r.status !== 0) throw new DoorRefusal(`wrangler d1 execute exited ${r.status}`)
+  const once = async (sql: string, retryable: boolean): Promise<QueryResult[]> => {
+    const r = await oneAtATime(async () => spawn(['d1', 'execute', database, '--remote', '--config', configPath, '--json', '--yes', '--command', sql], env))
+    const failed = r.status === null ? new DoorRefusal(`wrangler d1 execute did not end (killed after ${WRANGLER_TIMEOUT_MS / 1000} s, or by a signal)`) : r.status !== 0 ? new DoorRefusal(`wrangler d1 execute exited ${r.status}`) : null
+    if (failed) {
+      const why = retryable ? wranglerTransient(r) : null
+      throw why ? new TransientDoorError(why, failed) : failed
+    }
     try {
       return JSON.parse(r.stdout) as QueryResult[]
     } catch {
       throw new DoorRefusal('wrangler d1 execute answered something that is not JSON')
     }
   }
+  // A read retries a transient failure (#691); a write never does: it may have landed.
+  return async (sql) => (readOnlySql(sql) ? withRetries('a D1 read through wrangler', () => once(sql, true), o.retry) : once(sql, false))
 }
