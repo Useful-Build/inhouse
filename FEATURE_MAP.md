@@ -147,7 +147,7 @@ Chat: composer files
 Chat: Google Drive and Slack stubs
   Path:     composer -> Attach -> From Google Drive; answer -> More -> Send to Slack
   Selector: menuitem "From Google Drive", menuitem "Send to Slack", toast
-  Expected: demo-only Attach items (`From Google Drive`, `Screenshot of this page`) and `Send to Slack` in the demo say "<What> isn't connected in this demo." and change nothing; the approver's "Ask Leo" button says the same (`sample-data.spec.ts`). In the product build `From Google Drive` and `Screenshot of this page` are hidden (`src/lib/product-flow.ts`)
+  Expected: demo-only Attach items (`From Google Drive`, `Screenshot of this page`) and `Send to Slack` in the demo say "<What> isn't connected in this demo." and change nothing; the approver's "Ask Leo" left with the drafts that carried it (they're findings since #726, and the product has no approver note). In the product build `From Google Drive` and `Screenshot of this page` are hidden (`src/lib/product-flow.ts`)
   Covered:  e2e/not-connected-stubs.spec.ts, src/lib/product-flow.test.ts, e2e/real/product-hides.spec.ts (the product's Attach menu has Upload files and neither stub)
 
 Chat: Dictate

@@ -87,7 +87,7 @@ test('Palette: open a chat and a settings page, run New chat, Escape gives focus
 
 test('Palette over the problem panel: Escape closes only the palette; the palette search ignores internal ids', async ({ fx, page }) => {
   await start(page, fx)
-  await page.getByRole('article', { name: 'Ridge 30L Pack runs out in 9 days' }).getByRole('button', { name: 'Review' }).click()
+  await page.getByRole('article', { name: 'Ridge 30L Pack runs out in 9 days' }).getByRole('button', { name: 'Ridge 30L Pack runs out in 9 days', exact: true }).click()
   const panel = page.getByRole('dialog').filter({ hasText: 'Ridge 30L Pack' })
   await expect(panel).toBeVisible()
   await page.keyboard.press('ControlOrMeta+k')

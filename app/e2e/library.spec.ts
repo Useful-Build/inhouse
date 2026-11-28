@@ -6,7 +6,7 @@ import { atRest } from './states.js'
 async function start(page: Page, hash = '#/library') {
   await fxFor(page, undefined).seed({ demo: { ambient: 'Always' } })
   await page.goto('/?demo' + hash)
-  await expect(page.getByRole('heading', { level: 1 })).toHaveText(hash === '#/library' ? 'All files' : /things need you/)
+  await expect(page.getByRole('heading', { level: 1 })).toHaveText(hash === '#/library' ? 'All files' : /left to approve today/)
 }
 
 const TABS = ['All', 'Images', 'Documents', 'Code', 'Audio and video', 'Other']
@@ -126,7 +126,7 @@ test('Masonry, grid and list show the same files; list has name, type, place, si
   for (const h of ['Name', 'Type', 'Place', 'Size', 'Date']) await expect(page.getByText(h, { exact: true }).first()).toBeVisible()
   const row = cards(page).filter({ hasText: 'amazon-fee-reimbursement-case.pdf' })
   await expect(row).toContainText('PDF')
-  await expect(row).toContainText('Approval: Ask Dana to claim $1,240 from Amazon')
+  await expect(row).toContainText('Today: Amazon paid out $1,240 less than expected')
   await expect(row).toContainText('102 KB')
   await expect(row).toContainText('6:06 AM')
   await shot(page, 'library-list')

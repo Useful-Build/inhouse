@@ -23,7 +23,7 @@ async function resetDemo(page: Page) {
   await page.getByRole('button', { name: /Demo switches/ }).click()
   await page.getByRole('button', { name: 'Reset demo' }).click()
   await page.getByRole('button', { name: 'Close demo switches' }).click()
-  await expect(page.getByRole('heading', { level: 1 }).first()).toContainText('things need you')
+  await expect(page.getByRole('heading', { level: 1 }).first()).toContainText('left to approve today')
 }
 
 test('Sample photos show for Sam and the team; Sam uploads, reloads, removes and resets', async ({ fx, page }) => {

@@ -18,7 +18,7 @@ async function resetDemo(page: Page) {
   await page.getByRole('button', { name: /Demo switches/ }).click()
   const switches = page.getByRole('dialog', { name: 'Demo switches' })
   await switches.getByRole('button', { name: 'Reset demo' }).click()
-  await expect(page.getByRole('heading', { level: 1 }).first()).toContainText('things need you')
+  await expect(page.getByRole('heading', { level: 1 }).first()).toContainText('left to approve today')
   await page.getByRole('button', { name: 'Close demo switches' }).click()
 }
 

@@ -136,9 +136,9 @@ test('Dark, by keyboard: the palette, Help, the team window, the account menu an
 })
 
 test('Dark, by keyboard: the problem panel, the trace window, a file viewer and a confirm question open and give focus back', async ({ fx, page }) => {
-  // The review window, from a Today card's Review button: opened with focus on itself.
+  // The review window, from a Today card's title (a finding's, since #726): opened with focus on itself.
   await open(page, fx, '#/today', 'Good morning, Sam.')
-  const review = page.getByRole('article').filter({ hasText: 'Ridge 30L Pack runs out in 9 days' }).getByRole('button', { name: 'Review' })
+  const review = page.getByRole('article').filter({ hasText: 'Ridge 30L Pack runs out in 9 days' }).getByRole('button', { name: 'Ridge 30L Pack runs out in 9 days', exact: true })
   await press(review)
   const panel = page.getByRole('dialog', { name: 'Ridge 30L Pack runs out in 9 days' })
   await opensQuiet(page, panel)

@@ -136,7 +136,7 @@ test('Toasts: a held approval is never pushed out, not even by four Undo toasts 
   await approveOnCard(page, PAYOUT)
   await expect(toast(page, HELD)).toHaveCount(1)
   // Four snoozes, each with Undo, after the held approval: the fifth toast pushes out the oldest snooze, never the hold.
-  for (const title of [STUCK, 'Ridge 30L Pack runs out in 9 days', 'Trail Shell Jacket', 'Amazon paid out']) {
+  for (const title of [STUCK, 'Ridge 30L Pack runs out in 9 days', 'Trail Shell Jacket', 'PO-1187 from Kestrel']) {
     await card(page, title).getByRole('button', { name: 'More' }).click()
     await page.getByRole('menuitem', { name: 'Snooze until tomorrow' }).click()
     await expect(page.getByRole('menu')).toHaveCount(0)

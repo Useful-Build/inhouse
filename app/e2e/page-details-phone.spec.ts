@@ -52,7 +52,7 @@ test('Phone: Settings opens on its menu, a page replaces it, and Back returns to
   expect(await page.evaluate(() => history.length)).toBe(entries)
   // So the browser's Back from the menu leaves Settings (it does not land on the page again).
   await page.goBack()
-  await expect(page.getByRole('heading', { level: 1 })).toContainText('things need you')
+  await expect(page.getByRole('heading', { level: 1 })).toContainText('left to approve today')
   await page.goForward()
   await expect(page.getByRole('heading', { level: 1, name: 'Settings' })).toBeVisible()
   await nav.getByRole('button', { name: 'Spending cap' }).click()
@@ -67,7 +67,7 @@ test('Phone: Settings opens on its menu, a page replaces it, and Back returns to
 
   // A link to a settings page opens that page, not the menu.
   await page.evaluate(() => { location.hash = '#/today' })
-  await expect(page.getByRole('heading', { level: 1 })).toContainText('things need you')
+  await expect(page.getByRole('heading', { level: 1 })).toContainText('left to approve today')
   await page.evaluate(() => { location.hash = '#/settings/team-modes' })
   await expect(page.getByRole('heading', { level: 1, name: 'Models' })).toBeVisible()
   await expect(page.getByRole('button', { name: 'Back to settings' })).toBeVisible()

@@ -54,7 +54,7 @@ async function resetDemo(page: Page) {
   await page.getByRole('button', { name: /Demo switches/ }).click()
   await page.getByRole('button', { name: 'Reset demo' }).click()
   await page.getByRole('button', { name: 'Close demo switches' }).click()
-  await expect(page.getByRole('heading', { level: 1 }).first()).toContainText('things need you')
+  await expect(page.getByRole('heading', { level: 1 }).first()).toContainText('left to approve today')
 }
 const settingsPage = async (page: Page, label: string) => {
   await side(page).getByRole('button', { name: /account and settings/i }).click()
@@ -568,7 +568,7 @@ test('Activity: every time sits on one line', async ({ page, fx }) => {
   await shot(page, 'activity-times')
 })
 
-test('The Klaviyo request shows its status, never a date, and hides on First day; Ask Leo says it isn\'t connected; the audit CSV has plain spaces', async ({ page, fx }) => {
+test('The Klaviyo request shows its status, never a date, and hides on First day; a finding has no approver to ask; the audit CSV has plain spaces', async ({ page, fx }) => {
   await start(fx)
   const team = page.getByRole('dialog', { name: 'Your Inhouse team' })
   /** The team window, from the account menu's "Your Inhouse team", once the item counts `open` requests. */
@@ -588,13 +588,11 @@ test('The Klaviyo request shows its status, never a date, and hides on First day
   await page.keyboard.press('Escape')
   await expect(team).toHaveCount(0)
 
-  // The approver's Ask button says it isn't wired up, as a sentence.
+  // The oversell is a finding since #726 (the product has no approver note), so its window names no approver to ask.
   await page.getByRole('article', { name: 'Trail Shell Jacket (M, Olive) is oversold by 5' }).click({ position: { x: 12, y: 12 } })
   const panel = page.getByRole('dialog')
-  // Asking the approver is in the window's More menu.
-  await panel.getByRole('button', { name: 'More', exact: true }).click()
-  await page.getByRole('menu', { name: 'More actions' }).getByRole('menuitem', { name: 'Ask Leo' }).click()
-  await expect(page.locator('[data-toast]').filter({ hasText: "Asking Leo isn't connected in this demo." })).toBeVisible()
+  await expect(panel).toContainText('pause the Olive M variant on Shopify')
+  await expect(panel).not.toContainText(/Ask Leo|signs off/)
   await page.keyboard.press('Escape')
   await expect(panel).toHaveCount(0)
 

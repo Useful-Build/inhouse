@@ -47,7 +47,7 @@ test('All chats has the plain background; full-shell Skyspace sits behind sideba
   await shot(page, 'all-chats-1440')
 
   await page.goto('/?demo#/today')
-  await expect(page.getByRole('heading', { level: 1 })).toContainText('things need you')
+  await expect(page.getByRole('heading', { level: 1 })).toContainText('left to approve today')
   await skyspaceBehind(page, 'hero', ['#sidebar', '.today-card', '[data-composer]'])
 
   // A chat with messages keeps a softly quieted Skyspace background behind messages.

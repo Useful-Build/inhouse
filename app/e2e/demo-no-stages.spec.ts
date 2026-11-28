@@ -65,6 +65,7 @@ for (const scenario of ['Normal', 'First day', 'Cap reached'] as const) {
     await go(page, '#/usage')
     await expect(h1(page, 'Usage')).toBeVisible()
     const tabs = page.getByRole('radiogroup', { name: 'Break down by' }).getByRole('radio')
+    await expect(tabs.first()).toBeVisible()
     const nTabs = await tabs.count()
     expect(nTabs).toBeGreaterThan(2)
     for (let i = 0; i < nTabs; i++) {
@@ -82,6 +83,7 @@ for (const scenario of ['Normal', 'First day', 'Cap reached'] as const) {
     await page.getByRole('menuitem', { name: 'Help and guides' }).click()
     const help = page.getByRole('dialog', { name: 'Help and guides' })
     const guides = help.locator('[data-slot="accordion-trigger"]')
+    await expect(guides.first()).toBeVisible()
     const nGuides = await guides.count()
     expect(nGuides).toBeGreaterThan(0)
     for (let i = 0; i < nGuides; i++) {
@@ -121,7 +123,7 @@ test("every Today card's window, every chat and every tool page name no stage", 
     await expect(window).toHaveCount(0)
   }
   await go(page, '#/chats/all')
-  await expect(h1(page, 'All chats')).toBeVisible()
+  await expect(page.locator('main [data-chat-open]').first()).toBeVisible()
   const nChats = await page.locator('main [data-chat-open]').count()
   expect(nChats).toBeGreaterThan(5)
   for (let i = 0; i < nChats; i++) {
@@ -135,7 +137,7 @@ test("every Today card's window, every chat and every tool page name no stage", 
     await expectNoStageWords(page, `the chat "${name}"`)
   }
   await go(page, '#/tools')
-  await expect(h1(page, 'Tools')).toBeVisible()
+  await expect(page.locator('[data-tool-row]').first()).toBeVisible()
   const nTools = await page.locator('[data-tool-row]').count()
   expect(nTools).toBeGreaterThan(5)
   for (let i = 0; i < nTools; i++) {
@@ -153,7 +155,7 @@ test("every skill's page and every routine's panel: no stage, no Works from, no 
   test.setTimeout(120_000)
   await fx.seed({})
   await fx.open('#/skills')
-  await expect(h1(page, 'Skills')).toBeVisible()
+  await expect(page.locator('main [data-skill-open]').first()).toBeVisible()
   const names = (await page.locator('main [data-skill-open]').allInnerTexts()).map(n => n.trim())
   expect(names.length).toBeGreaterThan(5)
   for (const [i, name] of names.entries()) {

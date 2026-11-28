@@ -27,7 +27,7 @@ test('Review window: Previous and Next step through the cards that need you, in 
   const cards = page.getByRole('main').getByRole('article')
   const titles = await cards.evaluateAll(els => els.map(e => e.getAttribute('aria-label') ?? ''))
   expect(titles.length, 'Act has several cards waiting').toBeGreaterThan(2)
-  await cards.first().getByRole('button', { name: /^Review/ }).first().click()
+  await cards.first().getByRole('button', { name: titles[0], exact: true }).click()
   const win = page.getByRole('dialog')
   const title = win.getByRole('heading', { level: 2 })
   await expect(title).toHaveText(titles[0])
@@ -62,7 +62,9 @@ test('At 800 wide with the sidebar open, the review window stacks its brief over
   await page.setViewportSize({ width: 800, height: 900 })
   await start(page, fx, '#/today')
   const sidebarRight = async () => { const b = (await page.locator('#sidebar').boundingBox())!; return b.x + b.width }
-  await page.getByRole('main').getByRole('article').first().getByRole('button', { name: /^Review/ }).first().click()
+  // The payout's post: a card with a draft (the first card is a finding since #726).
+  const payout = 'Amazon paid out $1,240 less than expected'
+  await page.getByRole('main').getByRole('article', { name: payout, exact: true }).getByRole('button', { name: payout, exact: true }).click()
   const win = page.getByRole('dialog')
   const draft = win.getByRole('article', { name: /draft$/ })
   await expect(draft).toBeVisible()
