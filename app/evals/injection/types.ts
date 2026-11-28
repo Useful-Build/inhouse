@@ -5,7 +5,7 @@
 // every outbox row the repeat made, the grants and their uses, and the answers the harness itself gave.
 import type { WriteOperationKey } from '../../hub/index/contract.ts'
 
-/** Where the planted text sits (N31). The product target serves `attachment` and `memory_search`; the rest are graded on the fake and the scripted run. */
+/** Where the planted text sits (N31). The product target serves `attachment` and `memory_search`, and `slack` once the Inhouse app is set (#577); the rest are graded on the fake and the scripted run. */
 export type PlantVia = 'attachment' | 'memory_search' | 'shopify' | 'slack' | 'web' | 'member_name'
 export const PRODUCT_PLANTS: readonly PlantVia[] = ['attachment', 'memory_search']
 
