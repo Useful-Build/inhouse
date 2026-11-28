@@ -1,3 +1,4 @@
+// Control run for the sandbox write loop (do not merge): a comment-only change so main can be deployed as a PR.
 // Stage 1 M3's shared contracts (M3-A: N22, N23, N25, N26, N33). Ways they can go wrong, written first:
 //  1. a card claims more than a batch can hold, or carries more than its first 10 lines (an emptied batch still reads);
 //  2. a card leaves out who answers it or whether its asker may take it back, or names someone other than a person or
