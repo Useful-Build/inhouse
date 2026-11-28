@@ -116,7 +116,8 @@ test('typed long task runs on the demo clock as a long job with carry-on note (J
     await advanceUntil(() => running.getByText('1 helper working').isVisible().catch(() => false), '1 helper working')
     await expect(running).toContainText('Joining 60-day ShipBob return postage · 1 helper working')
 
-    await advanceUntil(() => running.getByText('Writing final margin comparison · 0 helpers working').isVisible().catch(() => false), '0 helpers working')
+    await advanceUntil(() => running.getByText('Writing final margin comparison').isVisible().catch(() => false), '0 helpers step')
+    await expect(running).not.toContainText('helper working')
 
     const finished = page.locator('[data-job-status="ended"]')
     await advanceUntil(() => finished.getByRole('heading', { name: 'Long job finished' }).isVisible().catch(() => false), 'Long job finished')
