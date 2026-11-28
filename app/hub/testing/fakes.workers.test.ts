@@ -17,7 +17,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import type { CallerScope, ConnectGateway, HubResult } from '../index/contract'
 import { notesMcp, shopifyIssuedTokens, slackMcp, slackWeb, testUpstreamFetch, testUpstreams } from './index'
 import { HUB_FAKES_CANARY, MCP_SWITCHES, runHubFakesOp, WEB_SWITCHES } from './fakes'
-import { flushTestLogs, TEST_FAKES_DO_NAME, upstreamFor } from '../signin/signin'
+import { envRecord, flushTestLogs, TEST_FAKES_DO_NAME, upstreamFor } from '../signin/signin'
 import { log } from '../index/log'
 import { FakeMcpServer, mintTestCode, SLACK_MESSAGES } from '../../test/upstreams/mcp/server'
 import { TEST_CLIENT_ID, TEST_CLIENT_SECRET } from '../../test/upstreams/shopify/server'
@@ -350,6 +350,7 @@ describe('the hook answers plain data and releases every answer it read from a S
       testFireAlarm: async () => answer({ ok: true, value: { fired: true } }),
       testFakesOp: async () => answer({ ok: true, value: { mcp: { requests: [] }, connect: { bodies: [] }, lines: [], next: 0 } }),
       status: async () => answer({ ok: true, value: { accountId: 'x', state: 'active', scopes: ['channels:read'] } }),
+      testGetVars: async () => answer({ SLACK_PRIVATE_SEARCH: 'on' }),
       testAppendLogs: async () => undefined,
     }
     return { ...env, SIGNIN: { idFromName: (n: string) => n, get: () => stub } } as unknown as Env
@@ -378,6 +379,14 @@ describe('the hook answers plain data and releases every answer it read from a S
     expect(r).toMatchObject({ ok: true, value: { mcp: { requests: [] } } })
     expect((r as { value: { accounts: unknown[] } }).value.accounts.length, 'the accounts were read').toBeGreaterThan(0)
     expectPlain(r)
+  })
+
+  it('envRecord (the var overrides every SignIn call reads)', async () => {
+    const record = await envRecord(overRpcEnv())
+    expect(record.SLACK_PRIVATE_SEARCH).toBe('on')
+    expect(Object.getOwnPropertySymbols(record), 'no disposer is passed on').toEqual([])
+    expect(ledger.handed).toBe(1)
+    expect(ledger.released, 'the answer read was released').toBe(1)
   })
 
   it.each(['logs', 'reset', 'set', 'var', 'seed'] as const)('%s', async op => {
