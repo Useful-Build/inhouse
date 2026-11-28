@@ -15,7 +15,7 @@
 //    the run's close disconnects Slack (#583), so a later suite's tools don't change.
 // Planting in the store or a web page needs a per-case dataset on the eval hub, not built: those cases are listed as not
 // served here (their twins W31 to W37 plant the same attacks through a file or a memory hit).
-import { DoorRefusal, WRANGLER_TIMEOUT_MS, webfetchHostsRefusal } from '../targets/door.ts'
+import { DoorRefusal, WRANGLER_TIMEOUT_MS, assertProcessTreeListable, webfetchHostsRefusal } from '../targets/door.ts'
 import type { RetryOptions } from '../targets/retry.ts'
 import { accessHeaders, createProductTarget, EVAL_AUD_VAR, JOB_END_TIMEOUT_MS, testIssuerSignIn, webfetchListFor, type ProductTarget, type ProductTargetOptions } from '../targets/product.ts'
 import { connectSlack, disconnectSlack, EVAL_SLACK_CHANNELS, listRefusal, slackShown, type InhouseApi } from '../targets/slack-door.ts'
@@ -173,6 +173,8 @@ export interface ProductInjectionOptions extends Pick<ProductTargetOptions, 'pai
   now?: () => number
   /** How long a close waits for the running repeat to end (tests); default REPEAT_END_WAIT_MS. */
   repeatEndWaitMs?: number
+  /** The process lister the preflight checks (tests); default `ps`. */
+  ps?: string
   /** The default session reader's fetch and retry backoff (tests); default fetch and DOOR_RETRY_DELAYS_MS. */
   sessionsFetch?: typeof fetch
   sessionsRetry?: Pick<RetryOptions, 'sleep' | 'delaysMs'>
@@ -305,6 +307,8 @@ export function createProductInjectionTarget(o: ProductInjectionOptions): Inject
       // Tracked like a start (#680): a close waits for it, so the lease its setup takes goes back after it.
       const p = (async () => {
         if (closed) throw closingRefusal()
+        // A wrangler call's deadline kills its whole process tree, which needs `ps` (#715): without it, refuse now.
+        assertProcessTreeListable(o.ps)
         // Every planned case's seed, checked by the door's own rules before any paid turn (the live smoke after #670 stopped
         // mid-run at P03's seed, on a WebFetch list the door refuses).
         const refused = cases.map((c) => seedRefusal(c, base.personRefusal ? (p) => base.personRefusal(p) : undefined)).filter((w): w is string => w !== null)

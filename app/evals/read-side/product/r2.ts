@@ -10,6 +10,7 @@
 // session store's exact shape (transcriptKey) under a chat id of the eval chats' shape, or nothing is read.
 import { DoorRefusal } from '../../targets/door.ts'
 import { TransientDoorError, withRetries, type RetryOptions } from '../../targets/retry.ts'
+import { R2_PROBE_BODY, R2_PROBE_KEY } from '../../r2-probe.ts'
 import { EVAL_BUCKET, R2_API_BASE, TRANSCRIPT_CAPS, transcriptKey } from '../../exfiltration/store-data/transcripts.ts'
 
 /** The chats the product target makes: `eval-` and 24 hex (targets/product.ts rid). */
@@ -18,7 +19,7 @@ const ACCOUNT_ID = /^[0-9a-f]{32}$/
 const PER_PAGE = 1000
 
 export interface SessionReader {
-  /** One LIST of one key under `sessions/`: refuses a token without R2 read or a missing bucket, before any spend. */
+  /** A LIST under `sessions/`, then one GET of an eval chat's first object or, with none, the probe object: refuses a token without R2 read or a missing bucket, before any spend. */
   preflight(): Promise<void>
   /** Every stored part under the chat, in key order (part ids sort in append order). */
   parts(chatId: string): Promise<Uint8Array[]>
@@ -122,7 +123,28 @@ export function createSessionReader(o: SessionReaderOptions): SessionReader {
     return body
   }
   return {
-    preflight: () => refusing(async () => { await page(new URLSearchParams({ prefix: 'sessions/', per_page: '1' }), 'preflight') }),
+    preflight: () => refusing(async () => {
+      await page(new URLSearchParams({ prefix: 'sessions/', per_page: '1' }), 'preflight')
+      // One real GET (the live smoke after #670): a token can list a bucket and still be refused its objects. An earlier eval
+      // chat's first part is enough; with none in the bucket, the probe object the deployer's seed put (r2-probe.ts), so an empty
+      // bucket never passes without a read. This file stays GET only: the run's token needs no R2 write.
+      const first = await page(new URLSearchParams({ prefix: 'sessions/eval-', per_page: '1' }), 'preflight list')
+      if (!Array.isArray(first.result)) throw new DoorRefusal('R2 preflight list answered no result array')
+      const item = first.result[0] as { key?: unknown; size?: unknown } | undefined
+      let key: string = R2_PROBE_KEY
+      if (item !== undefined) {
+        const chat = typeof item.key === 'string' ? item.key.split('/')[1] ?? '' : ''
+        if (typeof item.key !== 'string' || !EVAL_CHAT.test(chat) || !transcriptKey(chat).test(item.key)) throw new DoorRefusal(`R2 preflight list holds ${JSON.stringify(item.key)}, not a transcript key: refusing to read it`)
+        if (!Number.isInteger(item.size) || (item.size as number) < 0 || (item.size as number) > caps.objectBytes) throw new DoorRefusal(`R2 object ${item.key} has no size or is over the cap`)
+        key = item.key
+      }
+      const r = await get(`${base}/${key.split('/').map(encodeURIComponent).join('/')}`, 'preflight get')
+      if (r.status === 404 && item === undefined) throw new DoorRefusal(`R2 preflight get answered 404: no eval chat and no probe object ${R2_PROBE_KEY} in ${allowed}, so reading an object can't be proven (seed it: scripts/sandbox/seed-remote.mjs puts it, or once by hand: wrangler r2 object put ${allowed}/${R2_PROBE_KEY} --remote --file <a file holding ${JSON.stringify(R2_PROBE_BODY.trim())}>)`)
+      if (r.status !== 200) {
+        const words = r.status === 401 || r.status === 403 ? ': CLOUDFLARE_API_TOKEN can list the bucket but not read its objects' : ''
+        throw new DoorRefusal(`R2 preflight get answered ${r.status}${words}`)
+      }
+    }),
     parts: (chatId) => refusing(async () => {
       if (!EVAL_CHAT.test(chatId)) throw new DoorRefusal(`refusing: ${JSON.stringify(chatId)} is not an eval chat id`)
       const prefix = `sessions/${chatId}/`

@@ -29,6 +29,10 @@ const scenarios = {
   'auth-10000': { status: 403, body: { success: false, errors: [{ code: 10000, message: 'Authentication error' }], messages: [], result: null } },
   'auth-7403': { status: 403, body: { success: false, errors: [{ code: 7403, message: 'The given account is not valid or is not authorized to access this service' }], messages: [], result: null } },
   'db-not-found-7404': { status: 404, body: { success: false, errors: [{ code: 7404, message: 'Database not found' }], messages: [], result: null } },
+  // #717: a Retry-After on answers that aren't a rate limit (wrangler sets retryAfterMs from it on any status).
+  'not-found-7404-retry-after': { status: 404, headers: { 'retry-after': '5' }, body: { success: false, errors: [{ code: 7404, message: 'Database not found' }], messages: [], result: null } },
+  'waf-challenge-retry-after': { status: 403, headers: { 'retry-after': '5', 'cf-mitigated': 'challenge', 'cf-ray': '0123456789abcdef-LHR' }, html: '<html><body>Just a moment...</body></html>' },
+  'malformed-404-retry-after': { status: 404, headers: { 'retry-after': '5' }, html: '<html><body>Not Found</body></html>' },
   'cpu-limit-reset': { status: 500, body: { success: false, errors: [{ code: 7500, message: 'D1 DB exceeded its CPU time limit and was reset.' }], messages: [], result: null } },
 }
 
@@ -45,7 +49,7 @@ for (const [name, s] of Object.entries(scenarios)) {
   const hits = []
   const server = http.createServer((req, res) => {
     hits.push(`${req.method} ${req.url}`)
-    if (s.html) { res.writeHead(s.status, { 'content-type': 'text/html' }); res.end(s.html); return }
+    if (s.html) { res.writeHead(s.status, { 'content-type': 'text/html', ...(s.headers ?? {}) }); res.end(s.html); return }
     res.writeHead(s.status, { 'content-type': 'application/json', ...(s.headers ?? {}) })
     res.end(JSON.stringify(s.body))
   })

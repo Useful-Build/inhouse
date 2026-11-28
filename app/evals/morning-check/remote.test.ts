@@ -17,6 +17,8 @@
 // 10. two runs hold the eval lease at once, a run starts over another's test shop override, the lease outlives the run
 //     (exit, signal), the cap isn't pinned or reads back other than MORNING_CHECK_CAP, or a run goes past its --budget.
 import { readdirSync, readFileSync } from 'node:fs'
+import { tmpdir } from 'node:os'
+import path from 'node:path'
 import fc from 'fast-check'
 import { DatabaseSync } from 'node:sqlite'
 import { fileURLToPath } from 'node:url'
@@ -358,12 +360,12 @@ describe('run.mjs stop handlers (MEDIUM 3)', () => {
     return { handlers, log, exit }
   }
 
-  it.each([['SIGINT', 130], ['SIGTERM', 143]] as const)('%s clears the override, awaited, then exits %i', async (signal, code) => {
+  it.each([['SIGINT', 130], ['SIGHUP', 129], ['SIGTERM', 143]] as const)('%s clears the override, awaited, then exits %i', async (signal, code) => {
     let release: () => void = () => {}
     const cleared = new Promise<void>(done => { release = done })
     const order: string[] = []
     const s = signals(async () => { order.push('clear started'); await cleared; order.push('clear done'); return null }, () => void order.push('closed'))
-    expect([...s.handlers.keys()]).toEqual(['SIGINT', 'SIGTERM'])
+    expect([...s.handlers.keys()]).toEqual(['SIGINT', 'SIGHUP', 'SIGTERM'])
     s.handlers.get(signal)!()
     expect(s.log.filter(l => l.startsWith('exit'))).toEqual([])
     release()
@@ -839,7 +841,7 @@ describe('the graded run (failure 10)', () => {
     expect(readFileSync(new URL('./remote.ts', import.meta.url), 'utf8')).toContain("\nexport const MORNING_CHECK_CAP = '$50'\n")
   })
 
-  function fakes(o: { spent?: readonly number[]; capMinor?: number; shop?: string | null; otherLease?: boolean; elsewhere?: boolean; chatStatus?: number; takeGate?: Promise<void>; tools?: unknown } = {}) {
+  function fakes(o: { spent?: readonly number[]; capMinor?: number; shop?: string | null; otherLease?: boolean; elsewhere?: boolean; chatStatus?: number; takeGate?: Promise<void>; tools?: unknown; ps?: string } = {}) {
     const log: string[] = []
     const spent = [...(o.spent ?? [1000])]
     let last = spent[0]!
@@ -863,8 +865,14 @@ describe('the graded run (failure 10)', () => {
       last = spent.length ? spent.shift()! : last
       return { status: 200, json: { total: { minor: last }, cap: { minor: o.capMinor ?? 5000 } } }
     }
-    return { log, g: gradedRun({ door, admin, tag: 'morning-check:abc1234:1', label: 'Fast', budgetUsd: 5, probeId: () => 'eval-probe-1' }) }
+    return { log, g: gradedRun({ door, admin, tag: 'morning-check:abc1234:1', label: 'Fast', budgetUsd: 5, probeId: () => 'eval-probe-1', ...(o.ps === undefined ? {} : { ps: o.ps }) }) }
   }
+
+  it('start refuses when ps can\'t list the processes (#740), before the lease is taken or any call is made', async () => {
+    const { log, g } = fakes({ ps: path.join(tmpdir(), 'no-such-ps') })
+    await expect(g.start()).rejects.toThrow(/the process tree could not be listed .*the run stops/)
+    expect(log).toEqual([])
+  })
 
   it('start: the lease, the probe chat read back, the override check, the cap pinned and read back, then the Default model', async () => {
     const { log, g } = fakes()

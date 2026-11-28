@@ -1,0 +1,26 @@
+exit 1
+--- stdout
+
+{
+  "error": {
+    "text": "The Cloudflare API responded with a WAF block page instead of the expected JSON response",
+    "notes": [
+      {
+        "text": "Cloudflare's firewall (WAF) blocked this API request. This is usually a false positive."
+      },
+      {
+        "text": "Cloudflare Ray ID: 0123456789abcdef-LHR"
+      },
+      {
+        "text": "If the issue persists, please open a Cloudflare Support ticket and include the Ray ID above."
+      },
+      {
+        "text": "POST /accounts/0123456789abcdef0123456789abcdef/d1/database/00000000-0000-4000-8000-000000000000/query -> 403 Forbidden"
+      }
+    ],
+    "kind": "error",
+    "name": "APIError",
+    "retryAfterMs": 5000
+  }
+}
+--- stderr

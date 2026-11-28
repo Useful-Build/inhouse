@@ -5,6 +5,7 @@
 import path from 'node:path'
 import { parseArgs } from 'node:util'
 import { CASES } from './cases.ts'
+import { giveBackOnSignals } from './run-cancel.ts'
 import { buildReport } from './report.ts'
 import { estimateUsd, runEvals } from './runner.ts'
 import { createFakeTarget } from './targets/fake.ts'
@@ -62,12 +63,7 @@ const close = async (): Promise<boolean> => {
     return false
   }
 }
-for (const [signal, code] of [['SIGINT', 130], ['SIGTERM', 143]] as const) {
-  process.once(signal, () => {
-    console.error(`${signal}: giving back the eval lease before exiting`)
-    void close().then(() => process.exit(code))
-  })
-}
+giveBackOnSignals(close)
 let result: Awaited<ReturnType<typeof runEvals>>
 try {
   result = await runEvals({
