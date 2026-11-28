@@ -18,7 +18,7 @@ const shot = (page: Page, name: string) => page.screenshot({ path: test.info().o
 const PAGES: [Stage, string, string, string][] = [
   ['Watch', 'Normal', '#/today', '6 things need you today.'],
   ['Watch', 'Normal', '#/approvals', "In Act, today's 6 fixes would be waiting here"],
-  ['Watch', 'Normal', '#/chats', 'Approvals and routines start in Act'],
+  ['Watch', 'Normal', '#/chats/stuck', 'Approvals and routines start in Act'],
   ['Act', 'Normal', '#/activity', 'Activity'],
   ['Run', 'Normal', '#/activity', 'Chased Kestrel'],
   ['Act', 'Normal', '#/routines', 'Routines'],

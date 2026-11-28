@@ -79,9 +79,8 @@ test('follow-up during running job keeps it going, Cancel focuses stopped card a
   // Bell shows the two seeded job notices plus the live cancelled-job notice.
   await page.getByRole('button', { name: /^Notifications/ }).click()
   const bell = page.getByRole('dialog', { name: 'Notifications' })
-  await expect(bell).toContainText('A long job stopped. It was stopped before it finished.')
-  await expect(bell).toContainText('A long job finished')
-  await expect(bell).toContainText('A long job stopped')
+  await expect(bell.getByText('A long job stopped', { exact: true })).toHaveCount(2)
+  await expect(bell.getByText('A long job finished', { exact: true })).toHaveCount(1)
 })
 
 test('helper trace steps show Asking a helper and nested helper steps (J6)', async ({ page }) => {
@@ -89,25 +88,49 @@ test('helper trace steps show Asking a helper and nested helper steps (J6)', asy
   await openTraceFrom(page.locator('main').locator('[data-steps] > button').last())
   const dialog = page.getByRole('dialog', { name: /What your Inhouse agent did/ })
   await expect(dialog).toContainText('Asking a helper')
+  await expect(dialog).toContainText('Researcher · apparel orders and return tickets')
   await expect(dialog).toContainText('Analyst · size-level exchange cost table')
+  await expect(dialog).toContainText('Bash · calculate net margin by SKU and size')
 })
 
 test('typed long task runs on the demo clock as a long job with carry-on note (J1)', async ({ page }) => {
-  await start(page, '#/today')
-  await page.getByRole('textbox', { name: 'Ask Inhouse' }).fill('Run a full catalog audit across every SKU')
-  await page.keyboard.press('Enter')
-  const running = page.locator('[data-job-status="running"]')
-  await expect(running).toBeVisible({ timeout: 15_000 })
-  await expect(running).toContainText('2 helpers working')
-  const finished = page.locator('[data-job-status="ended"]')
-  await expect(finished.getByRole('heading', { name: 'Long job finished' })).toBeVisible({ timeout: 15_000 })
-  await expect(page.getByRole('log', { name: 'Conversation' })).toContainText('Your Inhouse agent carried on with this task by itself.')
+  await page.clock.install()
+  try {
+    await start(page, '#/today')
+    await page.getByRole('textbox', { name: 'Ask Inhouse' }).fill('Run a full catalog audit across every SKU')
+    await page.keyboard.press('Enter')
+    await page.clock.pauseAt(await page.evaluate(() => Date.now() + 500))
+
+    const advanceUntil = async (check: () => Promise<boolean>, label: string) => {
+      for (let i = 0; i < 80; i++) {
+        if (await check()) return
+        await page.clock.runFor(500)
+      }
+      throw new Error(`Timed out waiting for: ${label}`)
+    }
+
+    const running = page.locator('[data-job-status="running"]')
+    await advanceUntil(() => running.getByText('2 helpers working').isVisible().catch(() => false), '2 helpers working')
+    await expect(running).toContainText('Checking variant margins on Shopify · 2 helpers working')
+
+    await advanceUntil(() => running.getByText('1 helper working').isVisible().catch(() => false), '1 helper working')
+    await expect(running).toContainText('Joining 60-day ShipBob return postage · 1 helper working')
+
+    await advanceUntil(() => running.getByText('Writing final margin comparison · 0 helpers working').isVisible().catch(() => false), '0 helpers working')
+
+    const finished = page.locator('[data-job-status="ended"]')
+    await advanceUntil(() => finished.getByRole('heading', { name: 'Long job finished' }).isVisible().catch(() => false), 'Long job finished')
+    await expect(page.getByRole('log', { name: 'Conversation' })).toContainText('Your Inhouse agent carried on with this task by itself.')
+  } finally {
+    await page.clock.resume()
+  }
 })
 
 test('competitor prices shows web steps and sources, and web switches change live answers (J7, J8)', async ({ page }) => {
   await start(page, '#/chats/competitor-prices', 'light', { 't:webfetch': 'trailgear.example.test\npeaksupply.example.test' })
   const log = page.getByRole('log', { name: 'Conversation' })
   await expect(log.getByRole('link', { name: 'TrailGear bottle page' })).toHaveAttribute('href', 'https://trailgear.example.test/bottles')
+  await expect(page.locator('main')).toContainText('Checked Shopify · 8 steps')
   await log.getByRole('button', { name: '3 sources' }).click()
   await expect(log).toContainText('trailgear.example.test/bottles')
   await openTraceFrom(page.locator('main').locator('[data-steps] > button').last())
@@ -115,6 +138,11 @@ test('competitor prices shows web steps and sources, and web switches change liv
   await expect(trace).toContainText('Searching the web')
   await expect(trace).toContainText('Reading a web page')
   await page.keyboard.press('Escape')
+
+  // Re-asking the seeded question inside competitor-prices replays its comparison even with Search the web off.
+  await page.getByRole('textbox', { name: 'Message Inhouse' }).fill("Compare competitor prices for 750ml insulated bottles before Friday's email.")
+  await page.keyboard.press('Enter')
+  await expect(log.getByRole('link', { name: 'TrailGear bottle page' })).toHaveCount(2, { timeout: 15_000 })
 
   // Off by default: asking for a web search tells you Search the web is turned off.
   await page.evaluate(() => { location.hash = '#/today' })

@@ -36,7 +36,7 @@ const page_ = (name: string, stage: UiState['stage'], scenario: string, hash: st
 export const STATES: UiState[] = [
   page_('watch-today', 'Watch', 'Normal', '#/today', '6 things need you today.'),
   page_('watch-approvals', 'Watch', 'Normal', '#/approvals', "In Act, today's 6 fixes would be waiting here"),
-  page_('watch-chats', 'Watch', 'Normal', '#/chats', 'Approvals and routines start in Act'),
+  page_('watch-chats', 'Watch', 'Normal', '#/chats/stuck', 'Approvals and routines start in Act'),
   page_('act-activity', 'Act', 'Normal', '#/activity', 'Activity', true),
   page_('run-activity', 'Run', 'Normal', '#/activity', 'Activity'),
   page_('act-routines', 'Act', 'Normal', '#/routines', 'Routines', true),

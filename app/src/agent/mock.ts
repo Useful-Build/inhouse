@@ -316,7 +316,7 @@ const linkOf = (opens: string): AgentNotification['link'] => {
 }
 /** A notification's id from what it says, so changed content arrives unread. */
 const noticeId = (text: string) => 'n-' + text.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '').slice(0, 48)
-type RawNotification = { text: string | Record<string, string>; who: string; at: string; unread: boolean; opens: string | Record<string, string> }
+type RawNotification = { text: string | Record<string, string>; who: string; at: string; unread: boolean; opens: string | Record<string, string>; icon?: AgentNotification['icon'] }
 
 // ---------- saved state: keep only known shapes ----------
 
@@ -581,7 +581,7 @@ export type Script = {
   parts: MessagePart[]
   trace: TraceKey
   after?: (info: RunInfo, replaces?: string) => void
-  longJob?: { label: string; progressLabel: string; helpers: number; carryOnText: string; trace: TraceKey }
+  longJob?: { progressLabel: string; progressSteps?: { label: string; helpers: number }[]; carryOnText: string; trace: TraceKey }
 }
 
 /** What a run replayed and made: its recorded trace, and the routine or skill it created (Regenerate updates those in place).
@@ -1213,7 +1213,7 @@ export class MockAgent implements AgentClient {
     const ctx = { S, agent: st, data }
     // The same counts as Today: what's waiting in Act and Run, what Today lists in Watch.
     const nNeed = S >= 1 ? pendingIds(ctx).length : visibleProblems(ctx).length
-    const out: AgentNotification[] = [...(this.jobsInstance?.notifications() ?? [])]
+    const out: AgentNotification[] = (this.jobsInstance?.notifications() ?? []).map(n => ({ ...n, unread: !st.readNotices[n.id] }))
     for (const n of notifications.notifications as RawNotification[]) {
       if (typeof n.text !== 'string') {
         // The waiting line. Its id carries the count, so a higher count arrives unread again; a count that fell (a draft
@@ -1234,7 +1234,7 @@ export class MockAgent implements AgentClient {
       const id = noticeId(n.text)
       out.push({
         id, text: n.text, who: n.who, person, at: sampleAt(`the notification "${n.text}"`, n.at), unread: n.unread && !st.readNotices[id], link,
-        icon: person ? 'check_circle' : link.to === 'tool' ? 'support_agent' : link.to === 'chat' ? 'summarize' : 'notifications',
+        icon: n.icon ?? (person ? 'check_circle' : link.to === 'tool' ? 'support_agent' : link.to === 'chat' ? 'summarize' : 'notifications'),
       })
     }
     return out

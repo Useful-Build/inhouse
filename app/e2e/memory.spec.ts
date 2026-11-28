@@ -126,7 +126,7 @@ test('Reset demo puts the stage and scenario back to Act and Normal, clears the 
   await expect(page.getByRole('button', { name: 'Demo switches: Run, Cap reached' })).toBeVisible()
   await expect(page.getByText('Spending cap reached.')).toBeVisible()
   // A change: pin a chat from its sidebar menu.
-  const row = side(page).locator('[data-chat-row]').filter({ has: page.getByRole('button', { name: 'Amazon payout gap', exact: true }) })
+  const row = side(page).locator('[data-chat-row]').filter({ has: page.getByRole('button', { name: "What to feature in Friday's email", exact: true }) })
   await row.hover()
   await row.getByRole('button', { name: 'Chat actions' }).click()
   await page.getByRole('menu', { name: 'Chat actions' }).getByRole('menuitem', { name: 'Pin' }).click()
@@ -156,11 +156,11 @@ async function scenarioTo(page: Page, scenario: string) {
 test('Memory: a message added to a sample chat survives a reload on First day and is there back on Normal', async ({ page }) => {
   // The newest sample chat, opened by the plain #/chats link: the one whose id the store resolves itself.
   await start(page, '#/chats')
-  await expect(page.getByRole('banner')).toContainText('Stuck orders over 3 days')
-  await expect(log(page).locator('[data-chat-msg]').filter({ hasText: Q })).toHaveCount(1)
+  await expect(page.getByRole('banner')).toContainText('Full catalog margin review')
+  await expect(log(page).locator('[data-chat-msg]').filter({ hasText: Q })).toHaveCount(0)
   await chatBox(page).fill(Q)
   await page.keyboard.press('Enter')
-  await expect(log(page).getByText(A)).toHaveCount(2, { timeout: 15_000 })
+  await expect(log(page).getByText(A)).toHaveCount(1, { timeout: 15_000 })
 
   // First day has no chats: reload there, from Today (no chat picked).
   await go(page, '#/today')
@@ -173,9 +173,9 @@ test('Memory: a message added to a sample chat survives a reload on First day an
   await scenarioTo(page, 'Normal')
   await saved(page)
   await page.reload()
-  await go(page, '#/chats/stuck')
-  await expect(log(page).locator('[data-chat-msg]').filter({ hasText: Q })).toHaveCount(2)
-  await expect(log(page).getByText(A)).toHaveCount(2)
+  await go(page, '#/chats/catalog-audit')
+  await expect(log(page).locator('[data-chat-msg]').filter({ hasText: Q })).toHaveCount(1)
+  await expect(log(page).getByText(A)).toHaveCount(1)
   await shot(page, 'memory-first-day-reload-keeps-sample-chat')
 })
 

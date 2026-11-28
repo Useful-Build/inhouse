@@ -55,6 +55,12 @@ export interface Host {
   loadedJobs(): MockJobs | null
 }
 
+const LIVE_JOB_COST_MINOR = 145
+const DEFAULT_PROGRESS_STEPS: { label: string; helpers: number }[] = [
+  { label: 'Joining 60-day ShipBob return postage', helpers: 1 },
+  { label: 'Writing final margin comparison', helpers: 0 },
+]
+
 export class ChatEngine {
   private readonly h: Host
   constructor(h: Host) { this.h = h }
@@ -63,7 +69,7 @@ export class ChatEngine {
   private sendKeys = new Map<string, { hash: string; result: SendTurnResult }>()
   private damaged = new Set<string>()
   private idSeq = 0
-  private activeJobRuns = new Map<string, { run: MockRun; controller: AbortController; contTurn?: MockTurn }>()
+  private activeJobRuns = new Map<string, { run: MockRun; controller: AbortController; contTurn?: MockTurn; fenced?: 'paused' | 'deleted' }>()
 
   /** Reset demo: forget every turn, key and damaged session. */
   clear() {
@@ -311,10 +317,16 @@ export class ChatEngine {
     turn.state = 'live'
     this.emit(run, { type: 'turn.started', turnId: turn.turnId, model: input.model })
     const jobs = this.h.loadedJobs()
-    const runningJob = jobs?.job(turn.chatId)
-    const seededFollowUp = runningJob && runningJob.state !== 'ended' ? jobs?.seededReply(turn.chatId, input.text.trim()) : null
+    const existingJob = jobs?.job(turn.chatId) ?? null
+    const liveJob = existingJob && existingJob.state !== 'ended' ? existingJob : null
+    const seededFollowUp = jobs?.seededReply(turn.chatId, input.text.trim(), Boolean(liveJob)) ?? null
     const s: Script = seededFollowUp
-      ? { thinking: ['Checking audit progress…'], delayMs: this.h.k.THINKING_STEP_MS, trace: this.h.k.traceKey(seededFollowUp.trace), parts: [{ type: 'text', text: seededFollowUp.text }] }
+      ? {
+          thinking: seededFollowUp.isFollowUp ? ['Checking audit progress…'] : ['Checking your tools…', 'Writing the answer…'],
+          delayMs: this.h.k.THINKING_STEP_MS,
+          trace: this.h.k.traceKey(seededFollowUp.trace),
+          parts: seededFollowUp.parts,
+        }
       : buildScript(this.h as unknown as ScriptHost, input.text.trim(), turn.chatId)
     let info: RunInfo = { trace: s.trace }
     this.h.saveRunInfo(turn.turnId, info)
@@ -331,11 +343,12 @@ export class ChatEngine {
       if (elapsed < s.delayMs) step(s.thinking[Math.min(i++, s.thinking.length - 1)])
     }
     const written: { messageId: string; part: MessagePart; at: Instant }[] = []
-    let carryOn: { label: string; progressLabel: string; helpers: number; carryOnText: string; trace: TraceKey } | null = null
+    let carryOn: { progressLabel: string; progressSteps?: { label: string; helpers: number }[]; carryOnText: string; trace: TraceKey } | null = null
     if (!ended()) {
       if (forced === 'crash') { this.finish(run, turn, 'failed', FAIL.sessionCrashed); this.project(run, turn, written, info, input.model); return true }
       const replaces = input.replacesRun
       const promoted = forced === 'turnBudget' || forced === 'maxTurns'
+      const autoLong = !forced && !liveJob && Boolean(s.longJob) && this.h.state.paused === null
       // A routine or skill the answer makes is saved as its card appears, so its id comes from what is saved at that moment.
       const chosen = promoted ? s.parts.slice(0, 1) : s.parts
       let n = 0
@@ -355,31 +368,35 @@ export class ChatEngine {
       this.h.saveRunInfo(turn.turnId, info)
       if (!run.info || info.routine || info.skill) { run.info = info; this.h.saveRunInfo(run.runId, info) }
       if (forced === 'turnBudget') this.finish(run, turn, 'failed', FAIL.turnBudget)
-      else if (forced === 'maxTurns') this.finish(run, turn, 'failed', FAIL.maxTurns)
+      else if (forced === 'maxTurns' || autoLong) this.finish(run, turn, 'failed', FAIL.maxTurns)
       else this.finish(run, turn, 'done')
       if (forced === 'sessionDamaged') { this.damaged.add(turn.chatId); this.emit(run, { type: 'notice', code: NOTICE.sessionDamaged }) }
       if (promoted) {
         carryOn = {
-          label: 'Carrying on as a long job',
           progressLabel: 'Analyzing orders and SKU fulfillment across Shopify and ShipBob',
-          helpers: 2,
+          progressSteps: [
+            { label: 'Cross-checking SKU stock across warehouses', helpers: 1 },
+            { label: 'Verifying open order fulfillment status', helpers: 0 },
+          ],
           carryOnText: 'Finished checking every SKU and fulfillment log across the remaining orders. Nothing else exceeded the 3-day threshold.',
           trace: this.h.k.traceKey('long-job-run'),
         }
-      } else if (!forced && !runningJob && s.longJob) {
-        carryOn = { ...s.longJob, label: s.longJob.label }
+      } else if (autoLong && s.longJob) {
+        carryOn = s.longJob
       }
     } else {
       this.finish(run, turn, turn.hard.signal.aborted ? 'stopped' : 'interrupted')
     }
     this.project(run, turn, written, info, input.model)
-    if (runningJob && runningJob.state !== 'ended' && !ended()) {
+    // Re-read the live job after streaming/pause so a cancel during a follow-up never emits a stale job.progress (#643).
+    const currentJob = liveJob ? jobs?.job(turn.chatId) ?? null : null
+    if (currentJob && currentJob.jobId === liveJob!.jobId && currentJob.state !== 'ended' && !ended()) {
       this.emit(run, {
-        type: 'job.progress', jobId: runningJob.jobId,
-        label: runningJob.progress?.label ?? 'Working on a long job', helpers: runningJob.progress?.helpers ?? 0,
+        type: 'job.progress', jobId: currentJob.jobId,
+        label: currentJob.progress?.label ?? 'Working on a long job', helpers: currentJob.progress?.helpers ?? 0,
       })
     }
-    if (carryOn && !ended() && this.h.state.paused === null) {
+    if (carryOn && !ended() && this.h.state.paused === null && !this.h.state.chatDeleted[turn.chatId]) {
       await this.driveLongJob(run, turn, carryOn, input.model)
     }
     info = { trace: info.trace }
@@ -389,24 +406,30 @@ export class ChatEngine {
   private async driveLongJob(
     run: MockRun,
     rootTurn: MockTurn,
-    plan: { label: string; progressLabel: string; helpers: number; carryOnText: string; trace: TraceKey },
+    plan: { progressLabel: string; progressSteps?: { label: string; helpers: number }[]; carryOnText: string; trace: TraceKey },
     model: string,
   ) {
     const jobs = await this.h.loadJobs()
-    if (rootTurn.hard.signal.aborted || rootTurn.interrupt.signal.aborted || this.h.state.paused !== null) return
-    const { job, controller } = jobs.startJob(run.chatId, rootTurn.turnId, plan.progressLabel, plan.helpers)
-    const active = { run, controller, contTurn: undefined as MockTurn | undefined }
+    if (rootTurn.hard.signal.aborted || rootTurn.interrupt.signal.aborted || this.h.state.paused !== null || this.h.state.chatDeleted[run.chatId]) return
+    const { job, controller } = jobs.startJob(run.chatId, rootTurn.turnId, plan.progressLabel, 2)
+    const active: { run: MockRun; controller: AbortController; contTurn?: MockTurn; fenced?: 'paused' | 'deleted' } = { run, controller }
     this.activeJobRuns.set(job.jobId, active)
     this.emit(run, { type: 'job.started', jobId: job.jobId, rootTurnId: rootTurn.turnId })
-    this.emit(run, { type: 'job.progress', jobId: job.jobId, label: plan.progressLabel, helpers: plan.helpers })
-    await this.pause_(1200, rootTurn, controller.signal)
-    if (controller.signal.aborted) { this.activeJobRuns.delete(job.jobId); return }
-    if (rootTurn.hard.signal.aborted || this.h.state.paused !== null) {
+    this.emit(run, { type: 'job.progress', jobId: job.jobId, label: plan.progressLabel, helpers: 2 })
+    await this.pause_(4_000, rootTurn, controller.signal)
+    if (active.fenced === 'deleted' || this.h.state.chatDeleted[run.chatId]) {
+      this.activeJobRuns.delete(job.jobId)
+      const ended = jobs.endJob(run.chatId, job.jobId, 'cancelled', 20, { notify: false })
+      if (ended) this.emit(run, { type: 'job.ended', jobId: job.jobId, outcome: 'cancelled', durationMs: 0, cost: ended.cost ?? { minor: 0, currency: 'USD' } })
+      return
+    }
+    if (rootTurn.hard.signal.aborted || this.h.state.paused !== null || active.fenced === 'paused') {
       this.activeJobRuns.delete(job.jobId)
       const ended = jobs.endJob(run.chatId, job.jobId, 'cancelled', 20)
       if (ended) this.emit(run, { type: 'job.ended', jobId: job.jobId, outcome: 'cancelled', durationMs: 0, cost: ended.cost ?? { minor: 0, currency: 'USD' } })
       return
     }
+    if (controller.signal.aborted) { this.activeJobRuns.delete(job.jobId); return }
     const contTurnId = this.id22('t')
     const contTurn: MockTurn = {
       turnId: contTurnId, runId: run.runId, chatId: run.chatId,
@@ -425,27 +448,51 @@ export class ChatEngine {
     this.emit(run, { type: 'turn.started', turnId: contTurnId, model })
     let sN = 0
     const step = (label: string) => this.emit(run, { type: 'step', turnId: contTurnId, stepId: `${contTurnId}.s${sN++}`, label })
+    const contAborted = () => controller.signal.aborted || contTurn.interrupt.signal.aborted || contTurn.hard.signal.aborted || this.h.state.paused !== null || Boolean(this.h.state.chatDeleted[run.chatId])
     step('Asking a helper')
     step(plan.progressLabel)
-    await this.pause_(1200, contTurn, controller.signal)
+    await this.pause_(6_000, contTurn, controller.signal)
+    for (const next of plan.progressSteps ?? DEFAULT_PROGRESS_STEPS) {
+      if (contAborted()) break
+      jobs.updateProgress(run.chatId, job.jobId, next.label, next.helpers)
+      this.emit(run, { type: 'job.progress', jobId: job.jobId, label: next.label, helpers: next.helpers })
+      step(next.label)
+      await this.pause_(7_000, contTurn, controller.signal)
+      if (contAborted()) break
+    }
     this.activeJobRuns.delete(job.jobId)
-    if (controller.signal.aborted) {
-      // cancelJobRun already finished contTurn (if live) and emitted job.ended; project the carry-on note cleanly.
-      if (contTurn.state === 'ended') this.project(run, contTurn, [], { trace: plan.trace }, model, true)
+    if (active.fenced === 'deleted' || this.h.state.chatDeleted[run.chatId]) {
+      if (contTurn.state === 'live') this.finish(run, contTurn, 'stopped')
+      this.project(run, contTurn, [], { trace: plan.trace }, model, true)
+      const ended = jobs.endJob(run.chatId, job.jobId, 'cancelled', 40, { notify: false })
+      if (ended) this.emit(run, { type: 'job.ended', jobId: job.jobId, outcome: 'cancelled', durationMs: Math.max(0, ended.endedAt!.ms - ended.startedAt.ms), cost: ended.cost ?? { minor: 0, currency: 'USD' } })
       return
     }
-    if (contTurn.hard.signal.aborted || this.h.state.paused !== null) {
-      this.finish(run, contTurn, 'stopped')
+    if (active.fenced === 'paused' || contTurn.hard.signal.aborted || this.h.state.paused !== null) {
+      if (contTurn.state === 'live') this.finish(run, contTurn, 'stopped')
       this.project(run, contTurn, [], { trace: plan.trace }, model, true)
       const ended = jobs.endJob(run.chatId, job.jobId, 'cancelled', 40)
       if (ended) this.emit(run, { type: 'job.ended', jobId: job.jobId, outcome: 'cancelled', durationMs: Math.max(0, ended.endedAt!.ms - ended.startedAt.ms), cost: ended.cost ?? { minor: 0, currency: 'USD' } })
       return
     }
+    if (controller.signal.aborted) {
+      // cancelJobRun already finished contTurn (if live) and emitted job.ended; project the carry-on note cleanly.
+      if (contTurn.state === 'ended') this.project(run, contTurn, [], { trace: plan.trace }, model, true)
+      return
+    }
+    if (contTurn.interrupt.signal.aborted) {
+      const ended = jobs.endJob(run.chatId, job.jobId, 'cancelled', 40)
+      if (ended) this.emit(run, { type: 'job.ended', jobId: job.jobId, outcome: 'cancelled', durationMs: Math.max(0, ended.endedAt!.ms - ended.startedAt.ms), cost: ended.cost ?? { minor: 0, currency: 'USD' } })
+      this.finish(run, contTurn, 'interrupted')
+      this.project(run, contTurn, [], { trace: plan.trace }, model, true)
+      return
+    }
     const jobCapDollars = dollarsIn(this.h.state.settings['s:job_cap'])
-    if (jobCapDollars !== null && jobCapDollars <= 1) {
+    const jobCapMinor = jobCapDollars === null ? null : Math.round(jobCapDollars * 100)
+    if (jobCapMinor !== null && jobCapMinor <= LIVE_JOB_COST_MINOR) {
       this.finish(run, contTurn, 'done')
       this.project(run, contTurn, [], { trace: plan.trace }, model, true)
-      const ended = jobs.endJob(run.chatId, job.jobId, 'budget', Math.round(jobCapDollars * 100))
+      const ended = jobs.endJob(run.chatId, job.jobId, 'budget', jobCapMinor)
       if (ended) this.emit(run, { type: 'job.ended', jobId: job.jobId, outcome: 'budget', durationMs: Math.max(0, ended.endedAt!.ms - ended.startedAt.ms), cost: ended.cost ?? { minor: 0, currency: 'USD' } })
       return
     }
@@ -455,7 +502,7 @@ export class ChatEngine {
     this.emit(run, { type: 'part', turnId: contTurnId, messageId: msgId, part, model, at })
     this.finish(run, contTurn, 'done')
     this.project(run, contTurn, [{ messageId: msgId, part, at }], { trace: plan.trace }, model, true)
-    const ended = jobs.endJob(run.chatId, job.jobId, 'done', 145)
+    const ended = jobs.endJob(run.chatId, job.jobId, 'done', LIVE_JOB_COST_MINOR)
     if (ended) this.emit(run, { type: 'job.ended', jobId: job.jobId, outcome: 'done', durationMs: Math.max(0, ended.endedAt!.ms - ended.startedAt.ms), cost: ended.cost ?? { minor: 0, currency: 'USD' } })
   }
 
@@ -493,6 +540,12 @@ export class ChatEngine {
       for (const t of run.turns) {
         if (t.state === 'queued') this.cancel(run, t, why)
         else if (t.state === 'live') t.hard.abort()
+      }
+      for (const entry of this.activeJobRuns.values()) {
+        if (entry.run === run) {
+          entry.fenced = why
+          entry.controller.abort()
+        }
       }
     }
   }

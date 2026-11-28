@@ -446,14 +446,16 @@ export function buildScript(h: ScriptHost, q: string, chatId: string): Script {
   if (own) return own
   if (LONG_TASK_ASK.test(q)) {
     return {
-      thinking: ['Checking catalog scope…', 'Planning helper tasks…'],
+      thinking: ['Checking Shopify catalog…', 'Pulling ShipBob fulfillment costs…'],
       delayMs: fb.delayMs,
       trace: h.k.traceKey('catalog-audit-start'),
-      parts: [{ type: 'text', text: "This needs a full check across every SKU and fulfillment cost. I'm starting a long job with helpers and will post each section as it finishes." }],
+      parts: [{ type: 'text', text: "Pulled Shopify's active catalog (216 variants across 48 products) and 60 days of ShipBob fulfillment costs. Apparel margins are tallied first; reached this turn's step limit before checking drinkware and packs." }],
       longJob: {
-        label: 'Checking full catalog and variant margins',
         progressLabel: 'Checking variant margins on Shopify',
-        helpers: 2,
+        progressSteps: [
+          { label: 'Joining 60-day ShipBob return postage', helpers: 1 },
+          { label: 'Writing final margin comparison', helpers: 0 },
+        ],
         carryOnText: 'Finished checking every SKU across Shopify and ShipBob. Two variants dropped below 35% net margin after return postage: Trail Shell Jacket (Olive, M) at 33% and Summit Fleece (Slate, S) at 34%.',
         trace: h.k.traceKey('long-job-run'),
       },

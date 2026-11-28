@@ -57,15 +57,15 @@ test('Library: the file viewer and the Delete confirm cover the Sidebar (1440)',
 
 test('A stale chat link in the middle of a session keeps what was added to the newest chat', async ({ page }) => {
   await start(page, '#/chats')
-  await expect(page.getByRole('banner')).toContainText('Stuck orders over 3 days')
+  await expect(page.getByRole('banner')).toContainText('Full catalog margin review')
   await page.getByRole('textbox', { name: 'Message Inhouse' }).fill('Which one is oldest?')
   await page.keyboard.press('Enter')
   await expect(main(page).locator('[data-chat-msg]').getByText('Which one is oldest?', { exact: true })).toBeVisible()
-  await side(page).getByRole('button', { name: 'Amazon payout gap', exact: true }).click()
-  await expect(page.getByRole('banner')).toContainText('Amazon payout gap')
+  await side(page).getByRole('button', { name: "What to feature in Friday's email", exact: true }).click()
+  await expect(page.getByRole('banner')).toContainText("What to feature in Friday's email")
   await page.evaluate(() => { location.hash = '#/chats/bogus' })
-  await expect(page.getByRole('banner')).toContainText('Stuck orders over 3 days')
-  await expect.poll(() => hash(page)).toBe('#/chats/stuck')
+  await expect(page.getByRole('banner')).toContainText('Full catalog margin review')
+  await expect.poll(() => hash(page)).toBe('#/chats/catalog-audit')
   await expect(main(page).locator('[data-chat-msg]').getByText('Which one is oldest?', { exact: true })).toBeVisible()
 })
 

@@ -3,6 +3,12 @@
   "recent": 4,
   "chats": [
     {
+      "id": "catalog-audit",
+      "title": "Full catalog margin review",
+      "at": "0d 07:56",
+      "turns": []
+    },
+    {
       "id": "stuck",
       "title": "Stuck orders over 3 days",
       "at": "0d 07:42",
@@ -218,12 +224,6 @@
           "model": "sonnet"
         }
       ]
-    },
-    {
-      "id": "catalog-audit",
-      "title": "Full catalog margin review",
-      "at": "-3d 15:35",
-      "turns": []
     },
     {
       "id": "seasonal-restock",

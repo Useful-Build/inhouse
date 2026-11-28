@@ -39,7 +39,7 @@ const REFUNDS_Q = 'Why did refunds jump this week?'
 const REFUNDS_A = 'Refund requests rose'
 const STOPPED = 'You stopped your Inhouse agent. Nothing was changed.'
 const REFUNDS = 'Why did refunds jump?'
-const PAYOUT = 'Amazon payout gap'
+const PAYOUT = "What to feature in Friday's email"
 
 test('Runs: leave a chat mid-answer for another, come back, and the whole answer is there once', async ({ fx, page }) => {
   await start(page, fx, '#/chats/refunds')

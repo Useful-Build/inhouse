@@ -7,8 +7,6 @@ import { instantOf } from '../lib/format'
 import { AgentError } from './types'
 import { NOT_FOUND } from '../../shared/contract/error-codes'
 
-export const JOB_CARRIED_ON = 'Your Inhouse agent carried on with this task by itself.'
-
 export interface JobsHost {
   now: () => number
   shown: () => boolean
@@ -51,14 +49,6 @@ const CHATS = rawJobs.chats as unknown as Record<string, RawChatEntry>
 
 const JOB_FINISH_TITLE = 'A long job finished'
 const JOB_STOP_TITLE = 'A long job stopped'
-const JOB_STOPPED_BELL: Record<Exclude<JobOutcome, 'done'>, string> = {
-  budget: 'It reached the most a job may spend. An admin can raise the job budget in Settings, then ask again.',
-  time: 'It reached the 8-hour limit for one job.',
-  stuck: 'It stopped making progress, so it was stopped.',
-  failed: 'Something went wrong, so it stopped. You can ask again in the chat.',
-  cancelled: 'It was stopped before it finished.',
-  taken_over: 'A new message in the chat took over.',
-}
 
 const cloneJob = (raw: RawSeedJob, at: (s: string) => Instant): Job => ({
   jobId: raw.jobId,
@@ -72,13 +62,6 @@ const cloneJob = (raw: RawSeedJob, at: (s: string) => Instant): Job => ({
   progress: raw.progress ? { ...raw.progress } : null,
   cost: raw.cost ? { ...raw.cost } : null,
 })
-
-/** True when a typed prompt asks for a multi-step research or full-catalog task that carries on as a long job. */
-export const isLongTaskRequest = (q: string): boolean =>
-  /\b(long job|full catalog|deep (?:research|audit|analysis)|audit (?:all|every)|across every sku)\b/i.test(q)
-
-/** True when a chat id comes with lazily loaded messages in jobs.json. */
-export const hasSeededJobMessages = (chatId: string): boolean => Object.hasOwn(CHATS, chatId)
 
 export class MockJobs {
   private readonly h: JobsHost
@@ -136,18 +119,21 @@ export class MockJobs {
     })
   }
 
-  /** Answer when the user repeats or asks a follow-up in one of the lazy job chats, or null if off-script. */
-  seededReply(chatId: string, q: string): { text: string; trace: string } | null {
+  /** Answer when the user repeats a lazy chat's own question (Regenerate / re-ask) or asks a follow-up while its job runs. */
+  seededReply(chatId: string, q: string, jobLive: boolean): { parts: MessagePart[]; trace: string; isFollowUp?: boolean } | null {
     if (!this.h.shown() || !Object.hasOwn(CHATS, chatId)) return null
     const entry = CHATS[chatId]!
-    const follow = entry.followUpReply
-    if (follow && new RegExp(follow.match, 'i').test(q)) return { text: follow.text, trace: follow.trace }
-    // If Regenerate replays the first user turn in this lazy chat, return its seeded opening agent part.
     const firstUser = entry.messages.find(m => m.role === 'user')
     const norm = (s: string) => s.trim().toLowerCase().replace(/\s+/g, ' ').replace(/[.?!]+$/, '')
     if (firstUser?.text && norm(firstUser.text) === norm(q)) {
-      const firstAgent = entry.messages.find(m => m.role === 'agent' && m.part?.type === 'text')
-      if (firstAgent?.part?.type === 'text' && firstAgent.trace) return { text: firstAgent.part.text, trace: firstAgent.trace }
+      const opening = entry.messages.filter(m => m.role === 'agent' && m.turnId === firstUser.turnId && m.part)
+      if (opening.length && opening[0]!.trace) {
+        return { parts: opening.map(m => m.part!), trace: opening[0]!.trace }
+      }
+    }
+    const follow = entry.followUpReply
+    if (jobLive && follow && new RegExp(follow.match, 'i').test(q)) {
+      return { parts: [{ type: 'text', text: follow.text }], trace: follow.trace, isFollowUp: true }
     }
     return null
   }
@@ -190,7 +176,7 @@ export class MockJobs {
     return updated
   }
 
-  endJob(chatId: string, jobId: string, outcome: JobOutcome, costMinor = 140): Job | null {
+  endJob(chatId: string, jobId: string, outcome: JobOutcome, costMinor = 140, opts?: { notify?: boolean }): Job | null {
     const cur = this.currentForChat(chatId)
     if (!cur || cur.jobId !== jobId || cur.state === 'ended') return null
     const endedAt = instantOf(this.h.now())
@@ -205,7 +191,7 @@ export class MockJobs {
     if (this.live.has(chatId)) this.live.set(chatId, updated)
     else this.seeded.set(chatId, updated)
     this.abortByJob.delete(jobId)
-    this.recordNotice(updated)
+    if (opts?.notify !== false) this.recordNotice(updated)
     this.h.onChanged()
     return updated
   }
@@ -229,8 +215,8 @@ export class MockJobs {
     this.notices = [
       {
         id,
-        icon: done ? 'check_circle' : 'error',
-        text: outcome === 'done' ? JOB_FINISH_TITLE : `${JOB_STOP_TITLE}. ${JOB_STOPPED_BELL[outcome]}`,
+        icon: done ? 'check' : 'error',
+        text: done ? JOB_FINISH_TITLE : JOB_STOP_TITLE,
         who: 'Your Inhouse agent',
         at: job.endedAt,
         unread: true,

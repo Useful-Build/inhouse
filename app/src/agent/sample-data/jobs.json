@@ -3,9 +3,9 @@
   "chats": {
     "catalog-audit": {
       "job": {
-        "jobId": "j_demoCatalogAudit0000000",
+        "jobId": "j_demoCatalogAudit000001",
         "chatId": "catalog-audit",
-        "rootTurnId": "t_demoCatalogAudit0000000",
+        "rootTurnId": "t_demoCatalogAudit000001",
         "state": "running",
         "outcome": null,
         "startedAt": "0d 07:38",
@@ -19,46 +19,46 @@
       },
       "messages": [
         {
-          "id": "t_demoCatalogAudit0000000.u",
+          "id": "t_demoCatalogAudit000001.u",
           "role": "user",
           "text": "Audit gross margin across every SKU, factor in shipping and ad spend, and flag any variant under 35%.",
           "at": "0d 07:38",
-          "turnId": "t_demoCatalogAudit0000000",
-          "runId": "r_demoCatalogAudit0000000"
+          "turnId": "t_demoCatalogAudit000001",
+          "runId": "r_demoCatalogAudit000001"
         },
         {
-          "id": "t_demoCatalogAudit0000000.0",
+          "id": "t_demoCatalogAudit000001.0",
           "role": "agent",
           "part": {
             "type": "text",
-            "text": "Starting with Shopify's full catalog and the last 60 days of ShipBob fulfillment costs. Because every SKU and channel needs a separate margin pass, I'm running this as a long job with helpers and will post each group as it finishes."
+            "text": "Pulled Shopify's active catalog (216 variants across 48 products) and the last 60 days of ShipBob fulfillment costs. Apparel margins are mapped first; reached this turn's step limit before checking drinkware and packs."
           },
           "trace": "catalog-audit-start",
           "model": "opus",
           "at": "0d 07:39",
-          "turnId": "t_demoCatalogAudit0000000",
-          "runId": "r_demoCatalogAudit0000000"
+          "turnId": "t_demoCatalogAudit000001",
+          "runId": "r_demoCatalogAudit000001"
         },
         {
-          "id": "t_demoCatalogAudit0000001.u",
+          "id": "t_demoCatalogAudit000002.u",
           "role": "event",
           "text": "Your Inhouse agent carried on with this task by itself.",
           "at": "0d 07:48",
-          "turnId": "t_demoCatalogAudit0000001",
-          "runId": "r_demoCatalogAudit0000001"
+          "turnId": "t_demoCatalogAudit000002",
+          "runId": "r_demoCatalogAudit000002"
         },
         {
-          "id": "t_demoCatalogAudit0000001.0",
+          "id": "t_demoCatalogAudit000002.0",
           "role": "agent",
           "part": {
             "type": "text",
-            "text": "Finished apparel and outerwear (84 SKUs checked so far). Two variants fell under 35% after return postage:\n\n| Variant | Gross margin | Net after returns | Main drag |\n|---|---|---|---|\n| Trail Shell Jacket · Olive, M | 41% | 33% | Size M exchange shipping |\n| Summit Fleece · Slate, S | 38% | 34% | Split ShipBob box rate |\n\nMoving through bottles, packs and accessories next."
+            "text": "Finished apparel and outerwear (84 SKUs checked so far). Two variants fell under 35% after return postage:\n\n| Variant | Net margin | Main drag |\n|---|---|---|\n| Trail Shell, Olive M | 33% | Exchange postage |\n| Summit Fleece, Slate S | 34% | Split box rate |\n\nMoving through bottles, packs and accessories next."
           },
           "trace": "catalog-audit-progress",
           "model": "opus",
           "at": "0d 07:56",
-          "turnId": "t_demoCatalogAudit0000001",
-          "runId": "r_demoCatalogAudit0000001"
+          "turnId": "t_demoCatalogAudit000002",
+          "runId": "r_demoCatalogAudit000002"
         }
       ],
       "followUpReply": {
@@ -69,9 +69,9 @@
     },
     "seasonal-restock": {
       "job": {
-        "jobId": "j_demoRestockPlan000000",
+        "jobId": "j_demoRestockPlan0000001",
         "chatId": "seasonal-restock",
-        "rootTurnId": "t_demoRestockPlan000000",
+        "rootTurnId": "t_demoRestockPlan0000001",
         "state": "ended",
         "outcome": "done",
         "startedAt": "-3d 13:16",
@@ -82,36 +82,36 @@
       },
       "messages": [
         {
-          "id": "t_demoRestockPlan000000.u",
+          "id": "t_demoRestockPlan0000001.u",
           "role": "user",
           "text": "Build a full restock plan across Shopify, ShipBob and open purchase orders for every SKU under 30 days of cover.",
           "at": "-3d 13:16",
-          "turnId": "t_demoRestockPlan000000",
-          "runId": "r_demoRestockPlan000000"
+          "turnId": "t_demoRestockPlan0000001",
+          "runId": "r_demoRestockPlan0000001"
         },
         {
-          "id": "t_demoRestockPlan000000.0",
+          "id": "t_demoRestockPlan0000001.0",
           "role": "agent",
           "part": {
             "type": "text",
-            "text": "Pulled stock on hand from Shopify and ShipBob across all 48 active SKUs. Nine SKUs sit under 30 days of cover. Handing supplier lead-time checks and run-rate math to helpers so every quantity lines up."
+            "text": "Pulled stock on hand from Shopify and ShipBob across all 48 active SKUs. Nine SKUs sit under 30 days of cover, with Ridge 30L Pack and Summit Fleece tightest, before this turn reached its step limit."
           },
           "trace": "restock-plan-part1",
           "model": "opus",
           "at": "-3d 13:19",
-          "turnId": "t_demoRestockPlan000000",
-          "runId": "r_demoRestockPlan000000"
+          "turnId": "t_demoRestockPlan0000001",
+          "runId": "r_demoRestockPlan0000001"
         },
         {
-          "id": "t_demoRestockPlan000001.u",
+          "id": "t_demoRestockPlan0000002.u",
           "role": "event",
           "text": "Your Inhouse agent carried on with this task by itself.",
           "at": "-3d 14:15",
-          "turnId": "t_demoRestockPlan000001",
-          "runId": "r_demoRestockPlan000001"
+          "turnId": "t_demoRestockPlan0000002",
+          "runId": "r_demoRestockPlan0000002"
         },
         {
-          "id": "t_demoRestockPlan000001.0",
+          "id": "t_demoRestockPlan0000002.0",
           "role": "agent",
           "part": {
             "type": "text",
@@ -120,19 +120,19 @@
           "trace": "restock-plan-part2",
           "model": "opus",
           "at": "-3d 14:22",
-          "turnId": "t_demoRestockPlan000001",
-          "runId": "r_demoRestockPlan000001"
+          "turnId": "t_demoRestockPlan0000002",
+          "runId": "r_demoRestockPlan0000002"
         },
         {
-          "id": "t_demoRestockPlan000002.u",
+          "id": "t_demoRestockPlan0000003.u",
           "role": "event",
           "text": "Your Inhouse agent carried on with this task by itself.",
           "at": "-3d 15:18",
-          "turnId": "t_demoRestockPlan000002",
-          "runId": "r_demoRestockPlan000002"
+          "turnId": "t_demoRestockPlan0000003",
+          "runId": "r_demoRestockPlan0000003"
         },
         {
-          "id": "t_demoRestockPlan000002.0",
+          "id": "t_demoRestockPlan0000003.0",
           "role": "agent",
           "part": {
             "type": "table",
@@ -142,21 +142,21 @@
               "icon": "inventory_2",
               "rows": [
                 {
-                  "order": "Ridge 30L Pack",
+                  "order": "RP-30L",
                   "age": "14 days",
-                  "why": "Order 600 today (Olive 400, Black 200)",
+                  "why": "Ridge 30L Pack · order 600 today (Olive 400, Black 200)",
                   "value": "$9,600"
                 },
                 {
-                  "order": "Summit Fleece",
+                  "order": "SF-M",
                   "age": "12 days",
-                  "why": "Wait for PO-1187 (300 incoming)",
+                  "why": "Summit Fleece · wait for PO-1187 (300 incoming)",
                   "value": "$5,100"
                 },
                 {
-                  "order": "Trail Shell Jacket",
+                  "order": "TS-L",
                   "age": "19 days",
-                  "why": "Add 150 in size L with next batch",
+                  "why": "Trail Shell Jacket · add 150 size L with next batch",
                   "value": "$3,750"
                 }
               ],
@@ -169,11 +169,11 @@
           "trace": "restock-plan-final",
           "model": "opus",
           "at": "-3d 15:30",
-          "turnId": "t_demoRestockPlan000002",
-          "runId": "r_demoRestockPlan000002"
+          "turnId": "t_demoRestockPlan0000003",
+          "runId": "r_demoRestockPlan0000003"
         },
         {
-          "id": "t_demoRestockPlan000002.1",
+          "id": "t_demoRestockPlan0000003.1",
           "role": "agent",
           "part": {
             "type": "text",
@@ -182,16 +182,16 @@
           "trace": "restock-plan-final",
           "model": "opus",
           "at": "-3d 15:30",
-          "turnId": "t_demoRestockPlan000002",
-          "runId": "r_demoRestockPlan000002"
+          "turnId": "t_demoRestockPlan0000003",
+          "runId": "r_demoRestockPlan0000003"
         }
       ]
     },
     "ad-spend-audit": {
       "job": {
-        "jobId": "j_demoAdSpendBudget0000",
+        "jobId": "j_demoAdSpendBudget00001",
         "chatId": "ad-spend-audit",
-        "rootTurnId": "t_demoAdSpendBudget0000",
+        "rootTurnId": "t_demoAdSpendBudget00001",
         "state": "ended",
         "outcome": "budget",
         "startedAt": "-3d 14:38",
@@ -202,15 +202,15 @@
       },
       "messages": [
         {
-          "id": "t_demoAdSpendBudget0000.u",
+          "id": "t_demoAdSpendBudget00001.u",
           "role": "user",
           "text": "Compare every Meta Ads campaign over the last 90 days by contribution margin after returns and shipping.",
           "at": "-3d 14:38",
-          "turnId": "t_demoAdSpendBudget0000",
-          "runId": "r_demoAdSpendBudget0000"
+          "turnId": "t_demoAdSpendBudget00001",
+          "runId": "r_demoAdSpendBudget00001"
         },
         {
-          "id": "t_demoAdSpendBudget0000.0",
+          "id": "t_demoAdSpendBudget00001.0",
           "role": "agent",
           "part": {
             "type": "text",
@@ -219,29 +219,29 @@
           "trace": "ad-audit-part1",
           "model": "fable",
           "at": "-3d 14:41",
-          "turnId": "t_demoAdSpendBudget0000",
-          "runId": "r_demoAdSpendBudget0000"
+          "turnId": "t_demoAdSpendBudget00001",
+          "runId": "r_demoAdSpendBudget00001"
         },
         {
-          "id": "t_demoAdSpendBudget0001.u",
+          "id": "t_demoAdSpendBudget00002.u",
           "role": "event",
           "text": "Your Inhouse agent carried on with this task by itself.",
           "at": "-3d 15:10",
-          "turnId": "t_demoAdSpendBudget0001",
-          "runId": "r_demoAdSpendBudget0001"
+          "turnId": "t_demoAdSpendBudget00002",
+          "runId": "r_demoAdSpendBudget00002"
         },
         {
-          "id": "t_demoAdSpendBudget0001.0",
+          "id": "t_demoAdSpendBudget00002.0",
           "role": "agent",
           "part": {
             "type": "text",
-            "text": "Finished Meta Ads prospecting cohorts: Ridge 30L Autumn leads at 2.8 net after shipping, while Trail Shell retargeting drops to 1.4 net because of size M exchanges. Stopped before pulling city-by-city breakdown cohorts."
+            "text": "Finished Meta Ads prospecting cohorts: Ridge 30L Autumn leads at 2.8 net after shipping, while Trail Shell retargeting drops to 1.4 net because of size M exchanges."
           },
           "trace": "ad-audit-part2",
           "model": "fable",
           "at": "-3d 15:24",
-          "turnId": "t_demoAdSpendBudget0001",
-          "runId": "r_demoAdSpendBudget0001"
+          "turnId": "t_demoAdSpendBudget00002",
+          "runId": "r_demoAdSpendBudget00002"
         }
       ]
     },
@@ -249,15 +249,15 @@
       "job": null,
       "messages": [
         {
-          "id": "t_demoWebBottles0000000.u",
+          "id": "t_demoWebBottles00000001.u",
           "role": "user",
           "text": "Compare competitor prices for 750ml insulated bottles before Friday's email.",
           "at": "-3d 15:20",
-          "turnId": "t_demoWebBottles0000000",
-          "runId": "r_demoWebBottles0000000"
+          "turnId": "t_demoWebBottles00000001",
+          "runId": "r_demoWebBottles00000001"
         },
         {
-          "id": "t_demoWebBottles0000000.0",
+          "id": "t_demoWebBottles00000001.0",
           "role": "agent",
           "part": {
             "type": "table",
@@ -273,13 +273,13 @@
                   "value": "Ours"
                 },
                 {
-                  "order": "Trail",
+                  "order": "TG-750",
                   "age": "$38",
                   "why": "TrailGear Traverse 750ml (free shipping over $75)",
                   "value": "+$4"
                 },
                 {
-                  "order": "Peak",
+                  "order": "PK-24Z",
                   "age": "$32",
                   "why": "PeakSupply RidgeFlask 24oz (member discount excluded)",
                   "value": "-$2"
@@ -295,11 +295,11 @@
           "trace": "web-bottles",
           "model": "opus",
           "at": "-3d 15:20",
-          "turnId": "t_demoWebBottles0000000",
-          "runId": "r_demoWebBottles0000000"
+          "turnId": "t_demoWebBottles00000001",
+          "runId": "r_demoWebBottles00000001"
         },
         {
-          "id": "t_demoWebBottles0000000.1",
+          "id": "t_demoWebBottles00000001.1",
           "role": "agent",
           "part": {
             "type": "text",
@@ -308,8 +308,8 @@
           "trace": "web-bottles",
           "model": "opus",
           "at": "-3d 15:20",
-          "turnId": "t_demoWebBottles0000000",
-          "runId": "r_demoWebBottles0000000"
+          "turnId": "t_demoWebBottles00000001",
+          "runId": "r_demoWebBottles00000001"
         }
       ]
     }

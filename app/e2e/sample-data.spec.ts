@@ -189,10 +189,10 @@ test('Chats: there is no Chats item in the nav; New chat and Recent chats stay',
 test('Chats: each recent chat opens its own conversation', async ({ page, fx }) => {
   await start(fx)
   const chats: [string, string][] = [
+    ['Full catalog margin review', 'Finished apparel and outerwear'],
     ['Stuck orders over 3 days', '3 orders · $556'],
     ['Why did refunds jump?', 'Refund requests rose from 14 last week to 31 this week.'],
     ["What to feature in Friday's email", 'The Cairn Insulated Bottle is the safe pick'],
-    ['Amazon payout gap', 'paid $18,420'],
   ]
   for (const [name, text] of chats) {
     await side(page).getByRole('button', { name, exact: true }).click()
@@ -208,7 +208,7 @@ test('Chats: each recent chat opens its own conversation', async ({ page, fx }) 
   await page.getByRole('textbox', { name: 'Message Inhouse' }).fill('And last week?')
   await page.keyboard.press('Enter')
   await expect(page.locator('main').getByText('And last week?')).toBeVisible()
-  await side(page).getByRole('button', { name: 'Amazon payout gap', exact: true }).click()
+  await side(page).getByRole('button', { name: "What to feature in Friday's email", exact: true }).click()
   await expect(page.locator('main').getByText('And last week?')).toHaveCount(0)
   await side(page).getByRole('button', { name: 'Why did refunds jump?', exact: true }).click()
   await expect(page.locator('main').getByText('And last week?')).toBeVisible()
@@ -268,7 +268,7 @@ test('Chats: See all lists every chat, search filters by title, picking one open
   await side(page).getByRole('button', { name: 'See all' }).click()
   await expect(page.getByRole('heading', { level: 1, name: 'All chats' })).toBeVisible()
   const main = page.locator('main')
-  for (const t of ['Stuck orders over 3 days', 'Why did refunds jump?', "What to feature in Friday's email", 'Amazon payout gap', 'Weekly numbers, Nov 7 to 13', 'Ridge 30L reorder quantity', 'Meta Ads on low-stock products', 'Kestrel delivery times']) {
+  for (const t of ['Full catalog margin review', 'Stuck orders over 3 days', 'Why did refunds jump?', "What to feature in Friday's email", 'Amazon payout gap', 'Weekly numbers, Nov 7 to 13', 'Ridge 30L reorder quantity', 'Meta Ads on low-stock products', 'Kestrel delivery times', 'Winter restock plan across stores', 'Multi-channel ad spend audit', 'Competitor bottle pricing']) {
     await expect(main.getByRole('button', { name: new RegExp(t.replace(/[?']/g, '.')) })).toBeVisible()
   }
   await expect(main.getByRole('region', { name: 'Today' })).toBeVisible()
@@ -289,7 +289,7 @@ test('Chats: See all lists every chat, search filters by title, picking one open
 
   // The old #/chats link still works.
   await page.goto('/?demo&again=1#/chats')
-  await expect(page.getByRole('banner')).toContainText('Stuck orders over 3 days')
+  await expect(page.getByRole('banner')).toContainText('Full catalog margin review')
 })
 
 test('Tools and Skills: search filters the lists; the tool page links to the vendor', async ({ page, fx }) => {

@@ -29,6 +29,7 @@
     },
     {
       "text": "A long job finished",
+      "icon": "check",
       "who": "Your Inhouse agent",
       "at": "-3d 15:30",
       "unread": false,
@@ -36,6 +37,7 @@
     },
     {
       "text": "A long job stopped",
+      "icon": "error",
       "who": "Your Inhouse agent",
       "at": "-3d 15:25",
       "unread": false,
