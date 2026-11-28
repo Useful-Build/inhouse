@@ -1750,7 +1750,7 @@ export class MockAgent implements AgentClient {
     return this.engine
   }
   /** Waits for the engine and lazy demo stores (for tests under fake clocks). */
-  preload(): Promise<void> { return Promise.all([this.loadEngine(), this.demoJobs()]).then(() => undefined) }
+  preload(): Promise<void> { return Promise.all([this.loadEngine(), this.demoJobs(), this.demoActions()]).then(() => undefined) }
   async listChats(opts: { cursor?: string; limit?: number; deleted?: boolean } = {}): Promise<ChatList> { return (await this.loadEngine()).listChats(opts) }
   async getChat(id: string, cursor?: string): Promise<ChatPage> { return (await this.loadEngine()).getChat(id, cursor) }
   async resetSession(chatId: string): Promise<void> { return (await this.loadEngine()).resetSession(chatId) }

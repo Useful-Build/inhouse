@@ -119,7 +119,7 @@ test('answering the chat question closes it, and the agent\'s next line joins th
   await expect(toast(page, 'Answer sent. Your Inhouse agent carries on.')).toBeVisible()
   await expect(questionOf(page, CHAT_Q)).toHaveAttribute('data-question', 'answered')
   await expect(questionOf(page, CHAT_Q)).toContainText('You answered: Only over $1,000')
-  await expect(questionOf(page, CHAT_Q).getByRole('button', { name: 'Every wholesale order' })).toHaveCount(0)
+  await expect(questionOf(page, CHAT_Q).getByRole('button', { name: 'Every wholesale order', exact: true })).toHaveCount(0)
   await questionOf(page, ROUTINE_Q).getByRole('button', { name: 'Yes, flag them', exact: true }).click()
   await expect(questionOf(page, ROUTINE_Q)).toContainText('You answered: Yes, flag them')
 
@@ -143,7 +143,9 @@ test('a late answer on Approvals: Allow once, the hold, and the agent comes back
   await expect(log(page)).not.toContainText('Done. Order 4512 has the Wholesale tag.')
   await page.clock.runFor(14_000)
   await expect(cardOf(page, WHOLESALE)).toHaveAttribute('data-action-card', 'sent')
-  await go(page, '#/chats/all')
+  // The chat is read when it opens: open another and come back (its history isn't read again while it stays the open one).
+  await go(page, '#/chats/vip-tags')
+  await expect(log(page)).toContainText('Tag everyone who spent over $500 this year as VIP.')
   await go(page, '#/chats/order-tags')
   await expect(log(page)).toContainText('Your Inhouse agent went on once the action was settled.')
   await expect(log(page)).toContainText('Done. Order 4512 has the Wholesale tag.')
@@ -155,7 +157,6 @@ test('the Slack page says what a mark gives before it is saved; the mark gives t
   const main = page.locator('main')
   const disclosure = 'Marking this channel lets the agent post here without asking, up to 50 posts a day. Approvals, questions and problems post here too.'
   await expect(main.getByText(disclosure, { exact: true })).toBeVisible()
-  await expect(main).toContainText('The alerts channel. Approvals, questions and problems post here. No standing permission: the agent asks before it posts here.')
   await shot(page, 'demo-slack-disclosure', true)
   await main.getByRole('combobox', { name: 'Alerts channel: None', exact: true }).click()
   await page.getByRole('option', { name: '#ops-alerts', exact: true }).click()

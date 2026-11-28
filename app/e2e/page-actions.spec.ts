@@ -15,7 +15,7 @@ const badge = (page: Page) => page.getByRole('navigation', { name: 'Main' }).get
  * The demo's agent cards wait on Sam too, beside the drafts: two batches and a teammate's refund (Stage 1 M3-U), two ask
  * cards and one that needs a check (the demo catch-up's PR 1). A teammate's own ask isn't Sam's to answer.
  */
-const ASKS = 6
+const ASKS = 8
 const card = (page: Page, title: string) => page.getByRole('article').filter({ hasText: title })
 const toast = (page: Page, text: string | RegExp) => page.locator('[data-toast]').filter({ hasText: text })
 const waiting = (page: Page) => page.getByRole('heading', { level: 2, name: /^Waiting for you/ })

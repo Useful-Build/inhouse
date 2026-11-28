@@ -206,9 +206,9 @@ test('Settings: five sections in order, each announced, and no lock for an Admin
   await expect(groups).toHaveCount(5)
   const sections: [string, string[]][] = [
     // The demo's own pages (Notifications, Who approves what, Run limits, Stage and plan) left with its stages (decision
-    // A13); Always allowed came in with its permissions. What the agent can do is the product's only (no ceiling here yet).
+    // A13); Always allowed came in with its permissions, and What the agent can do (the demo catch-up's PR 3).
     ['You', ['General', 'Memory', 'Always allowed']],
-    ['Agent', ['Inhouse agent', 'Models', 'Team memory']],
+    ['Agent', ['Inhouse agent', 'Models', 'Team memory', 'What the agent can do']],
     ['Spending', ['Spending cap']],
     ['Team', ['Members', 'Slack notices']],
     ['Workspace', ['Data and access', 'Audit log']],
