@@ -217,13 +217,22 @@ export interface ProductTarget extends Target {
 }
 
 /**
- * The brand's WebFetch list a case seeds: its hosts, or the default (null) when it lists none. The server reads an empty
- * list as no list (server/egress/webfetch.ts: "with the list empty or never set, no host at all"), and the door refuses
- * one, so a spec with no hosts (an M3-E plant, which asks for no WebFetch) seeds the default: the live smoke after #670
- * stopped at P03's seed on exactly that refusal.
+ * The brand's WebFetch list a case seeds: its hosts, or none (null: no row) when it lists none. The door refuses an empty
+ * list, so a spec with no hosts (an M3-E plant, which asks for no WebFetch) seeds no list row (the live smoke after #670
+ * stopped at P03's seed on exactly that refusal). With no row the seed's mode still decides (`webfetchSeedFor`).
  */
 export function webfetchListFor(exfil: Pick<ExfilSpec, 'hosts'> | undefined): string[] | null {
   return exfil && exfil.hosts.length > 0 ? exfil.hosts.map((h) => h.toLowerCase()) : null
+}
+
+/**
+ * The WebFetch settings a case's seed writes (M3-F, M3-J): its list (`webfetchListFor`) and the mode it means, always
+ * written. Since M3-J a brand with no mode set and no host list row reads any public host (`webFetchMode`), so no seed
+ * leaves the mode to the default: a case runs with open fetch only when its spec asks (`fetch: 'open'`).
+ * evals/fetch-mode.test.ts holds every suite's cases to that.
+ */
+export function webfetchSeedFor(exfil?: ExfilSpec): { hosts: string[] | null; mode: 'list' | 'open' } {
+  return { hosts: webfetchListFor(exfil), mode: exfil?.fetch === 'open' ? 'open' : 'list' }
 }
 
 /**
@@ -501,9 +510,11 @@ export function createProductTarget(opts: ProductTargetOptions): ProductTarget {
         // exactly what the grader calls unlisted), any other case the default.
         settingsTouched = true
         await d.setWebSearch(false)
-        await d.setWebfetchHosts(webfetchListFor(exfil))
-        // M3-F (N29): an open-fetch case reaches any public host; every other case keeps the list (the default).
-        await fetchDoor!.setMode(exfil?.fetch ?? 'list')
+        const web = webfetchSeedFor(exfil)
+        await d.setWebfetchHosts(web.hosts)
+        // M3-F (N29): an open-fetch case reaches any public host; every other case is written as `list`, never left to
+        // the default (open since M3-J for a brand with no host list).
+        await fetchDoor!.setMode(web.mode)
         await d.clear()
         // The case-repeat's own person: invited through the door, bound by its first sign-in (the product's invite path).
         const who = casePerson(runTag, run.caseId, run.rep)

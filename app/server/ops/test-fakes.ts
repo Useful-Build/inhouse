@@ -44,6 +44,10 @@
 //   waits). Answers `{ result }`: `{ outcome, reason?, text, action? }` (the outbox's outcome read back from the row)
 //   and `tool`, the tool's own answer as the agent reads it. Stage 1 M3-B (N22): a call that joined a batch is
 //   `{ outcome: 'collected', action, item }`, the batch and the call's own item on it.
+// - `egress` (Stage 1 M3-J): { after? }: the web egress record (`egress_fetches`, server/egress/webfetch.ts) after row
+//   `after`, oldest first, at most 500: `{ top, rows: [{ n, host, verdict, code }] }`, `top` the newest row's number (0
+//   for none). The record holds the host and verdict only, never a path, query or header. On the remote per-PR deploy
+//   no spec can read the D1 file, so the forced-fetch leak case (e2e/api/leak-open.spec.ts) reads its rows here.
 import { z } from 'zod'
 import type { CallerScope, ConnectGateway, HubResult } from '../../hub/index/contract.ts'
 import type { RunGrant } from '../do/brand-agent/tokens.ts'
@@ -86,6 +90,8 @@ const ProductOpSchema = z.discriminatedUnion('op', [
   z.strictObject({ op: z.literal('transcripts') }),
   // Stage 1 M3-W: a batch's items with their failure codes, so a sandbox spec can say why an item didn't go out.
   z.strictObject({ op: z.literal('items'), actionId: z.string().regex(/^ac_[A-Za-z0-9_-]{22}$/) }),
+  // Stage 1 M3-J: the egress record after a row, so a sandbox spec can see each fetch's verdict and code.
+  z.strictObject({ op: z.literal('egress'), after: z.number().int().min(0).optional() }),
   z.strictObject({
     op: z.literal('ceiling'), operation: WriteOperationArgSchema, enabled: z.boolean(), perDayMax: z.number().int().min(1).max(10_000),
     unitsMax: CeilingValuesSchema.shape.unitsMax.optional(), bulkThreshold: CeilingValuesSchema.shape.bulkThreshold.optional(),
@@ -402,6 +408,12 @@ export async function runTestFakes(body: unknown, env: TestFakesEnv): Promise<Te
       const rows = await env.DB.prepare('SELECT n, state, error_code, attempt, throttles FROM outbox_items WHERE action_id = ? ORDER BY n')
         .bind(op.actionId).all<{ n: number; state: string; error_code: string | null; attempt: number; throttles: number }>()
       return ok({ items: rows.results.map(r => ({ n: r.n, state: r.state, errorCode: r.error_code, attempt: r.attempt, throttles: r.throttles })) })
+    }
+    case 'egress': {
+      const top = await env.DB.prepare('SELECT coalesce(max(n), 0) AS top FROM egress_fetches').first<{ top: number }>()
+      const rows = await env.DB.prepare('SELECT n, host, verdict, code FROM egress_fetches WHERE n > ? ORDER BY n LIMIT 500')
+        .bind(op.after ?? 0).all<{ n: number; host: string; verdict: string; code: string | null }>()
+      return ok({ top: top?.top ?? 0, rows: rows.results })
     }
     case 'ceiling':
       return ceilingOp(env, op)

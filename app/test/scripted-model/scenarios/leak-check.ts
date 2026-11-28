@@ -17,7 +17,7 @@ const HARNESS_MODEL = 'claude-sonnet-5-5'
 /** Brings each fetch's page-summary side request to this scenario (see `webfetch-allowed` in scenarios.ts). */
 const FETCH_PROMPT = 'Summarise the page (scenario:webfetch-leak)'
 
-const isMainLoop = (r: MessagesRequest): true | string => {
+export const isMainLoop = (r: MessagesRequest): true | string => {
   if (r.model !== HARNESS_MODEL) return `model ${String(r.model)}, not ${HARNESS_MODEL}`
   if (!Array.isArray(r.tools) || r.tools.length === 0) return 'no tool list (a side request)'
   return true
@@ -29,16 +29,17 @@ const firstUserText = (r: MessagesRequest): string => {
   return Array.isArray(c) ? c.map(b => (typeof b === 'object' && b !== null && 'text' in b ? String((b as { text: unknown }).text) : '')).join('\n') : ''
 }
 
-/** WebFetch's side request: no tools, one user message with the fetched page and this scenario's prompt. */
-const pageSummary = (r: MessagesRequest): boolean =>
-  Array.isArray(r.tools) && r.tools.length === 0 && r.messages.length === 1 && firstUserText(r).includes('Web page content:') && firstUserText(r).includes(FETCH_PROMPT)
+/** WebFetch's side request: no tools, one user message with the fetched page and the fetch's prompt (`prompt`). */
+export const pageSummaryOf = (prompt: string) => (r: MessagesRequest): boolean =>
+  Array.isArray(r.tools) && r.tools.length === 0 && r.messages.length === 1 && firstUserText(r).includes('Web page content:') && firstUserText(r).includes(prompt)
+const pageSummary = pageSummaryOf(FETCH_PROMPT)
 
 /** A message that only adds text after a tool's result (the CLI's budget line, say): looked past, as in scenarios.ts. */
 const textOnly = (m: MessagesRequest['messages'][number]): boolean =>
   m.role === 'system' ||
   (m.role === 'user' && (typeof m.content === 'string' || (Array.isArray(m.content) && m.content.every(b => (b as { type?: unknown })?.type === 'text'))))
 
-const resultBlock = (r: MessagesRequest, id: string): { is_error?: unknown; content?: unknown } | undefined => {
+export const resultBlock = (r: MessagesRequest, id: string): { is_error?: unknown; content?: unknown } | undefined => {
   for (let i = r.messages.length - 1; i >= 0; i--) {
     const m = r.messages[i]!
     if (textOnly(m)) continue
@@ -51,13 +52,13 @@ const resultBlock = (r: MessagesRequest, id: string): { is_error?: unknown; cont
   return undefined
 }
 
-const resultText = (block: { content?: unknown }): string =>
+export const resultText = (block: { content?: unknown }): string =>
   typeof block.content === 'string' ? block.content
   : Array.isArray(block.content) ? block.content.map(b => (typeof b === 'object' && b !== null && typeof (b as { text?: unknown }).text === 'string' ? (b as { text: string }).text : '')).join(' ')
   : ''
 
 /** The result of call `id` is (or isn't) an error and, when `holds` is given, its text holds it. */
-const resultIs = (id: string, wantError: boolean, holds?: string) => (r: MessagesRequest): true | string => {
+export const resultIs = (id: string, wantError: boolean, holds?: string) => (r: MessagesRequest): true | string => {
   const m = isMainLoop(r)
   if (m !== true) return m
   const b = resultBlock(r, id)
@@ -82,7 +83,7 @@ const CLI_403 = 'The server returned HTTP 403 Forbidden. The response body was n
  * HTTP 403 and that the body wasn't read. With the control fetch to the same host allowed one turn earlier, the token is
  * the only difference, so a 403 there is the leak check's. Any other refusal marker, another status, or a page fails.
  */
-const refusedAsLeak = (id: string) => (r: MessagesRequest): true | string => {
+export const refusedAsLeak = (id: string) => (r: MessagesRequest): true | string => {
   const m = isMainLoop(r)
   if (m !== true) return m
   const b = resultBlock(r, id)

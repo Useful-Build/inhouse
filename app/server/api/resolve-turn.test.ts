@@ -1,8 +1,9 @@
 // PR 5, ask F: route 29's model and settings resolution as one function (route 29 itself runs it: runs.test.ts). Every
 // expected value is a literal from the catalogue's published ids and the settings keys of design 4.9. Ways it can fail:
 // an unknown model isn't `invalid`; a switched-off model runs; the effort, side model, turn budget or WebFetch hosts
-// don't follow the settings; a broken stored host list allows any host instead of none; an empty or missing list allows
-// any host (P8a S: it allows none); web search is on without the brand's `t:websearch` switch; a fetch host is left
+// don't follow the settings; a broken stored host list allows any host instead of none; a brand with no host list
+// isn't open (M3-J: no mode set and no host listed is any public host), or `list` set on purpose with no host allows
+// any (it allows none); web search is on without the brand's `t:websearch` switch; a fetch host is left
 // while the brand's `t:webfetch_on` is off (M1-F: both switches are brand settings, so both scopes are read); the helpers'
 // model doesn't follow N6 (M1-P); open fetch mode (M3-F) isn't any public host, or a mode other than `open` widens it.
 import { describe, expect, it } from 'vitest'
@@ -20,12 +21,21 @@ const store = (values: Record<string, unknown>) => ({
 })
 
 describe('resolveTurnSettings (F)', () => {
-  it('defaults: the catalogue effort, Haiku as the side model, 25 turns, no WebFetch host, web search off', async () => {
+  it('defaults: the catalogue effort, Haiku as the side model, 25 turns, any public WebFetch host (M3-J), web search off', async () => {
     expect(await resolveTurnSettings(store({}), 'sonnet')).toEqual({
-      model: 'claude-sonnet-5-5', pickerId: 'sonnet', effort: 'medium', sideModel: 'claude-haiku-5-5', maxTurns: 25, webFetchDomains: [], webSearch: false,
+      model: 'claude-sonnet-5-5', pickerId: 'sonnet', effort: 'medium', sideModel: 'claude-haiku-5-5', maxTurns: 25, webFetchDomains: null, webSearch: false,
       subagentModel: 'claude-sonnet-5-5',
     })
-    expect(await resolveTurnSettings(store({ 't:webfetch': '' }), 'sonnet')).toMatchObject({ webFetchDomains: [], webSearch: false })
+    // A brand that never set a list is open: no row, or a value reset to null.
+    for (const list of [{ 't:webfetch': null }, { 't:webfetch': null, 't:webfetch_mode': null }, { 't:webfetch_mode': null }])
+      expect(await resolveTurnSettings(store(list), 'sonnet'), JSON.stringify(list)).toMatchObject({ webFetchDomains: null, webSearch: false })
+    // #744: a list saved empty on purpose ("Leave empty to block all websites") stays blocked with no mode set, as with a null mode.
+    for (const list of [{ 't:webfetch': '' }, { 't:webfetch': '', 't:webfetch_mode': null }])
+      expect(await resolveTurnSettings(store(list), 'sonnet'), JSON.stringify(list)).toMatchObject({ webFetchDomains: [], webSearch: false })
+    // The Inhouse team can still keep a brand to no host: `list` set on purpose with an empty or missing list.
+    for (const list of [{ 't:webfetch': '' }, {}]) expect(await resolveTurnSettings(store({ ...list, 't:webfetch_mode': 'list' }), 'sonnet'), JSON.stringify(list)).toMatchObject({ webFetchDomains: [] })
+    // A host list that breaks the rule is a list, not "no list": none, fail closed.
+    expect(await resolveTurnSettings(store({ 't:webfetch': 'not a list!' }), 'sonnet')).toMatchObject({ webFetchDomains: [] })
   })
 
   it('web search only with the switch on (true); anything else is off', async () => {
@@ -45,6 +55,8 @@ describe('resolveTurnSettings (F)', () => {
       expect(await resolveTurnSettings(store({ ...list, 't:webfetch_mode': 'open' }), 'sonnet'), JSON.stringify(list)).toMatchObject({ webFetchDomains: null })
     for (const v of [false, 'off']) expect(await resolveTurnSettings(store({ 't:webfetch_mode': 'open', 't:webfetch_on': v }), 'sonnet'), String(v)).toMatchObject({ webFetchDomains: [] })
     for (const v of ['list', null, 'OPEN', 'any', true]) expect(await resolveTurnSettings(store({ 't:webfetch': hosts, 't:webfetch_mode': v }), 'sonnet'), String(v)).toMatchObject({ webFetchDomains: ['example.com', 'docs.example.org'] })
+    // With no host listed, a mode that isn't `open` or missing (a bad stored value) is the empty list, never open.
+    for (const v of ['list', 'OPEN', 'any', true]) expect(await resolveTurnSettings(store({ 't:webfetch_mode': v }), 'sonnet'), String(v)).toMatchObject({ webFetchDomains: [] })
   })
 
   it('follows the settings: effort label, Haiku off, the turn budget and a host list', async () => {
