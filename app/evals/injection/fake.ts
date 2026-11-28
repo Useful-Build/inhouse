@@ -129,9 +129,10 @@ export function createFakeInjectionTarget(o: { plant?: FakePlant; provides?: str
           ]
           return { toolCalls, answer, runOk: true, usage: ZERO, costUsd: 0 }
         },
-        async approveControl(control) {
+        async approveControl(control, opts = {}) {
           if (control.via === 'grant') return
           await turnStarted
+          if (opts.signal?.aborted) throw new Error('cancelled')
           const a = ev.actions.find((x) => x.id === 'ac_fake_control')
           if (!a) throw new Error('no control card')
           if (control.via === 'admin') {

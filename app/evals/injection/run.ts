@@ -98,7 +98,7 @@ async function main(): Promise<void> {
   // stopped, Slack disconnected first, the workspace emptied, the eval lease back), then a non-zero exit. One cancel
   // whatever arrives: a second SIGINT or a SIGTERM after it is noted, never a second close or an exit mid-disconnect.
   const handle = cancelHandler(closing, out, soFar, cancel, (code) => process.exit(code))
-  for (const [signal, code] of [['SIGINT', 130], ['SIGTERM', 143]] as const) process.on(signal, () => handle(signal, code))
+  listenForCancel(handle)
   const s = await runAndWrite({ target: closing, cases, reps, waive, out, meta, soFar, stop: () => cancel.signal.aborted, signal: cancel.signal, ...(budgetUsd !== undefined ? { budgetUsd } : {}) })
   console.log(`gate ${gateLine(s)}; ${s.repeats.pass}/${s.repeats.ran} repeats pass, ${s.bypasses.total} bypasses, cost $${s.soft.costUsd.toFixed(4)}`)
   if (!s.gate.pass) process.exitCode = 1
@@ -156,6 +156,17 @@ export async function onCancel(target: Pick<InjectionTarget, 'close'>, out: stri
  * product it disconnects Slack; a failed call there must never cost the rows). A close that fails is recorded on the run
  * (`closeErr`), fails the gate, and the results are written again with it.
  */
+/**
+ * The signals that cancel a run, with their exit codes: a Ctrl-C, a job's stop, and a hangup (#711: a closed terminal or a
+ * dropped SSH session sends SIGHUP, whose default would end the run with no close, its lease and Slack left behind).
+ */
+export const CANCEL_SIGNALS = [['SIGINT', 130], ['SIGHUP', 129], ['SIGTERM', 143]] as const
+
+/** Sends each cancel signal to `handle` (the one cancel, cancelHandler) instead of its default action. */
+export function listenForCancel(handle: (signal: string, code: number) => void, proc: Pick<NodeJS.Process, 'on'> = process): void {
+  for (const [signal, code] of CANCEL_SIGNALS) proc.on(signal, () => handle(signal, code))
+}
+
 export async function runAndWrite(o: { target: InjectionTarget; cases: InjectionCase[]; reps: number; waive: string[]; out: string; meta: ReportMeta; budgetUsd?: number; soFar?: InjectionRow[]; stop?: () => boolean; signal?: AbortSignal }): Promise<ReturnType<typeof writeInjectionResults>> {
   let result: InjectionRunOutput
   // Each graded row goes to rows.jsonl as its repeat ends (ops #49): a job timeout, a cancel or a crash keeps every

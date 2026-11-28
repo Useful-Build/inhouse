@@ -232,8 +232,8 @@ export type InhouseApi = (method: 'GET' | 'POST', path: string, body?: unknown) 
 
 const ACCOUNT_PATH = encodeURIComponent(SLACK_ACCOUNT)
 
-/** Whether the Tools page (route 70) shows Slack connected. */
-async function slackShown(api: InhouseApi): Promise<boolean> {
+/** Whether the Tools page (route 70) shows Slack connected: read-only, so M3-E's preflight reads it too (#671). */
+export async function slackShown(api: InhouseApi): Promise<boolean> {
   const t = await api('GET', '/api/tools')
   if (t.status !== 200) throw new DoorRefusal(`the Tools page answered ${t.status}`)
   const list = (t.json as { connected?: unknown } | null)?.connected

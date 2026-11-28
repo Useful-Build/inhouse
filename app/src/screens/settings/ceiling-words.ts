@@ -4,6 +4,7 @@ import type { CeilingRow, CeilingValues } from '../../agent/types'
 import { AgentError } from '../../agent/types'
 import { CONFLICT, FORBIDDEN } from '../../../shared/contract/error-codes'
 import { WRITES_OFF } from '../../../shared/contract/ceiling-codes'
+import type { Guardrail } from '../../../shared/contract/permissions'
 import { fmtCount, fmtMoney, majorOf, moneyOf } from '../../lib/format'
 import { display } from '../../state/display'
 
@@ -37,11 +38,18 @@ export function limitLines(r: CeilingRow): string[] {
   ]
 }
 
-const GUARDRAIL_WORDS: Record<string, string> = { money: 'it moves money', customer: 'it reaches a customer', destructive: "it can't be undone", access: 'it changes who has access' }
+/**
+ * The guardrails an operation's effects always apply (the row's `guardrails`), in words. `bulk` and `count` depend on the
+ * call and `browser` has no operation, so the page never lists them. Stage 1 M4 (N46): `unreviewed`.
+ */
+export const GUARDRAIL_WORDS: Readonly<Record<Exclude<Guardrail, 'bulk' | 'count' | 'browser'>, string>> = {
+  money: 'it moves money', customer: 'it reaches a customer', destructive: "it can't be undone", access: 'it changes who has access',
+  unreviewed: "it isn't reviewed yet",
+}
 
 /** Who approves it and which guardrail applies, in one line. */
 export function approvalLine(r: CeilingRow): string {
-  const why = r.guardrails.map(g => GUARDRAIL_WORDS[g]).filter(Boolean)
+  const why = r.guardrails.map(g => (Object.hasOwn(GUARDRAIL_WORDS, g) ? GUARDRAIL_WORDS[g as keyof typeof GUARDRAIL_WORDS] : '')).filter(Boolean)
   const who = r.approverKind === 'admins' ? 'An admin approves it' : 'The person who asked approves it'
   if (why.length > 0) return `${who} exactly, every time, because ${why.join(' and ')}.`
   return `${who} first, or chooses Always allow.`
