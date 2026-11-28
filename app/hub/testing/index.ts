@@ -22,7 +22,7 @@ import { STORE_DATA_UPSTREAMS } from '../../test/upstreams/shopify/datasets/exfi
 import { READ_SIDE_UPSTREAMS } from '../../test/upstreams/shopify/datasets/read-side/upstreams'
 import { evalSlackWorkspace, type EvalSlackEnv } from './eval-slack'
 import { createMcpFixtures, MCP_FIXTURE_HOSTS } from '../../test/upstreams/mcp/index'
-import { bindWriteStore, type FakeKv, type WriteStore } from './write-store'
+import { bindWriteStore, type FakeStorage, type WriteStore } from './write-store'
 
 /** Found in the test bundle, never in the deployable one (the bundle scan looks for this exact value). */
 export const HUB_TEST_CANARY = 'INHOUSE_HUB_TEST_CANARY_4b9e'
@@ -60,15 +60,15 @@ testUpstreams.set(SHOPIFY_WRITE_HOST, shopifyWrite.fetch)
 
 // #619: the write store's state (its issued tokens above all) is kept in the singleton test-fakes DO's storage, so a
 // restart of that DO's isolate doesn't forget a token it issued (./write-store.ts). Bound on first use per DO instance.
-let writeStore: { kv: FakeKv; store: WriteStore } | null = null
+let writeStore: { kv: FakeStorage['kv']; store: WriteStore } | null = null
 
 /**
  * Binds the write store to the singleton test-fakes DO's storage (signin.ts calls it before each upstream request and
  * test-fakes op). A different storage object (a new DO instance in this isolate) binds again, reading the state back
  * from storage. Unit tests that call testUpstreamFetch without a DO leave it unbound: the fake then lives in memory only.
  */
-export function attachFakeStorage(kv: FakeKv): WriteStore {
-  if (writeStore?.kv !== kv) writeStore = { kv, store: bindWriteStore(shopifyWrite, kv) }
+export function attachFakeStorage(storage: FakeStorage): WriteStore {
+  if (writeStore?.kv !== storage.kv) writeStore = { kv: storage.kv, store: bindWriteStore(shopifyWrite, storage) }
   return writeStore.store
 }
 

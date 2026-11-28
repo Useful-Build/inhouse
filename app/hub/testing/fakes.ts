@@ -24,7 +24,7 @@ import { dataset as shopifyFixtureValue } from '../../test/upstreams/shopify/rec
 import type { Dataset } from '../../test/upstreams/shopify/dataset'
 import { attachFakeStorage, mcpFixtures, notesMcp, shopifyIssuedTokens, shopifyRequests, shopifyWrite, slackMcp, slackWeb } from './index'
 import { FIXTURE_KEYS, type FixtureKeyName } from '../../test/upstreams/mcp/index'
-import type { FakeKv } from './write-store'
+import type { FakeStorage } from './write-store'
 
 /** Found in the hub's test bundle, never in the deployable one (scripts/check-hub-build.mjs reads it from here). */
 export const HUB_FAKES_CANARY = 'INHOUSE_HUB_FAKES_CANARY_3a6f'
@@ -303,11 +303,12 @@ export function hubLogs(since = 0): { lines: string[]; next: number } {
  * Leaf ops executed inside the singleton `__test-fakes__` SignIn Durable Object (zero outbound DO calls). The write
  * store is bound to the DO's storage first (#619: `state` after a restart reads it back), and kept after `set` and `reset`.
  */
-export function runHubFakesInDo(kv: FakeKv, input: unknown): HubResult<unknown> {
+export function runHubFakesInDo(storage: FakeStorage, input: unknown): HubResult<unknown> {
+  const { kv } = storage
   const parsed = HubFakesOpSchema.safeParse(input)
   if (!parsed.success) return err('invalid_args', parsed.error.issues[0]?.path.join('.') || 'op')
   const op = parsed.data
-  const writeStore = attachFakeStorage(kv)
+  const writeStore = attachFakeStorage(storage)
   switch (op.op) {
     case 'state':
       return { ok: true, value: fakesStateLocal() }

@@ -23,9 +23,9 @@ import {
   writeStateVersion,
 } from '../../test/upstreams/shopify/write/server'
 import { TEST_FAKES_DO_NAME, upstreamFor } from '../signin/signin'
-import { bindWriteStore, WRITE_STORE_CORE_KEY, type FakeKv } from './write-store'
+import { bindWriteStore, WRITE_STORE_CORE_KEY, type FakeStorage } from './write-store'
 
-class MemKv implements FakeKv {
+class MemKv implements Pick<SyncKvStorage, 'get' | 'put' | 'delete' | 'list'> {
   readonly m = new Map<string, unknown>()
   get<T>(key: string): T | undefined {
     return this.m.has(key) ? (structuredClone(this.m.get(key)) as T) : undefined
@@ -38,6 +38,18 @@ class MemKv implements FakeKv {
   }
   *list<T>(o?: SyncKvListOptions): Iterable<[string, T]> {
     for (const k of [...this.m.keys()].sort()) if (k.startsWith(o?.prefix ?? '')) yield [k, structuredClone(this.m.get(k)) as T]
+  }
+}
+
+/** The DO storage's shape the fakes use: the sync KV above, and async writes that land in it at once (in order). */
+class MemStorage implements FakeStorage {
+  readonly kv = new MemKv()
+  put(entries: Record<string, unknown>): Promise<void> {
+    for (const [k, v] of Object.entries(entries)) this.kv.put(k, v)
+    return Promise.resolve()
+  }
+  delete(keys: string[]): Promise<number> {
+    return Promise.resolve(keys.filter(k => this.kv.delete(k)).length)
   }
 }
 
@@ -78,17 +90,17 @@ const issue = async (i: Instance): Promise<string> => {
   expect(res.status).toBe(200)
   return ((await res.json()) as { access_token: string }).access_token
 }
-const op = (i: Instance, kv: FakeKv, input: unknown) => {
+const op = (i: Instance, kv: FakeStorage, input: unknown) => {
   const r = i.hook.runHubFakesInDo(kv, input)
   if (!r.ok) throw new Error(`${r.error.code}: ${r.error.message}`)
   return r.value as Record<string, unknown>
 }
 type WriteState = { writes: { operation: string; outcome: string; replayed?: true }[]; orders: { id: string; tags: string[] }[]; faults: Record<string, string> }
-const writeState = (i: Instance, kv: FakeKv) => op(i, kv, { op: 'state' }).shopifyWrite as WriteState
+const writeState = (i: Instance, kv: FakeStorage) => op(i, kv, { op: 'state' }).shopifyWrite as WriteState
 
 describe('the fake write store across a restart (#619)', () => {
   test('a token saved before a restart still works after it; the stores, faults and write log carry over (failures 1, 2)', async () => {
-    const kv = new MemKv()
+    const kv = new MemStorage()
     const a = await restart()
     a.seam.attachFakeStorage(kv)
     const token = await issue(a)
@@ -125,14 +137,14 @@ describe('the fake write store across a restart (#619)', () => {
 
   test('the control: an unbound fresh instance (the old behavior) answers the saved token with a 401', async () => {
     const a = await restart()
-    a.seam.attachFakeStorage(new MemKv())
+    a.seam.attachFakeStorage(new MemStorage())
     const token = await issue(a)
     const b = await restart()
     expect((await b.seam.testUpstreamFetch(tagAdd(token, 'x'))).status).toBe(401)
   })
 
   test('a timeout write is kept while the fake hangs, before any answer (failure 3)', async () => {
-    const kv = new MemKv()
+    const kv = new MemStorage()
     const a = await restart()
     a.seam.attachFakeStorage(kv)
     const token = await issue(a)
@@ -149,7 +161,7 @@ describe('the fake write store across a restart (#619)', () => {
   })
 
   test('reset holds across a restart: the logs and stores go back to their start, the issued tokens stay (failure 4)', async () => {
-    const kv = new MemKv()
+    const kv = new MemStorage()
     const a = await restart()
     a.seam.attachFakeStorage(kv)
     const token = await issue(a)
@@ -168,6 +180,24 @@ describe('the fake write store across a restart (#619)', () => {
     c.seam.attachFakeStorage(kv)
     expect(writeState(c, kv).writes.map(w => w.operation)).toEqual(['shopify.order.tag_add'])
     expect(c.seam.shopifyWrite.issuedTokens).toEqual([token])
+  })
+
+  test('every write is unconfirmed and async, never a sync KV write: a fake\'s answer never waits on durability', async () => {
+    const st = new MemStorage()
+    const calls: string[] = []
+    const spy: FakeStorage = {
+      kv: { get: k => st.kv.get(k), list: o => st.kv.list(o), put: () => calls.push('sync put'), delete: () => (calls.push('sync delete'), true) },
+      put: (entries, o) => (calls.push(`put ${o.allowUnconfirmed}`), st.put(entries)),
+      delete: (keys, o) => (calls.push(`delete ${o.allowUnconfirmed}`), st.delete(keys)),
+    }
+    const fake = new FakeShopifyWriteUpstream()
+    const store = bindWriteStore(fake, spy)
+    const token = ((await (await fake.fetch(tokenRequest())).json()) as { access_token: string }).access_token
+    await fake.fetch(tagAdd(token, 'x'))
+    fake.reset()
+    store.save()
+    expect(calls.length).toBeGreaterThan(0)
+    expect(new Set(calls)).toEqual(new Set(['put true', 'delete true']))
   })
 
   // Failure 5 (#688 widened it). Each step is a token request, a tag write with the newest token, an idempotent restock
@@ -190,7 +220,7 @@ describe('the fake write store across a restart (#619)', () => {
     }).map(r => ({ kind: 'fault' as const, ...r })),
   )
   test.prop([fc.array(step, { maxLength: 25 })], { numRuns: 100 })('over any mix of requests, faults, resets and restarts, the restored fake matches one that never restarted', async steps => {
-    const kv = new MemKv()
+    const kv = new MemStorage()
     const ref = new FakeShopifyWriteUpstream()
     let live = new FakeShopifyWriteUpstream()
     let store = bindWriteStore(live, kv)
@@ -231,7 +261,7 @@ describe('the fake write store across a restart (#619)', () => {
       expect(f.snapshot()).toEqual(ref.snapshot())
       for (const n of WRITE_LOG_NAMES) expect(f[n]).toEqual(ref[n])
     }
-    const keys = [...kv.m.keys()]
+    const keys = [...kv.kv.m.keys()]
     expect(keys.filter(k => !k.startsWith('test-fakes:shopify-write:log:'))).toEqual([WRITE_STORE_CORE_KEY])
     expect(keys.length - 1).toBe(WRITE_LOG_NAMES.reduce((n, l) => n + ref[l].length, 0))
   })
@@ -256,17 +286,17 @@ describe('kept state from other code (#687)', () => {
     ['a foreign value', 'not a snapshot'],
     ['null', null],
   ])('%s is dropped with its logs, and the fake starts clean', async (_name, core) => {
-    const kv = new MemKv()
-    kv.put(WRITE_STORE_CORE_KEY, core)
-    kv.put(`${LOG_PREFIX}writes:0000000000`, staleLog)
-    kv.put(`${LOG_PREFIX}requests:0000000000`, { path: '/old', method: 'POST' })
+    const kv = new MemStorage()
+    kv.kv.put(WRITE_STORE_CORE_KEY, core)
+    kv.kv.put(`${LOG_PREFIX}writes:0000000000`, staleLog)
+    kv.kv.put(`${LOG_PREFIX}requests:0000000000`, { path: '/old', method: 'POST' })
     const fake = new FakeShopifyWriteUpstream()
     expect(bindWriteStore(fake, kv).restored).toBe(false)
     const fresh = new FakeShopifyWriteUpstream()
     expect(fake.snapshot()).toEqual(fresh.snapshot())
     for (const n of WRITE_LOG_NAMES) expect(fake[n]).toEqual([])
-    expect([...kv.m.keys()]).toEqual([WRITE_STORE_CORE_KEY])
-    expect(kv.get(WRITE_STORE_CORE_KEY)).toEqual(fresh.snapshot())
+    expect([...kv.kv.m.keys()]).toEqual([WRITE_STORE_CORE_KEY])
+    expect(kv.kv.get(WRITE_STORE_CORE_KEY)).toEqual(fresh.snapshot())
     // The dropped token is unknown; the code's API version, credentials and scope answer.
     expect((await fake.fetch(tagAdd('shpat_write_test_1', 'x'))).status).toBe(401)
     const res = await fake.fetch(tokenRequest())
@@ -281,8 +311,8 @@ describe('kept state from other code (#687)', () => {
   test('a kept copy of this version never brings back a code-owned value, even one written beside it', async () => {
     const first = new FakeShopifyWriteUpstream()
     const token = ((await (await first.fetch(tokenRequest())).json()) as { access_token: string }).access_token
-    const kv = new MemKv()
-    kv.put(WRITE_STORE_CORE_KEY, { ...first.snapshot(), apiVersion: '2025-01', credentials: { clientId: 'old', clientSecret: 'old' }, scope: ['read_orders'], currency: 'EUR', products: [], variants: [] })
+    const kv = new MemStorage()
+    kv.kv.put(WRITE_STORE_CORE_KEY, { ...first.snapshot(), apiVersion: '2025-01', credentials: { clientId: 'old', clientSecret: 'old' }, scope: ['read_orders'], currency: 'EUR', products: [], variants: [] })
     const fake = new FakeShopifyWriteUpstream()
     expect(bindWriteStore(fake, kv).restored).toBe(true)
     const code = new FakeShopifyWriteUpstream()
@@ -290,7 +320,7 @@ describe('kept state from other code (#687)', () => {
       .toEqual([code.apiVersion, code.credentials, code.scope, code.currency, [...code.products], [...code.variants]])
     expect(fake.issuedTokens).toEqual([token])
     expect((await fake.fetch(tagAdd(token, 'kept'))).status).toBe(200)
-    expect(Object.keys(kv.get<object>(WRITE_STORE_CORE_KEY)!)).not.toContain('apiVersion')
+    expect(Object.keys(kv.kv.get<object>(WRITE_STORE_CORE_KEY)!)).not.toContain('apiVersion')
   })
 
   test('reset puts the API version and the credentials back, with the scope', () => {
@@ -323,7 +353,7 @@ describe('on the singleton test-fakes DO storage (#619)', () => {
     await runInDurableObject(stub, async (_instance, state) => {
       expect(state.storage.kv.get(WRITE_STORE_CORE_KEY)).toBeDefined()
       const fresh = new FakeShopifyWriteUpstream()
-      bindWriteStore(fresh, state.storage.kv)
+      bindWriteStore(fresh, state.storage)
       expect(fresh.issuedTokens).toContain(token)
       expect(fresh.writes.at(-1)).toMatchObject({ operation: 'shopify.order.tag_add', variables: { tags: ['through-do'] }, outcome: 'succeed' })
       const again = await fresh.fetch(tagAdd(token, 'after-restart'))
