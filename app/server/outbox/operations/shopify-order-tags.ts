@@ -48,9 +48,13 @@ export function tagsItemLine(verb: 'add' | 'remove', a: OrderTagsArgs, f: Resolv
   return `${a.orderIds.length === 1 ? 'Order' : 'Orders'} ${orders}${shop ? ` (${shop})` : ''}: ${verb} ${a.tags.join(', ')}`
 }
 
-/** Stage 1 M3-U (N33): an item as a row: its orders ("#1042", "#1042, #1043") and the change ("add VIP, rush"). */
+/**
+ * Stage 1 M3-U (N33): an item as a row: its orders ("Order 1042", "Orders 1042, 1043") and the change ("add VIP, rush").
+ * The number is the order's id, not its name, so it never wears the shop's `#` (#578); the screen shows the order's own
+ * name ("#3901") from the item's detail when the store gave it.
+ */
 export const tagsItemRow = (verb: 'add' | 'remove', a: OrderTagsArgs) =>
-  ({ ref: a.orderIds.map(id => `#${orderNumber(id)}`).join(', '), change: `${verb} ${a.tags.join(', ')}` })
+  ({ ref: `${a.orderIds.length === 1 ? 'Order' : 'Orders'} ${a.orderIds.map(orderNumber).join(', ')}`, change: `${verb} ${a.tags.join(', ')}` })
 
 /**
  * Stage 1 M3-U (N33): a batch's title. Every item with the same tags: "Tag 450 orders as VIP" ("Remove VIP from 450

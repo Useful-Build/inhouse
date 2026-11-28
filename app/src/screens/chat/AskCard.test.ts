@@ -507,3 +507,35 @@ describe('admins cards (Stage 1 M3-U, N25)', () => {
     expect(text()).toContain("It wasn't approved. Nothing went out.")
   })
 })
+
+describe('card details (Stage 1 M3 card details, PR 555, issue 578)', () => {
+  const LINES = Array.from({ length: 10 }, (_, i) => `Order ${9001 + i} (store-a): add VIP`)
+  const ROWS = Array.from({ length: 10 }, (_, i) => ({ ref: `Order ${9001 + i}`, change: 'add VIP' }))
+  const DETAILS = Array.from({ length: 10 }, (_, i) => ({ rows: [{ ref: `Order ${9001 + i}`, order: orderRef(3901 + i), customer: `Customer ${i}`, amount: '$642.10', currency: 'USD' }] }))
+  const rowTexts = () => [...host.querySelectorAll('[data-card-rows] [data-row]')].map(r => r.textContent)
+  test('a batch row reads the order\'s name, its customer, the change and the total', async () => {
+    await show({ actionId: AC, initial: card({
+      kind: 'exact', guardrail: 'bulk', title: 'Tag 450 orders as VIP', lines: LINES, records: 450, can: { ...NONE, approve: true, deny: true },
+      batch: { itemCount: 450, firstLines: LINES, firstRows: ROWS, firstDetails: DETAILS, totals: { records: 450, units: 450, unitsLabel: 'orders' } },
+    }) })
+    expect(rowTexts()).toEqual([0, 1, 2].map(i => `${orderRef(3901 + i)}Customer ${i}add VIP$642.10`))
+    const first = host.querySelector('[data-card-rows] [data-row]')!
+    expect(first.querySelector('[data-row-ref]')?.textContent).toBe(orderRef(3901))
+    expect(first.querySelector('[data-row-main]')?.textContent).toBe('Customer 0')
+    expect(first.querySelector('[data-row-amount]')?.textContent).toBe('$642.10')
+  })
+  test('without details the row shows the server\'s record, never the id as "#"', async () => {
+    await show({ actionId: AC, initial: card({
+      kind: 'exact', guardrail: 'bulk', title: 'Tag 450 orders as VIP', lines: LINES, records: 450, can: { ...NONE, approve: true, deny: true },
+      batch: { itemCount: 450, firstLines: LINES, firstRows: ROWS, totals: { records: 450, units: 450, unitsLabel: 'orders' } },
+    }) })
+    expect(rowTexts()[0]).toBe('Order 9001add VIP')
+  })
+  test('a single card shows its order\'s row under its lines, and a note when the store couldn\'t be read', async () => {
+    await show({ actionId: AC, initial: card({ title: 'Add a tag to order 9001', lines: ['Tag: VIP'], detail: DETAILS[0] }) })
+    expect([...host.querySelectorAll('[data-card-detail] [data-row]')].map(r => r.textContent)).toEqual([`${orderRef(3901)}Customer 0$642.10`])
+    await show({ actionId: 'ac_BBBBBBBBBBBBBBBBBBBBBB', initial: card({ id: 'ac_BBBBBBBBBBBBBBBBBBBBBB', title: 'Create a draft order of 2 items', lines: ['2 × variant 7001'], detail: { rows: [], note: 'Product names couldn’t be read.' } }) })
+    expect(host.querySelector('[data-card-detail]')).toBeNull()
+    expect(host.querySelector('[data-card-detail-note]')?.textContent).toBe('Product names couldn’t be read.')
+  })
+})

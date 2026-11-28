@@ -105,7 +105,8 @@ test('Approvals shows the 450-item batch: what it does, 3 rows, See all and Appr
   await expect(card.locator('[data-card-subtitle]')).toHaveText('Shopify · One approval covers all 450')
   const rows = card.locator('[data-card-rows] [data-row]')
   await expect(rows).toHaveCount(3)
-  await expect(rows.first()).toHaveText(`#9001add ${prefix}-6`)
+  // Stage 1 M3 card details (#578): the order's own name, its customer and total from the fake store, the change under them.
+  await expect(rows.first()).toHaveText(`#9001Alex Mooreadd ${prefix}-6$642.10`)
   await expect(card.locator('[data-card-more]')).toHaveText('and 447 moreSee all 450')
   await expect(card.locator('[data-card-actions] button')).toHaveText(['Approve all 450', 'No'])
   await card.scrollIntoViewIfNeeded()
