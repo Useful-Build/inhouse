@@ -20,7 +20,7 @@ import { CancelWhySchema, TurnFailureSchema } from '../../shared/contract/runs.t
 import { randomBytes } from 'node:crypto'
 import { readFileSync } from 'node:fs'
 import type { JWK } from 'jose'
-import { createDoor, newActionId, newMemoryId, wranglerRunner, type MemoryDoor, type MemoryRow, type NewMemory, type RunSql } from './door.ts'
+import { casePersonRefusal, createDoor, newActionId, newMemoryId, teammateRefusal, wranglerRunner, type MemoryDoor, type MemoryRow, type NewMemory, type RunSql } from './door.ts'
 import { createWriteDoor, writeProvides, type WriteDoor } from './write-door.ts'
 import { createSlackDoor, type SlackDoor } from './slack-door.ts'
 import { createFetchDoor, withEgress, type FetchDoor } from '../exfiltration/open-fetch/egress.ts'
@@ -145,6 +145,8 @@ export function casePerson(run: string, caseId: string, rep: number): { sub: str
   const handle = `eval-${run}-${caseId.toLowerCase()}-r${rep}`
   return { sub: handle, email: `${handle}@example.test`, name: `Eval ${caseId} r${rep}` }
 }
+/** The address of a case-repeat's named teammate (M3-E, #566): the case person's, marked. */
+const teammateEmail = (who: { email: string }): string => who.email.replace('@', '-named@')
 /** A case person's email: what run start removes when it's another run's. */
 const CASE_PERSON = /^eval-[a-z0-9-]+@example\.test$/
 const newMemberId = (): string => `m_${randomBytes(16).toString('base64url')}`
@@ -191,6 +193,11 @@ export interface ProductTarget extends Target {
   writeDoor(): WriteDoor
   /** The target's own checks (the eval brand, the members, the lease, the cap), once; makes its doors (M3-E's preflight, #662). */
   ready(): Promise<void>
+  /**
+   * Why the door would refuse the case person a seed makes for this case-repeat, or its named teammate, or null (#724):
+   * the doors' own rules on the run's own addresses, so M3-E's preflight stops a case before any paid turn.
+   */
+  personRefusal(c: { caseId: string; rep: number; namedMember?: string }): string | null
   /**
    * How many calls (to the deployment, through a door) have ended so far: a close waits on a case setup while this still
    * moves (#685), every call having its own deadline.
@@ -439,13 +446,17 @@ export function createProductTarget(opts: ProductTargetOptions): ProductTarget {
     call: api,
     writeDoor: writesOf,
     ready: setup,
+    personRefusal: (c) => {
+      const who = casePerson(runTag, c.caseId, c.rep)
+      return casePersonRefusal(who) ?? (c.namedMember === undefined ? null : teammateRefusal({ email: teammateEmail(who), name: c.namedMember }))
+    },
     progress: () => callsDone,
     slackDoor: slackOf,
     async addTeammate(t) {
       if (!checked || !door) throw new ProductTargetRefusal('a teammate is added only after the eval-brand check: seed a case first')
       const who = casePerson(runTag, t.caseId, t.rep)
       const id = newMemberId()
-      await door.addTeammate({ id, email: who.email.replace('@', '-named@'), name: t.name })
+      await door.addTeammate({ id, email: teammateEmail(who), name: t.name })
       return id
     },
     async removeTeammate(id) {

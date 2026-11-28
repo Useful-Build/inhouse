@@ -161,17 +161,15 @@ export function createDoor(run: RunSql, nowSql: () => string = () => D1_NOW_MS):
       return out.map((r) => ({ id: String(r.id), scope: r.scope as MemoryRow['scope'], ownerId: r.owner_id === null ? null : String(r.owner_id), text: String(r.text), status: r.status as MemoryRow['status'], rev: Number(r.rev) }))
     },
     async invitePerson(p) {
-      // Literal-safe values only: the eval case persons' own shapes.
       if (!MEMBER_ID.test(p.id)) throw new DoorRefusal('not a member id')
-      if (!/^eval-[a-z0-9-]{1,80}@example\.test$/.test(p.email)) throw new DoorRefusal('not an eval case person\'s email')
-      // A plain name, or one of the write-injection set's planted names (#533), each a fixed literal.
-      if (!/^[A-Za-z0-9 ]{1,60}$/.test(p.name) && !PLANTED_NAME_LIST.includes(p.name)) throw new DoorRefusal('not an eval case person\'s name')
+      const why = casePersonRefusal(p)
+      if (why) throw new DoorRefusal(why)
       await run(`INSERT INTO members (id, kind, role, status, name, email_norm, created_at_ms, req_id) VALUES (${sqlString(p.id)}, 'person', 'member', 'invited', ${sqlString(p.name)}, ${sqlString(p.email)}, ${Date.now()}, 'eval')`)
     },
     async addTeammate(p) {
       if (!MEMBER_ID.test(p.id)) throw new DoorRefusal('not a member id')
-      if (!/^eval-[a-z0-9-]{1,80}@example\.test$/.test(p.email)) throw new DoorRefusal('not an eval teammate\'s email')
-      if (!PLANTED_NAME_LIST.includes(p.name)) throw new DoorRefusal('not a planted name')
+      const why = teammateRefusal(p)
+      if (why) throw new DoorRefusal(why)
       await run(`INSERT INTO members (id, kind, role, status, name, email_norm, created_at_ms, req_id) VALUES (${sqlString(p.id)}, 'person', 'member', 'active', ${sqlString(p.name)}, ${sqlString(p.email)}, ${Date.now()}, 'eval')`)
     },
     async removeTeammate(id) {
@@ -293,6 +291,24 @@ export function createDoor(run: RunSql, nowSql: () => string = () => D1_NOW_MS):
  */
 export function webfetchHostsRefusal(hosts: readonly string[]): string | null {
   return hosts.length === 0 || parseHostlist(hosts.join('\n'))?.length !== hosts.length ? 'not a host list the server reads (parseHostlist)' : null
+}
+
+/**
+ * Why the door refuses a case person (invitePerson), or null: literal-safe values only, the eval case persons' own shapes,
+ * and a plain name or one of the write-injection set's planted names (#533). M3-E's preflight checks each planned case
+ * with it (#724).
+ */
+export function casePersonRefusal(p: { email: string; name: string }): string | null {
+  if (!/^eval-[a-z0-9-]{1,80}@example\.test$/.test(p.email)) return 'not an eval case person\'s email'
+  if (!/^[A-Za-z0-9 ]{1,60}$/.test(p.name) && !PLANTED_NAME_LIST.includes(p.name)) return 'not an eval case person\'s name'
+  return null
+}
+
+/** Why the door refuses an M3-E teammate (addTeammate), or null: an eval address and a planted name (#566, #724). */
+export function teammateRefusal(p: { email: string; name: string }): string | null {
+  if (!/^eval-[a-z0-9-]{1,80}@example\.test$/.test(p.email)) return 'not an eval teammate\'s email'
+  if (!PLANTED_NAME_LIST.includes(p.name)) return 'not a planted name'
+  return null
 }
 
 export interface WranglerOptions {

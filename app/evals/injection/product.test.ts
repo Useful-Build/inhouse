@@ -2,7 +2,7 @@
 // seeds and in what order, what its preflight refuses, how it answers a control's card, and that a failed seed still
 // resets the session (the brand's lock is released there).
 import { describe, expect, it } from 'vitest'
-import { JOB_END_TIMEOUT_MS, type ProductTarget } from '../targets/product.ts'
+import { createProductTarget, JOB_END_TIMEOUT_MS, type ProductTarget } from '../targets/product.ts'
 import type { CeilingLimits, CeilingRow, GrantRow, OutboxRows, ShopifyAccountRow, WriteDoor, WriteLogRow } from '../targets/write-door.ts'
 import type { ChatResult, Session } from '../types.ts'
 import { INJECTION_CASES } from './cases.ts'
@@ -616,6 +616,47 @@ describe('Neon\'s #618 review on the product target', () => {
     parts = [enc([{ type: 'user', message: { content: [{ type: 'tool_result', tool_use_id: 't', content: JSON.stringify({ facts: [{ text: plant }] }) }] } }])]
     expect(await s.plantDelivered!(plant)).toEqual({ delivered: true })
     expect(reads).toEqual(['eval-chat', 'eval-chat'])
+  })
+})
+
+describe('#724: every value a case\'s start takes is checked by the door\'s own rule before any turn', () => {
+  // The product target's own person rule, on its own run tag (no network: only the address it would invite is checked).
+  const person = createProductTarget({
+    paid: true, budgetUsd: 1, signIn: async () => ({}), fetch: (async () => { throw new Error('no call') }) as unknown as typeof fetch,
+    env: { INHOUSE_EVAL_BRAND: '1', INHOUSE_EVAL_RUN: '12345678901234567890-123456', INHOUSE_EVAL_ORIGIN: 'https://eval.example', INHOUSE_EVAL_ACCESS_CLIENT_ID: 'id', INHOUSE_EVAL_ACCESS_CLIENT_SECRET: 's' },
+  }).personRefusal
+
+  it('every real case passes every rule, on the longest run tag and repeat number', () => {
+    expect(INJECTION_CASES.map((c) => [c.id, seedRefusal(c, person)]).filter(([, why]) => why !== null)).toEqual([])
+  })
+
+  it('a named teammate that isn\'t a planted name (addTeammate\'s rule)', () => {
+    expect(seedRefusal({ ...kase('W25'), namedMember: 'Robert Tables' }, person)).toBe('W25\'s seed would be refused: not a planted name')
+  })
+
+  it('a case id the case person\'s address can\'t carry (invitePerson\'s rule)', () => {
+    expect(seedRefusal({ ...kase('W06'), id: 'W06!' }, person)).toBe('W06!\'s seed would be refused: not an eval case person\'s email')
+  })
+
+  it('a ceiling the door wouldn\'t seed (setCeiling\'s rule)', () => {
+    expect(seedRefusal({ ...kase('W06'), ceilings: [{ ...kase('W06').ceilings[0]!, perDayMax: 0 }] }, person)).toBe('W06\'s seed would be refused: not a daily maximum the door seeds')
+  })
+
+  it('a grant limit the door wouldn\'t seed (grant\'s rule)', () => {
+    expect(seedRefusal({ ...kase('W07'), grant: { ...kase('W07').grant!, perDay: 0 } }, person)).toBe('W07\'s seed would be refused: not a daily limit the door seeds')
+  })
+
+  it('a listed channel the workspace the start seeds doesn\'t have (list\'s rule)', () => {
+    expect(seedRefusal({ ...kase('W15'), channels: ['#nope'] }, person)).toBe('W15\'s seed would be refused: no workspace channel is named "nope"')
+  })
+
+  it('the preflight stops on any of them before the target\'s own checks', async () => {
+    const calls: string[] = []
+    const { base } = stand({ writes: new FakeWrites() })
+    const b = { ...base, personRefusal: person, async ready() { calls.push('ready') } } as unknown as ProductTarget
+    const t = createProductInjectionTarget({ paid: true, env: {}, inhouse: null, base: b, sessions: { preflight: async () => {}, parts: async () => [] } })
+    await expect(t.preflight!([kase('P01'), { ...kase('W25'), namedMember: 'Robert Tables' }])).rejects.toThrow('W25\'s seed would be refused: not a planted name')
+    expect(calls).toEqual([])
   })
 })
 

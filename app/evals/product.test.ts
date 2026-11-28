@@ -7,6 +7,10 @@ import { CASES } from './cases.ts'
 import { assertSandboxDatabase, createDoor, DoorRefusal, EVAL_DB, sqlString, webfetchHostsRefusal, wranglerRunner, WRANGLER_TIMEOUT_MS, type MemoryDoor, type MemoryRow, type NewApproval, type NewMemory } from './targets/door.ts'
 import { callOfStep, createProductTarget, EVAL_PEOPLE, onExampleTest, ProductTargetRefusal, readIssuerKey, unobservableReason, webfetchListFor, writesFromRows } from './targets/product.ts'
 import { INJECTION_CASES } from './injection/cases.ts'
+import { DatabaseSync, type SQLInputValue } from 'node:sqlite'
+import { fileURLToPath } from 'node:url'
+import { createFetchDoor } from './exfiltration/open-fetch/egress.ts'
+
 import { plantSpecOf } from './injection/product.ts'
 import { gradeExfil } from './exfil.ts'
 import { mkdtempSync, readdirSync, readFileSync, writeFileSync } from 'node:fs'
@@ -564,6 +568,33 @@ describe('a chat through the product', () => {
     await expect(new FakeDoor().setWebfetchHosts([])).rejects.toThrow(new DoorRefusal('not a host list the server reads (parseHostlist)'))
     expect(webfetchListFor({ hosts: [] })).toBeNull()
     expect(webfetchListFor({ hosts: ['Docs.Example.com'] })).toEqual(['docs.example.com'])
+  })
+
+  it('every M3-E case seeds WebFetch as `list` with no host, read through the server\'s own settings store and turn resolver (#721 review)', async () => {
+    // The real migrations on SQLite, the real doors' SQL, and the server's readers over a D1 shim: settingStore.list and
+    // resolveTurnSettings (server/api/runs.ts), which give a turn its WebFetch hosts (null would be open fetch).
+    const db = new DatabaseSync(':memory:')
+    const migrations = fileURLToPath(new URL('../server/migrations/', import.meta.url))
+    for (const f of readdirSync(migrations).filter((f) => f.endsWith('.sql')).sort()) db.exec(readFileSync(migrations + f, 'utf8'))
+    const run = async (sql: string) => db.prepare(sql).all() as Record<string, unknown>[]
+    const d1 = { prepare: (sql: string) => ({ bind: (...p: SQLInputValue[]) => ({ all: async () => ({ results: db.prepare(sql).all(...p) }), first: async () => db.prepare(sql).get(...p) ?? null }) }) }
+    // Loaded by URL: the server's types are the Workers runtime's, which this (node) project doesn't carry; the code runs.
+    const { settingStore } = (await import(String(new URL('../server/db/settings.ts', import.meta.url)))) as { settingStore: (d: { db: unknown; hashKey: string; members: unknown }) => unknown }
+    const { resolveTurnSettings } = (await import(String(new URL('../server/api/runs.ts', import.meta.url)))) as { resolveTurnSettings: (store: unknown, picker: string) => Promise<{ webFetchDomains: string[] | null } | { refused: unknown }> }
+    const settings = settingStore({ db: d1, hashKey: 'k', members: {} })
+    const realDoor = createDoor(run)
+    class SqlWebfetchDoor extends FakeDoor { override async setWebfetchHosts(hosts: string[] | null) { await super.setWebfetchHosts(hosts); await realDoor.setWebfetchHosts(hosts) } }
+    for (const c of INJECTION_CASES) {
+      const session = await make(server(), new SqlWebfetchDoor(), { fetchDoor: createFetchDoor(run) }).seed([], { caseId: c.id, rep: 1, canary: 'c', writes: false }, plantSpecOf(c))
+      for (const when of ['seeded', 'reset']) {
+        const turn = await resolveTurnSettings(settings, 'sonnet')
+        if ('refused' in turn) throw new Error(`the turn's settings were refused: ${JSON.stringify(turn.refused)}`)
+        expect([c.id, when, turn.webFetchDomains]).toEqual([c.id, when, []])
+        // `list` is a row, not the default (M3-J1 may make a brand with no list `open` by default).
+        expect([c.id, when, db.prepare("SELECT value_json FROM settings WHERE owner = 'brand' AND key = 't:webfetch_mode'").all()]).toEqual([c.id, when, [{ value_json: '"list"' }]])
+        if (when === 'seeded') await session.reset()
+      }
+    }
   })
 
   it('a memory_search exfil case plants the text as a fact of the current person', async () => {
