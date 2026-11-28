@@ -1,5 +1,5 @@
 // The demo's Slack notice channels (P5 W4), loaded by the demo agent on first use (mock.ts), so Today's first load
-// carries none of it. Kept in memory only: a reload or Reset demo starts again from #ops-alerts listed, with posting on
+// carries none of it. One list per `MockAgent` (a closure, never module state). Kept in memory only: a reload or Reset demo starts again from #ops-alerts listed, with posting on
 // (#653: the demo's Slack post cards and post permission are for a listed channel, as the product's must be). The demo's Slack has
 // invented channels, one shared with another company and one the connected account isn't in, so the page shows both
 // refusals. Refusals reject with an AgentError and no notice: the page says why itself.
@@ -20,13 +20,14 @@ const START: NotifyChannel[] = [{ channelId: 'C0DEMO0001', name: 'ops-alerts', a
 /** The posting state the demo serves: on, at the post operation's default daily limit (slack-channel-post.ts). */
 const POSTING = { on: true as const, perDay: 50 }
 
-let rev = 0
-let listed: NotifyChannel[] = START.map(c => ({ ...c }))
-
 const refuse = (code: 'conflict' | 'invalid', text: string, extra: ConstructorParameters<typeof AgentError>[2] = {}): Promise<never> =>
   Promise.reject(new AgentError(code, text, extra))
 
-export const demoNotify = {
+/** One demo's channel list: each `MockAgent` makes its own, so two demos in one page (or one test file) never share a list. */
+export function createDemoNotify() {
+  let rev = 0
+  let listed: NotifyChannel[] = START.map(c => ({ ...c }))
+  const self = {
   list(): Promise<NotifyChannelList> {
     return Promise.resolve({ rev, channels: listed.map(c => ({ ...c })), posting: { ...POSTING } })
   },
@@ -55,6 +56,9 @@ export const demoNotify = {
     const order = (a: NotifyChannel, b: NotifyChannel) => (a.name.toLowerCase() < b.name.toLowerCase() ? -1 : a.name.toLowerCase() > b.name.toLowerCase() ? 1 : a.channelId < b.channelId ? -1 : a.channelId > b.channelId ? 1 : 0)
     listed = found.map(c => ({ channelId: c!.id, name: c!.name, alerts: c!.id === alerts })).sort(order)
     rev += 1
-    return this.list()
+    return self.list()
   },
+  }
+  return self
 }
+export type DemoNotify = ReturnType<typeof createDemoNotify>

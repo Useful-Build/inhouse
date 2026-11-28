@@ -12,7 +12,11 @@
 //  5. What the agent can do is editable in the demo, lists fewer than the seven operations, or a change goes through;
 //  6. an admin's alerts mark gives no standing permission (or the Inhouse team's/a member's does), moving it leaves the old one,
 //     or Always allowed doesn't list it for the whole team;
-//  7. a seeded chat's card, step or refusal names something the demo doesn't have.
+//  7. a seeded chat's card, step or refusal names something the demo doesn't have;
+//  8. a reload forgets what was answered (a card, a question, a permission) while the rest of the demo's state stays, or the
+//     follow-up in the chat goes with it, or Reset demo keeps it;
+//  9. as a member the demo lets them pick or save Slack channels, or shows `me().can` that lets a screen offer the Inhouse team
+//     access switch or a tool's controls (the product hides both from a member).
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { ChatPageSchema } from '../../shared/contract/chats'
 import { CeilingListSchema } from '../../shared/contract/ceiling'
@@ -30,7 +34,7 @@ const { MockAgent } = await import('./mock')
 type Agent = InstanceType<typeof MockAgent>
 const fresh = () => { store.clear(); return new MockAgent() }
 const errorOf = (p: Promise<unknown>) => p.then(() => 'resolved', (e: unknown) => e)
-afterEach(async () => { vi.useRealTimers(); (await import('./mock-notify')).demoNotify.reset() })
+afterEach(() => { vi.useRealTimers() })
 
 const WHOLESALE = 'ac_demoWholesaleTag000000'
 const POST = 'ac_demoOpsAlertsPost00000'
@@ -43,7 +47,7 @@ const ROUTINE_Q = 'q_demoMorningStuckOrders'
 const FAILED_TEXT = 'It didn’t go out.'
 const ACTION_CARRIED_ON_TEXT = 'Your Inhouse agent went on once the action was settled.'
 
-const textOf = (m: StoredMessage) => (m.role === 'agent' && m.part.type === 'text' ? m.part.text : m.role === 'event' ? m.text : '')
+const textOf = (m: StoredMessage) => (m.role === 'agent' && m.part.type === 'text' ? m.part.text : m.role === 'event' || m.role === 'user' ? m.text : '')
 const lines = async (a: Agent, chat = 'order-tags') => (await a.getChat(chat)).messages.slice().reverse()
 const lastTwo = (m: StoredMessage[]) => m.slice(-2).map(x => [x.role, textOf(x)])
 
@@ -112,7 +116,7 @@ describe('the late answer: the agent picks the chat up again (A5)', () => {
     ChatPageSchema.parse(await a.getChat('order-tags'))
     // The follow-up has its own turn and run, and is a model's answer with a trace.
     const done = all.at(-1)!
-    expect(done).toMatchObject({ role: 'agent', turnId: 't_demoOrderTags000000004', runId: 'r_demoOrderTags000000004', trace: 'order-tags-resume' })
+    expect(done).toMatchObject({ role: 'agent', turnId: expect.stringMatching(/^t_[A-Za-z0-9_-]{12}0000000004$/), runId: expect.stringMatching(/^r_[A-Za-z0-9_-]{12}0000000004$/), trace: 'order-tags-resume' })
     expect((await a.getTrace('order-tags-resume'))?.steps.length).toBeGreaterThan(1)
   })
 
@@ -130,7 +134,7 @@ describe('the late answer: the agent picks the chat up again (A5)', () => {
     await a.answerQuestion(CHAT_Q, 'Every wholesale order')
     const all = await lines(a)
     expect(lastTwo(all).map(x => x[0])).not.toContain('event')
-    expect(all.at(-1)).toMatchObject({ role: 'agent', turnId: 't_demoOrderTags000000006' })
+    expect(all.at(-1)).toMatchObject({ role: 'agent', turnId: expect.stringMatching(/^t_[A-Za-z0-9_-]{12}0000000006$/) })
     expect(textOf(all.at(-1)!)).toBe('Got it. I’ll post the heads-up for every wholesale order.')
     // The routine's question belongs to no chat an admin may open: its answer adds nothing anywhere.
     const before = (await lines(a)).length
@@ -296,17 +300,17 @@ describe('the alerts channel\'s standing permission (B10)', () => {
     expect((await a.permissions()).filter(p => p.holder.kind === 'brand')).toHaveLength(0)
   })
 
-  it('a member\'s view gives none (a member can\'t mark), and a Reset takes it away', async () => {
+  it('a member can\'t mark, and never takes an admin\'s permission away; a Reset takes the admin\'s away', async () => {
     const a = fresh()
-    a.setDemo({ scenario: 'Normal', viewAs: 'member' })
     const l0 = await a.listNotifyChannels()
-    await a.saveNotifyChannels({ channelIds: ['C0DEMO0001'], alertsChannelId: 'C0DEMO0001', ifRev: l0.rev })
-    expect((await alerts(a))!.permission).toBeUndefined()
-    a.setDemo({ scenario: 'Normal', viewAs: 'admin' })
-    const l1 = await a.listNotifyChannels()
-    await a.saveNotifyChannels({ channelIds: ['C0DEMO0001'], alertsChannelId: null, ifRev: l1.rev })
-    await a.saveNotifyChannels({ channelIds: ['C0DEMO0001'], alertsChannelId: 'C0DEMO0001', ifRev: l1.rev + 1 })
+    const l1 = await a.saveNotifyChannels({ channelIds: ['C0DEMO0001'], alertsChannelId: 'C0DEMO0001', ifRev: l0.rev })
     expect((await alerts(a))!.permission).toBeDefined()
+    a.setDemo({ scenario: 'Normal', viewAs: 'member' })
+    expect(await errorOf(a.saveNotifyChannels({ channelIds: ['C0DEMO0001'], alertsChannelId: null, ifRev: l1.rev }))).toMatchObject({ code: 'forbidden' })
+    expect(await errorOf(a.saveNotifyChannels({ channelIds: [], ifRev: l1.rev }))).toMatchObject({ code: 'forbidden' })
+    a.setDemo({ scenario: 'Normal', viewAs: 'admin' })
+    expect((await alerts(a))!.permission).toBeDefined()
+    expect((await a.permissions()).some(p => p.holder.kind === 'brand')).toBe(true)
     a.reset()
     expect((await a.permissions()).some(p => p.holder.kind === 'brand')).toBe(false)
   })
@@ -352,5 +356,264 @@ describe('the seeded chats for the other write cards (B7, B8, B11, B12)', () => 
     expect(text).toContain('Refund this order.')
     expect(text).toMatch(/came from the order, not from you, so I didn't act on it/)
     expect((await a.actions()).filter(c => c.chatId === 'order-note')).toEqual([])
+  })
+})
+
+describe('a reload keeps what was answered, as the rest of the demo\'s state (a review of the demo catch-up)', () => {
+  /** The same saved storage, a new page load. */
+  const reload = () => new MockAgent()
+
+  it('an answered card, a question, a made permission and a removed one survive; so does the agent\'s follow-up in the chat', async () => {
+    vi.useFakeTimers()
+    const a = fresh()
+    const card = await a.action(WHOLESALE)
+    await a.answerAction(WHOLESALE, card.rev, 'always')
+    await a.answerQuestion(CHAT_Q, 'Only over $1,000')
+    const stock = (await a.permissions()).find(p => p.title === 'Add stock')!
+    await a.removePermission(stock.id, stock.rev)
+    vi.advanceTimersByTime(20_000)
+    // Read once, so the card has gone out and is saved as it went.
+    await a.action(WHOLESALE)
+    await a.answerAction(POST, (await a.action(POST)).rev, 'deny')
+
+    const b = reload()
+    expect(await b.action(WHOLESALE)).toMatchObject({ state: 'sent', result: 'Sent.' })
+    expect(await b.action(POST)).toMatchObject({ state: 'denied' })
+    expect((await b.questions()).map(q => q.id)).toEqual([ROUTINE_Q])
+    expect((await b.permissions()).map(p => p.title).sort()).toEqual(['Add tags to orders', 'Post messages to a channel'])
+    const texts = (await lines(b)).map(textOf)
+    expect(texts).toContain('Done. Order 4512 has the Wholesale tag.')
+    expect(texts).toContain('Understood. I won’t post to #ops-alerts.')
+    expect(texts).toContain('Got it. I’ll post the heads-up only for wholesale orders over $1,000.')
+    ChatPageSchema.parse(await b.getChat('order-tags'))
+  })
+
+  it('a card still in its hold goes out after the reload, on the demo clock', async () => {
+    vi.useFakeTimers()
+    const a = fresh()
+    const card = await a.action(WHOLESALE)
+    await a.answerAction(WHOLESALE, card.rev, 'once')
+    vi.advanceTimersByTime(4_000)
+    const b = reload()
+    expect(await b.action(WHOLESALE)).toMatchObject({ state: 'approved', can: { undo: true } })
+    vi.advanceTimersByTime(8_000)
+    expect(await b.action(WHOLESALE)).toMatchObject({ state: 'sent' })
+  })
+
+  it('a batch said no to or sent keeps its items\' states; the one that partly went out keeps its failed ones', async () => {
+    const a = fresh()
+    const vip = (await a.actions()).find(c => c.title === 'Tag 450 orders as VIP')!
+    await a.answerAction(vip.id, vip.rev, 'deny', { upTo: 450, totals: { records: 450, units: 450 } })
+    const b = reload()
+    expect(await b.action(vip.id)).toMatchObject({ state: 'denied' })
+    expect((await b.actionItems(vip.id, 0)).items.every(i => i.state === 'withdrawn')).toBe(true)
+    expect((await b.actionItems(LOYALTY, 0)).items.filter(i => i.state === 'failed').map(i => i.n)).toEqual([6, 52])
+  })
+
+  it('what a saved snapshot can\'t be read as is left as the sample has it, and Reset demo clears it', async () => {
+    const a = fresh()
+    const card = await a.action(WHOLESALE)
+    await a.answerAction(WHOLESALE, card.rev, 'deny')
+    store.set('inhouse.demo.actions.v1', '{"v":1,"rows":[{"card":{"id":"ac_x","state":"nope"}}]}')
+    expect(await reload().action(WHOLESALE)).toMatchObject({ state: 'waiting' })
+    const c = fresh()
+    await c.answerAction(WHOLESALE, (await c.action(WHOLESALE)).rev, 'deny')
+    expect(await reload().action(WHOLESALE)).toMatchObject({ state: 'denied' })
+    c.reset()
+    expect(await reload().action(WHOLESALE)).toMatchObject({ state: 'waiting' })
+  })
+
+  it('the brand\'s own permission from an alerts mark isn\'t kept: the channel list it belongs to starts again', async () => {
+    const a = fresh()
+    const l = await a.listNotifyChannels()
+    await a.saveNotifyChannels({ channelIds: ['C0DEMO0001'], alertsChannelId: 'C0DEMO0001', ifRev: l.rev })
+    expect((await a.permissions()).some(p => p.holder.kind === 'brand')).toBe(true)
+    expect((await reload().permissions()).some(p => p.holder.kind === 'brand')).toBe(false)
+  })
+})
+
+describe('what a Member can and can\'t do in the demo (a review of the demo catch-up; Fixes #770)', () => {
+  it('can\'t pick or save Slack channels, and reads the list; an admin can', async () => {
+    const a = fresh()
+    a.setDemo({ scenario: 'Normal', viewAs: 'member' })
+    const l = await a.listNotifyChannels()
+    expect(l.channels.length).toBeGreaterThan(0)
+    const refusal = { code: 'forbidden' }
+    expect(await errorOf(a.availableNotifyChannels())).toMatchObject(refusal)
+    expect(await errorOf(a.saveNotifyChannels({ channelIds: ['C0DEMO0001', 'C0DEMO0002'], alertsChannelId: 'C0DEMO0001', ifRev: l.rev }))).toMatchObject(refusal)
+    expect((await a.listNotifyChannels()).rev).toBe(l.rev)
+    a.setDemo({ scenario: 'Normal', viewAs: 'admin' })
+    expect((await a.availableNotifyChannels()).channels.length).toBeGreaterThan(0)
+    expect((await a.saveNotifyChannels({ channelIds: ['C0DEMO0001', 'C0DEMO0002'], ifRev: l.rev })).rev).toBe(l.rev + 1)
+  })
+
+  it('has none of the can keys that show the Inhouse team access switch or a tool\'s controls; an admin has both', () => {
+    const a = fresh()
+    a.setDemo({ scenario: 'Normal', viewAs: 'member' })
+    expect(a.me()!.can).toMatchObject({ grantSupport: false, editTechnical: false, editBrandSettings: false })
+    a.setDemo({ scenario: 'Normal', viewAs: 'admin' })
+    expect(a.me()!.can).toMatchObject({ grantSupport: true, editTechnical: true })
+  })
+})
+
+describe('a Member can\'t make an admin\'s writes in the demo, as the server\'s matrix refuses them (a review of the demo catch-up)', () => {
+  const asMember = () => { const a = fresh(); a.setDemo({ scenario: 'Normal', viewAs: 'member' }); return a }
+  const forbidden = { code: 'forbidden' }
+
+  it('Pause and Resume (rows 36 and 37)', async () => {
+    const a = asMember()
+    expect(await errorOf(a.pause())).toMatchObject(forbidden)
+    expect(a.getSnapshot().paused).toBeNull()
+    a.setDemo({ scenario: 'Normal', viewAs: 'admin' })
+    await a.pause()
+    a.setDemo({ scenario: 'Normal', viewAs: 'member' })
+    expect(await errorOf(a.resume())).toMatchObject(forbidden)
+    expect(a.getSnapshot().paused).not.toBeNull()
+  })
+
+  it('brand and technical settings and switches (rows 10 and 12); a person\'s own (row 8) go through', async () => {
+    const a = asMember()
+    expect(await errorOf(a.setSetting('b:name', 'Other Brand'))).toMatchObject(forbidden)
+    expect(await errorOf(a.setSetting('t:max_turns', '10'))).toMatchObject(forbidden)
+    expect(await errorOf(a.setToggle('t:websearch', true))).toMatchObject(forbidden)
+    expect(await errorOf(a.setToggle('t:webfetch_on', false))).toMatchObject(forbidden)
+    expect(a.getSnapshot().settings['b:name']).toBeUndefined()
+    expect(a.getSnapshot().toggles['t:websearch']).toBeUndefined()
+    await a.setSetting('g:name', 'Sam M')
+    expect(a.getSnapshot().settings['g:name']).toBe('Sam M')
+  })
+
+  it('inviting, changing a role and removing a member (rows 4 to 6)', async () => {
+    const a = asMember()
+    const before = a.read().people.members.map(m => [m.id, m.role, m.status])
+    expect(await errorOf(a.inviteMember({ name: 'Ola New', email: 'ola@northline.example', role: 'member' }))).toMatchObject(forbidden)
+    expect(await errorOf(a.setMemberRole('m_dana', 'admin'))).toMatchObject(forbidden)
+    expect(await errorOf(a.removeMember('m_dana'))).toMatchObject(forbidden)
+    expect(a.read().people.members.map(m => [m.id, m.role, m.status])).toEqual(before)
+  })
+
+  it('giving Inhouse team access and ending it (rows 17 and 18)', async () => {
+    const a = asMember()
+    const grant = a.read().people.supportGrant
+    expect(await errorOf(a.grantSupport(4))).toMatchObject(forbidden)
+    if (grant) expect(await errorOf(a.endSupportGrant(grant.id))).toMatchObject(forbidden)
+    expect(a.read().people.supportGrant).toEqual(grant)
+  })
+
+  it('forgetting a team memory line (row 45); a person\'s own line (row 44) can be forgotten', async () => {
+    const a = asMember()
+    const team = a.read().memory.team.flatMap(g => g.lines)[0]!
+    const own = a.read().memory.personal[0]!
+    expect(await errorOf(a.forgetMemory(team.key, true))).toMatchObject(forbidden)
+    expect(a.getSnapshot().forgot[team.key]).toBeUndefined()
+    await a.forgetMemory(own.key, true)
+    expect(a.getSnapshot().forgot[own.key]).toBe(true)
+  })
+
+  it('Slack channels (rows 74 and 75): nothing is saved, and an admin\'s permission stays (see above)', async () => {
+    const a = asMember()
+    expect(await errorOf(a.availableNotifyChannels())).toMatchObject(forbidden)
+    expect(await errorOf(a.saveNotifyChannels({ channelIds: ['C0DEMO0001'], alertsChannelId: 'C0DEMO0001', ifRev: 0 }))).toMatchObject(forbidden)
+    expect((await a.listNotifyChannels()).rev).toBe(0)
+  })
+})
+
+describe('the bell\'s "A question is waiting" follows what waits (a review of the demo catch-up)', () => {
+  const note = (a: Agent) => a.listNotifications().find(n => n.text === 'A question is waiting')!
+
+  it('is unread and waiting while a question waits, one answer later still, and read and waiting on no one once the last is answered; listeners hear each answer', async () => {
+    const a = fresh()
+    await a.questions()
+    const heard = vi.fn()
+    a.subscribe(heard)
+    expect(note(a)).toMatchObject({ unread: true, waiting: true })
+    await a.answerQuestion(CHAT_Q, 'Every wholesale order')
+    expect(heard).toHaveBeenCalled()
+    expect(note(a)).toMatchObject({ unread: true, waiting: true })
+    await a.answerQuestion(ROUTINE_Q, 'Yes, flag them')
+    expect(note(a).unread).toBe(false)
+    expect(note(a).waiting).toBeUndefined()
+    a.reset()
+    await a.questions()
+    expect(note(a)).toMatchObject({ unread: true, waiting: true })
+  })
+
+  it('stays as it was answered after a reload', async () => {
+    const a = fresh()
+    await a.answerQuestion(CHAT_Q, 'Every wholesale order')
+    await a.answerQuestion(ROUTINE_Q, 'Yes, flag them')
+    const b = new MockAgent()
+    await b.questions()
+    expect(note(b).unread).toBe(false)
+  })
+})
+
+describe('a chat\'s messages are one sequence, and a follow-up lands where it happened (a review of the demo catch-up)', () => {
+  it('a message sent in order-tags, then a card settled and a question answered: positions 0..n-1 once each, the follow-ups after what was written by then', async () => {
+    vi.useFakeTimers()
+    const a = fresh()
+    // Answer the question first (its follow-up is written now), then send, then settle a card later: the card's follow-up is the latest.
+    await a.answerQuestion(CHAT_Q, 'Every wholesale order')
+    vi.advanceTimersByTime(10_000)
+    const sent = await a.send('order-tags', { clientTurnKey: 'seq-turn-01', text: 'Thanks, one more thing', model: 'sonnet' })
+    await vi.advanceTimersByTimeAsync(120_000)
+    expect(sent.turnId).toBeTruthy()
+    const card = await a.action(WHOLESALE)
+    await a.answerAction(WHOLESALE, card.rev, 'once')
+    vi.advanceTimersByTime(20_000)
+    await a.action(WHOLESALE)
+    const all = await lines(a)
+    expect(all.map(m => m.pos)).toEqual(all.map((_, i) => i))
+    const at = (text: string) => all.findIndex(m => textOf(m) === text)
+    const first = at('Got it. I’ll post the heads-up for every wholesale order.')
+    const user = at('Thanks, one more thing')
+    const done = at('Done. Order 4512 has the Wholesale tag.')
+    expect(first).toBeGreaterThan(-1)
+    expect(first).toBeLessThan(user)
+    expect(user).toBeLessThan(done)
+    expect(all.map(m => m.id).length).toBe(new Set(all.map(m => m.id)).size)
+    ChatPageSchema.parse(await a.getChat('order-tags'))
+  })
+})
+
+describe('ids are made per page load, and a reset is at once (a review of the demo catch-up; Fixes #771 and #772)', () => {
+  it('a follow-up\'s turn and run and a made permission have other ids in another page load', async () => {
+    // A page load is a module load (`SESSION` in mock.ts), so each reads the agent from a fresh module.
+    const ids = async () => {
+      vi.resetModules()
+      store.clear()
+      const { MockAgent: Loaded } = await import('./mock')
+      const a = new Loaded()
+      const card = await a.action(WHOLESALE)
+      await a.answerAction(WHOLESALE, card.rev, 'always')
+      await a.answerQuestion(CHAT_Q, 'Only over $1,000')
+      const made = (await a.permissions()).find(p => p.title === 'Add tags to orders')!.id
+      const kept = (await lines(a)).filter(m => m.role === 'agent' && m.trace === 'order-tags-resume')
+      return [made, ...kept.flatMap(m => [m.turnId, m.runId])]
+    }
+    const [one, two] = [await ids(), await ids()]
+    expect(one.length).toBeGreaterThan(1)
+    for (const [i, id] of one.entries()) { expect(id).not.toBe(two[i]); expect(id.length).toBe(id.startsWith('pg_') ? 25 : 24) }
+  })
+
+  it('Reset demo puts the cards, the permissions and the channel list back before it returns, without waiting for a load', async () => {
+    const a = fresh()
+    const l = await a.listNotifyChannels()
+    await a.saveNotifyChannels({ channelIds: ['C0DEMO0001', 'C0DEMO0002'], alertsChannelId: 'C0DEMO0001', ifRev: l.rev })
+    await a.answerAction(WHOLESALE, (await a.action(WHOLESALE)).rev, 'always')
+    a.reset()
+    const [card, list, perms] = await Promise.all([a.action(WHOLESALE), a.listNotifyChannels(), a.permissions()])
+    expect(card.state).toBe('waiting')
+    expect(list).toMatchObject({ rev: 0, channels: [{ name: 'ops-alerts', alerts: false }] })
+    expect(perms.map(p => p.title)).toEqual(['Post messages to a channel', 'Add stock'])
+  })
+
+  it('two demos in one page keep two channel lists', async () => {
+    const a = fresh()
+    const l = await a.listNotifyChannels()
+    const b = new MockAgent()
+    await a.saveNotifyChannels({ channelIds: ['C0DEMO0001', 'C0DEMO0002'], ifRev: l.rev })
+    expect((await a.listNotifyChannels()).channels).toHaveLength(2)
+    expect((await b.listNotifyChannels()).channels).toHaveLength(1)
   })
 })

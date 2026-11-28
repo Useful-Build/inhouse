@@ -36,11 +36,12 @@ const CARD = 'rounded-2xl border border-border bg-card'
 /**
  * Who may change a tool here. The Inhouse team alone connects, pauses and disconnects (the server refuses every other role,
  * and `me().can.editTechnical` is its row's answer); an Admin sees the page with no controls and a line saying so; a Member
- * reads it. The demo shows the controls to everyone, as its sample Admin may do everything.
+ * reads it. The demo follows `me().can` too: its sample Admin may do everything, so it has the controls, and its "View as" Member
+ * has none, as in the product.
  */
 function useToolControls() {
   const me = useSyncExternalStore(agent.subscribe, agent.me)
-  const manage = demo !== null || !!me?.can.editTechnical
+  const manage = !!me?.can.editTechnical
   // The Admin's line: a person who edits the brand's settings but not the technical ones (`can`, never the role's name).
   return { manage, adminLine: !manage && !!me?.can.editBrandSettings }
 }

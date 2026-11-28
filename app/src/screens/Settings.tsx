@@ -247,8 +247,8 @@ export function Settings() {
   const [inviting, setInviting] = useState(false)
   const [loadingMore, setLoadingMore] = useState(false)
   const more = useRef(single((list: 'audit' | 'members') => agent.loadMore(list), setLoadingMore)).current
-  // The grant (route 16) is for an Admin and the Inhouse team; the demo shows its switch to everyone. Until `me()` loads the product shows none.
-  const showGrant = demo !== null || (!!me && (me.can.grantSupport || me.role === 'inhouse'))
+  // The grant (route 16) is for an Admin and the Inhouse team, in the demo too (its "View as" Member has none). Until `me()` loads there is none.
+  const showGrant = !!me && (me.can.grantSupport || me.role === 'inhouse')
   const contentRef = useRef<HTMLDivElement>(null)
   const [ask, setAsk] = useState<Ask | null>(null)
   // A "Saved" still waiting for typing to stop doesn't follow the person off the page.

@@ -83,6 +83,8 @@ const raw = actionsRaw as {
  */
 export const ITEMS_PAGE = 100
 export const FIRST_LINES = 10
+/** An id the demo makes for something that happens (a follow-up's turn and run): its sample id's tail under this page load's session, so what a saved chat state holds by id (a hidden message, a rating) never meets a new one (#771). */
+const scoped = (session: string, id: string): string => `${id.slice(0, 2)}${session.padEnd(12, '0').slice(0, 12)}${id.slice(-9).padStart(10, '0')}`
 /** How long after a card settles (or a question is answered) the agent picks its chat up again. */
 const RESUME_AFTER_MS = 3_000
 /** The server's words for a refused ceiling change (the outbox words for a switched-off build, server/outbox/words.ts). */
@@ -114,6 +116,8 @@ export interface MockActionsHost {
   memberId(sampleId: string): string
   /** What the signed-in person is now (the demo's "View as"): an admin sees everyone's cards, a member only their own. */
   role(): 'admin' | 'member'
+  /** Unique per page load (mock.ts `SESSION`, 12 characters): the ids the demo makes never repeat across reloads or a Reset demo. */
+  session: string
   /** Whether the agent is paused: no approval is taken then (the outbox's gate). */
   paused(): boolean
   /** A card changed by itself (a Pause sent it back): the `action.updated` the real client hears. */
@@ -268,6 +272,18 @@ function permissionOf(g: Grant, admin: boolean): Permission {
   }
 }
 
+/** What a reload keeps of the demo's actions (`snapshot`). */
+export interface ActionsSnapshot { v: 1; rows: { card: ActionCard; sendAtMs: number | null; finalAtMs?: number }[]; grants: Grant[]; granted: number; questions: Question[] }
+const CARD_STATES: string[] = ['waiting', 'approved', 'sending', 'sent', 'failed', NEEDS_CHECK, 'undone', 'denied', 'withdrawn', 'expired']
+const isObj = (v: unknown): v is Record<string, unknown> => typeof v === 'object' && v !== null && !Array.isArray(v)
+/** A saved snapshot, hand-checked (the demo's bundle can't carry zod): only the shapes the demo wrote. */
+function isSnapshot(v: unknown): v is ActionsSnapshot {
+  if (!isObj(v) || v.v !== 1 || !Array.isArray(v.rows) || !Array.isArray(v.grants) || !Array.isArray(v.questions) || typeof v.granted !== 'number') return false
+  return v.rows.every(r => isObj(r) && isObj(r.card) && typeof r.card.id === 'string' && CARD_STATES.includes(r.card.state as string) && typeof r.card.rev === 'number' && isObj(r.card.can) && (r.sendAtMs === null || typeof r.sendAtMs === 'number'))
+    && v.grants.every(g => isObj(g) && typeof g.id === 'string' && typeof g.operation === 'string' && typeof g.holder === 'string' && typeof g.rev === 'number' && typeof g.grantedAt === 'number' && Object.hasOwn(raw.operations, g.operation as string))
+    && v.questions.every(q => isObj(q) && typeof q.id === 'string' && (q.state === 'answered' || q.state === 'expired' || q.state === 'closed') && typeof q.answer !== 'undefined')
+}
+
 /** A question as the agent holds it: what it asked, and the answer once there is one. */
 interface QRow { q: Question; next?: Record<string, string> }
 
@@ -298,6 +314,37 @@ export class MockActions {
   }
   /** The outbox's words for why an approval went back to waiting (a Pause, a removed permission, a channel that left the list). */
   lapseText(why: 'paused' | 'channel'): string { return why === 'paused' ? raw.lapsed.paused : raw.lapsed.channel_not_listed }
+  /**
+   * What a reload keeps, as the rest of the demo's state is kept (the saved state, the ended jobs): every card an answer moved,
+   * the permissions standing, the questions' answers. The brand's own permission (an alerts mark) isn't kept: the channel list
+   * it belongs to starts again with a reload (mock-notify.ts), so it would stand for a mark nobody sees.
+   */
+  snapshot(): ActionsSnapshot {
+    const first = new Map(this.fresh().map(r => [r.card.id, r.card.rev]))
+    return {
+      v: 1,
+      rows: this.rows.map(r => this.settled(r)).filter(r => r.card.rev !== first.get(r.card.id)).map(r => ({ card: r.card, sendAtMs: r.sendAtMs, ...(r.finalAtMs !== undefined ? { finalAtMs: r.finalAtMs } : {}) })),
+      grants: this.grants.filter(g => g.holder !== BRAND), granted: this.granted,
+      questions: this.asked.filter(r => r.q.state !== 'open').map(r => r.q),
+    }
+  }
+  /** Takes a saved snapshot back; an entry that names no card, or a card state the demo doesn't have, is left as the sample has it. */
+  restore(snap: unknown) {
+    if (!isSnapshot(snap)) return
+    for (const saved of snap.rows) {
+      const row = this.rows.find(r => r.card.id === saved.card.id)
+      if (!row) continue
+      row.card = saved.card
+      row.sendAtMs = saved.sendAtMs
+      if (saved.finalAtMs !== undefined) row.finalAtMs = saved.finalAtMs
+      // A batch's items follow its card: said no to or taken back, none goes; gone out, each did (the seeded partial one keeps its own).
+      if (row.card.batch && (row.card.state === 'denied' || row.card.state === 'withdrawn')) row.items = row.items.map(i => ({ ...i, state: 'withdrawn' as const }))
+      else if (row.card.batch && row.card.state === 'sent' && !raw.batches.some(b => b.id === row.card.id && b.settled)) row.items = row.items.map(i => ({ ...i, state: 'sent' as const, result: raw.resolved.sent }))
+    }
+    this.grants = snap.grants.slice()
+    this.granted = snap.granted
+    for (const q of snap.questions) { const row = this.asked.find(r => r.q.id === q.id); if (row) row.q = q }
+  }
   /** Reset demo: every card waits again, and only the seeded permissions stand. */
   reset() { this.rows = this.fresh(); this.grants = this.freshGrants(); this.asked = this.freshQuestions(); this.granted = 0 }
 
@@ -483,7 +530,7 @@ export class MockActions {
   private grant(operation: string, holder: string, scope?: string): string {
     const have = this.grants.find(g => g.operation === operation && g.holder === holder && scopeOf(g) === (scope ?? operationOf(operation).scope))
     if (have) return have.id
-    const id = `pg_demoAllowed${String(++this.granted).padStart(11, '0')}`
+    const id = `pg_${this.h.session.padEnd(12, '0').slice(0, 12)}${String(++this.granted).padStart(10, '0')}`
     this.grants.push({ id, rev: 1, operation, holder, grantedBy: this.h.meId, grantedAt: this.h.now(), ...(scope ? { scope } : {}) })
     return id
   }
@@ -494,6 +541,8 @@ export class MockActions {
    * member's (a member can't mark).
    */
   markAlerts(channel: string | null) {
+    // A member can't mark (the server's matrix refuses it), so a member's call never takes an admin's permission away.
+    if (this.h.role() === 'member') return
     const old = this.grants.find(g => g.operation === POST && g.holder === BRAND)
     if (old) this.endGrant(old)
     if (channel !== null && this.h.role() === 'admin') this.grant(POST, BRAND, `#${channel}`)
@@ -524,21 +573,26 @@ export class MockActions {
 
   // ---------- the agent's follow-up in a chat it keeps (the late answer) ----------
 
-  /**
-   * The messages of a chat the agent keeps (its history is read, not seeded): what it said, then what it added after each
-   * card it asked was settled and each question was answered (the agent picks the chat up again: an action's resume turn
-   * shows its note, a question's shows none). Positions follow the order they happened.
-   */
+  /** The messages of a chat the agent keeps (its history is read, not seeded) as they stood at the start; none for any other chat. */
   messages(chatId: string): StoredMessage[] {
     if (!Object.hasOwn(raw.chats, chatId)) return []
-    const out: StoredMessage[] = raw.chats[chatId]!.messages.map(m => {
+    return raw.chats[chatId]!.messages.map(m => {
       const at = demoAt(m.at)
       const base = { id: m.id, turnId: m.turnId, runId: m.runId, pos: 0, at }
       return m.role === 'user' ? { ...base, role: 'user' as const, text: m.text! } : { ...base, role: 'agent' as const, part: m.part!, trace: m.trace!, model: m.model! }
     })
+  }
+  /**
+   * What the agent added to that chat after each card it asked was settled and each question was answered (it picks the chat up
+   * again: an action's resume turn shows its note, a question's shows none), oldest first. The chat engine places them among
+   * what was sent since, by when they happened, and numbers every message once (mock-chat.ts `allMessages`).
+   */
+  followUps(chatId: string): StoredMessage[] {
+    if (!Object.hasOwn(raw.chats, chatId)) return []
     const late: { at: number; list: StoredMessage[] }[] = []
-    const reply = (turn: string, run: string, atMs: number, text: string, note: boolean) => {
+    const reply = (sampleTurn: string, sampleRun: string, atMs: number, text: string, note: boolean) => {
       const at = instant(atMs)
+      const turn = scoped(this.h.session, sampleTurn), run = scoped(this.h.session, sampleRun)
       const list: StoredMessage[] = [
         ...(note ? [{ id: `${turn}.u`, role: 'event' as const, text: raw.late.event, turnId: turn, runId: run, pos: 0, at }] : []),
         { id: `${turn}.0`, role: 'agent' as const, part: { type: 'text' as const, text }, trace: raw.late.trace, model: 'sonnet', turnId: turn, runId: run, pos: 0, at },
@@ -556,7 +610,7 @@ export class MockActions {
       const line = row.q.answer !== null ? row.next?.[row.q.answer] : undefined
       if (t && line !== undefined && row.q.chatId === chatId && row.q.answeredAt) reply(t.turn, t.run, row.q.answeredAt.ms + RESUME_AFTER_MS, line, false)
     }
-    return [...out, ...late.sort((a, b) => a.at - b.at).flatMap(l => l.list)].map((m, pos) => ({ ...m, pos }))
+    return late.sort((a, b) => a.at - b.at).flatMap(l => l.list)
   }
 
   // ---------- the Inhouse ceiling (Settings > What the agent can do) ----------

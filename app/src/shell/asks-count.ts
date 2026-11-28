@@ -84,6 +84,8 @@ export function useBrandPerson(): boolean {
  */
 export function useAsksCount(): number {
   const reads = useBrandPerson()
+  // Who is signed in as: the lists are read as that person, so a change of role (the demo's "View as") counts again.
+  const role = useSyncExternalStore(agent.subscribe, () => agent.me()?.role ?? null)
   useEffect(() => {
     if (!reads) return
     void readAsks()
@@ -102,7 +104,7 @@ export function useAsksCount(): number {
       void readAsks()
     })
     return () => { window.removeEventListener('focus', onFocus); document.removeEventListener('visibilitychange', onShown); offLink(); off(); offNotices() }
-  }, [reads])
+  }, [reads, role])
   const n = useSyncExternalStore(subscribe, get)
   return reads ? n : 0
 }

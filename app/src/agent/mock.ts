@@ -30,6 +30,7 @@ import type { InviteInput } from '../../shared/contract/members'
 import type { AvailableChannels, NotifyChannelList, PutNotifyChannels } from '../../shared/contract/notify-slack'
 import type { ActionCard, ActionChoice, ActionFilter, ActionItemsPage, ActionResolution } from '../../shared/contract/actions'
 import type { MockActions } from './mock-actions'
+import type { DemoNotify } from './mock-notify'
 import type { MockJobs } from './mock-jobs'
 import type { Permission } from '../../shared/contract/permissions'
 import type { CeilingList, CeilingRow, UpdateCeilingInput } from '../../shared/contract/ceiling'
@@ -100,6 +101,8 @@ const tools: ToolsData = { ...sampleTools, ...(override.channels === false ? { c
 const STORAGE_KEY = 'inhouse.demo.v2'
 /** Run id to what the run replayed and made, so a saved answer's steps open after a reload and Regenerate updates in place. */
 const RUNS_KEY = 'inhouse.demo.runs.v1'
+/** The demo's cards, permissions and answers (mock-actions.ts `snapshot`), kept across a reload; Reset demo clears it. */
+const ACTIONS_KEY = 'inhouse.demo.actions.v1'
 /** How many runs RUNS_KEY keeps, oldest dropped first. */
 const RUNS_KEPT = 200
 /** Unique per page load, so run and job ids never repeat across reloads. */
@@ -318,7 +321,7 @@ const noticeId = (text: string) => 'n-' + text.toLowerCase().replace(/[^a-z0-9]+
  * an approval notice (the outbox's words, server/notices/templates.ts), shown only where the demo shows its actions (the
  * Normal scenario); `waiting`: it says something waits on this person.
  */
-type RawNotification = { text?: string; drafts?: string; who: string; at: string; unread: boolean; opens: string; icon?: string; waiting?: boolean; approval?: boolean }
+type RawNotification = { text?: string; drafts?: string; who: string; at: string; unread: boolean; opens: string; icon?: string; waiting?: boolean; approval?: boolean; question?: boolean }
 
 /**
  * The view the demo shows, as the product's (decision A13, option B): no stages, pinned to the Act view (`PRODUCT_STAGE`),
@@ -426,6 +429,11 @@ interface Server {
 }
 /** What the mock says to someone without `approveMemory` (the server's matrix refuses routes 77 and 78 the same way). */
 const WAITING_REFUSED = 'Only admins and the Inhouse team can see what waits for an OK.'
+/** What the mock says to a Member who picks or saves Slack channels (the server's matrix refuses routes 74 and 75 the same way). */
+const NOTIFY_REFUSED = 'Only admins and the Inhouse team can change the channel list.'
+/** What the mock says to a "View as" Member for a write the server's matrix lets only an admin (or the Inhouse team) make. */
+const ADMIN_OR_TEAM_ONLY = 'Only admins and the Inhouse team can do this.'
+const ADMIN_ONLY = 'Only admins can do this.'
 const DECIDING_REFUSED = 'Only admins and the Inhouse team can decide on what waits for an OK.'
 /** A saved team line (hand-checked, so the mock doesn't carry zod's runtime; memory.ts holds the schema). */
 const isTeamLine = (l: unknown): l is MemoryLine =>
@@ -956,14 +964,17 @@ export class MockAgent implements AgentClient {
     this.runInfo.clear()
     // A demo whose actions or jobs loaded starts them again; one that never read them has nothing to reset.
     this.jobsResetEpoch++
-    void this.demoActionsLoad?.then(a => a.reset())
+    // At once, not when a load next settles: a read right after the reset must see the fresh cards (#772).
+    this.actionsInstance?.reset()
+    this.questionsRev++
     this.sentBack = []
     this.lapsed = {}
     this.slackListed = ['ops-alerts']
-    void this.notifyLoad?.then(m => m.demoNotify.reset())
+    this.notifyInstance?.reset()
     // A Pause sent just before (its cards' lapse still queued) belongs to the demo this reset ends.
     this.resets++
     try { localStorage.removeItem(RUNS_KEY) } catch (e) { console.warn('Inhouse demo: could not clear saved runs.', e) }
+    try { localStorage.removeItem(ACTIONS_KEY) } catch (e) { console.warn('Inhouse demo: could not clear the saved cards.', e) }
     try { localStorage.removeItem(DATA_OVERRIDE_KEY) } catch (e) { console.warn('Inhouse demo: could not clear the data override.', e) }
     this.startedAt = Date.now()
     this.seen = {}
@@ -1050,6 +1061,8 @@ export class MockAgent implements AgentClient {
   // ----- Pause and resume -----
 
   pause(): Promise<Instant> {
+    const refused = this.refuseMember<Instant>()
+    if (refused) return refused
     const { at } = this.stamp()
     const done = this.writeThen({ paused: at }, at)
     // A paused agent ends every running job, cancels what waits (the server's fence + idle/seeded jobs), and sends every
@@ -1058,18 +1071,31 @@ export class MockAgent implements AgentClient {
       this.engine?.fence(() => true, 'paused')
       const resets = this.resets
       // The cards and the Slack posts in their hold go back to waiting, with the outbox's words (mock-actions.ts holds them).
-      void this.demoActions().then(a => { if (this.resets !== resets) return; a.pause(); this.lapsePosts(a.lapseText('paused'), 'approvals') })
+      void this.demoActions().then(a => { if (this.resets !== resets) return; a.pause(); this.persistActions(); this.lapsePosts(a.lapseText('paused'), 'approvals') })
       const pending = this.endUnboundJobs(undefined, true)
       if (pending) return pending.then(() => done)
     }
     return done
   }
-  resume() { return this.write({ paused: null }) }
+  resume() { return this.refuseMember<void>() ?? this.write({ paused: null }) }
+
+  // ----- what a member may not do: the matrix's admin rows, refused as the server refuses them -----
+
+  private isMember = () => this.me()?.role === 'member'
+  /**
+   * The demo's "View as" Member: the server's access matrix lets only an admin (or the Inhouse team) make these writes (rows 4,
+   * 6, 10, 12, 36, 37, 45 and 75; rows 5, 17 and 18 an admin alone, `adminOnly`), so the mock refuses a member the same way
+   * before it changes anything. Null when the person may.
+   */
+  private refuseMember<T>(adminOnly = false): Promise<T> | null {
+    return this.isMember() ? this.rejected('forbidden', adminOnly ? ADMIN_ONLY : ADMIN_OR_TEAM_ONLY, true) : null
+  }
 
   // ----- plain reads and writes -----
 
   setToggle(key: string, on: boolean) {
     const row = settingRow(key)
+    if (row && row.scope !== 'personal') { const refused = this.refuseMember<void>(); if (refused) return refused }
     // `r:<routine>` and `s:<skill>` are the routine and skill switches (P4 and P5 own them); every other key must be a switch in the registry.
     if (row ? !meetsRule(row.rule, on) : !/^[rs]:./.test(key)) return this.rejected('invalid', `"${key}" isn't a switch.`, true, { reason: row ? REASON.badType : REASON.wrongScope })
     const rec = `setting:${key}`
@@ -1092,6 +1118,8 @@ export class MockAgent implements AgentClient {
   connectTool(key: string): Promise<{ authorizeUrl: string }> { return Promise.resolve({ authorizeUrl: `/tools/${encodeURIComponent(key)}?connected=1` }) }
   disconnectTool(_key: string): Promise<{ revoked: boolean }> { return this.rejected('unavailable', "Disconnecting isn't connected in this demo.", true) }
   forgetMemory(key: string, forgotten: boolean) {
+    // A team line is the brand's (row 45: an admin or the Inhouse team); a person's own is theirs to forget (row 44).
+    if (this.read().memory.team.some(g => g.lines.some(l => l.key === key))) { const refused = this.refuseMember<void>(); if (refused) return refused }
     const rec = `memory:${key}`
     const stale = this.conflict(rec, 1, () => ({ key, rev: this.rev(rec, 1) }))
     if (stale) return stale
@@ -1110,24 +1138,39 @@ export class MockAgent implements AgentClient {
   /** Counts Reset demo, so a Pause queued before one never lapses the fresh demo's cards. */
   private resets = 0
   private actionsInstance: MockActions | null = null
+  /** Where the demo's cards, permissions and answers are kept across a reload (the saved state's own key keeps the rest). */
+  private persistActions() {
+    const a = this.actionsInstance
+    if (!a) return
+    try { localStorage.setItem(ACTIONS_KEY, JSON.stringify(a.snapshot())) } catch (e) { console.warn('Inhouse demo: could not save the cards.', e) }
+  }
   private demoActions(): Promise<MockActions> {
-    return this.demoActionsLoad ??= import('./mock-actions').then(m => this.actionsInstance = new m.MockActions({
+    return this.demoActionsLoad ??= import('./mock-actions').then(m => { const a = new m.MockActions({
       now: () => demoNow(this.startedAt).getTime(),
       shown: () => this.demo.scenario === 'Normal',
       hasTool: tool => { const t = this.read().tools; return tool !== 'slack' || t.connected.includes('slack') || t.channels.some(c => c.key === 'slack') },
       listedChannels: () => this.slackListed,
       meId: ME_ID,
       memberId: memberIdOf,
+      session: SESSION,
       role: () => (this.demo.viewAs === 'member' ? 'member' : 'admin'),
       paused: () => this.state.paused !== null,
       changed: u => { this.actionListeners.forEach(l => l(u)) },
       sentBack: u => { this.sentBack = [{ ...u, id: `n-sent-back-${u.actionId}-${u.rev}` }, ...this.sentBack]; this.listeners.forEach(l => l()) },
-    }))
+    })
+    // What an earlier visit left (an answered card, a permission made or removed, an answered question) is taken back.
+    try { a.restore(JSON.parse(localStorage.getItem(ACTIONS_KEY) ?? 'null')) } catch (e) { console.warn('Inhouse demo: could not read the saved cards.', e) }
+    this.actionsInstance = a
+    // The questions an earlier visit answered change what the bell says waits.
+    this.questionsRev++
+    this.listeners.forEach(l => l())
+    return a
+  })
   }
   /** A demo action's answer: the card, or the refusal as an AgentError (no notice: the card says it). */
   private async acted<T>(run: (a: MockActions) => T): Promise<T> {
     const a = await this.demoActions()
-    try { return run(a) } catch (e) {
+    try { const out = run(a); this.persistActions(); return out } catch (e) {
       if (!(e instanceof AgentError)) throw e
       return this.rejected(e.code, e.message, false, { ...(e.reason ? { reason: e.reason } : {}), ...(e.current ? { current: e.current } : {}) })
     }
@@ -1143,7 +1186,9 @@ export class MockAgent implements AgentClient {
   permissions(): Promise<Permission[]> { return this.acted(a => a.permissions()) }
   removePermission(id: string, ifRev: number): Promise<Permission[]> { return this.acted(a => a.removePermission(id, ifRev)) }
   questions(): Promise<Question[]> { return this.acted(a => a.questions()) }
-  answerQuestion(id: string, choice: string): Promise<Question> { return this.acted(a => a.answerQuestion(id, choice)) }
+  answerQuestion(id: string, choice: string): Promise<Question> {
+    return this.acted(a => a.answerQuestion(id, choice)).then(q => { this.questionsRev++; this.listeners.forEach(l => l()); return q })
+  }
   loadActions(): Promise<MockActions> { return this.demoActions() }
   loadedActions(): MockActions | null { return this.actionsInstance }
   // Stage 1 PR 2 (J1 to J6): the demo's long jobs live in mock-jobs.ts + sample-data/jobs.json, loaded lazily on
@@ -1232,6 +1277,7 @@ export class MockAgent implements AgentClient {
   }
   setSetting(key: string, value: string | null) {
     const row = settingRow(key)
+    if (row && row.scope !== 'personal') { const refused = this.refuseMember<void>(); if (refused) return refused }
     if (!row) return this.rejected('invalid', `"${key}" isn't a setting.`, true, { reason: REASON.wrongScope })
     if (value !== null && !meetsRule(row.rule, value)) return this.rejected('invalid', `That isn't a value for "${key}".`, true, { reason: REASON.badType })
     const rec = `setting:${key}`
@@ -1320,7 +1366,9 @@ export class MockAgent implements AgentClient {
 
   // ----- notifications -----
 
-  private notesFor: [AgentState, Scenario, readonly SentBack[], number] | null = null
+  private notesFor: [AgentState, Scenario, readonly SentBack[], number, number] | null = null
+  /** Bumped when a question is answered or the saved ones are taken back: "A question is waiting" follows what still waits. */
+  private questionsRev = 0
   private notes: AgentNotification[] = []
   /** The approvals a Pause sent back (mock-actions.ts), newest first: each one's bell notice. In memory, like the cards. */
   private sentBack: readonly SentBack[] = []
@@ -1328,8 +1376,8 @@ export class MockAgent implements AgentClient {
   listNotifications = (): AgentNotification[] => {
     const { scenario } = this.demo
     const f = this.notesFor
-    if (f && f[0] === this.state && f[1] === scenario && f[2] === this.sentBack && f[3] === this.jobRev) return this.notes
-    this.notesFor = [this.state, scenario, this.sentBack, this.jobRev]
+    if (f && f[0] === this.state && f[1] === scenario && f[2] === this.sentBack && f[3] === this.jobRev && f[4] === this.questionsRev) return this.notes
+    this.notesFor = [this.state, scenario, this.sentBack, this.jobRev, this.questionsRev]
     this.notes = this.buildNotifications(scenario)
     return this.notes
   }
@@ -1368,10 +1416,13 @@ export class MockAgent implements AgentClient {
       const link = linkOf(n.opens)
       const person = data.people.members.some(m => m.name === n.who) ? n.who : undefined
       const id = noticeId(n.text)
+      // "A question is waiting" says so only while one waits: once the last is answered it is read, and waits on no one. (The
+      // questions load with the demo's actions: until then the sample's are all open.)
+      const waits = !n.question || (this.actionsInstance?.questions().length ?? 1) > 0
       out.push({
-        id, text: n.text, who: n.who, person, at: sampleAt(`the notification "${n.text}"`, n.at), unread: n.unread && !st.readNotices[id], link,
+        id, text: n.text, who: n.who, person, at: sampleAt(`the notification "${n.text}"`, n.at), unread: waits && n.unread && !st.readNotices[id], link,
         icon: n.icon ?? (person ? 'check_circle' : link.to === 'tool' ? 'support_agent' : link.to === 'chat' ? 'summarize' : 'notifications'),
-        ...(n.waiting ? { waiting: true } : {}),
+        ...(n.waiting && waits ? { waiting: true } : {}),
       })
     }
     return out
@@ -1471,6 +1522,8 @@ export class MockAgent implements AgentClient {
   }
 
   inviteMember(input: InviteInput): Promise<void> {
+    const refused = this.refuseMember<void>()
+    if (refused) return refused
     const parsed = readInvite(input)
     if (!parsed) return this.rejected('invalid', 'Check the name and the email.', true)
     const { name, email, title, role } = parsed
@@ -1493,6 +1546,8 @@ export class MockAgent implements AgentClient {
   }
 
   setMemberRole(id: string, role: MemberRole): Promise<void> {
+    const refused = this.refuseMember<void>(true)
+    if (refused) return refused
     if (!isRole(role)) return this.rejected('invalid', 'A member is an Admin or a Member.', true)
     const m = this.memberToWrite(id)
     if (m instanceof Promise) return m
@@ -1504,6 +1559,8 @@ export class MockAgent implements AgentClient {
   }
 
   removeMember(id: string): Promise<void> {
+    const refused = this.refuseMember<void>()
+    if (refused) return refused
     const m = this.memberToWrite(id)
     if (m instanceof Promise) return m
     const rec = `member:${id}`
@@ -1514,6 +1571,8 @@ export class MockAgent implements AgentClient {
   }
 
   grantSupport(hours: number): Promise<void> {
+    const refused = this.refuseMember<void>(true)
+    if (refused) return refused
     if (!(GRANT_HOURS as readonly number[]).includes(hours)) return this.rejected('invalid', 'Choose 1, 4, 24 or 72 hours.', true)
     if (this.grantNow()?.live) return this.rejected('conflict', 'Inhouse team access is already on.', true, { reason: REASON.grantLive })
     const now = demoNow(this.startedAt).getTime()
@@ -1523,6 +1582,8 @@ export class MockAgent implements AgentClient {
   }
 
   endSupportGrant(id: string): Promise<void> {
+    const refused = this.refuseMember<void>(true)
+    if (refused) return refused
     const g = this.grantNow()
     if (!g || g.id !== id || !g.live) return this.rejected(NOT_FOUND, 'There is no live grant to end.', true)
     const rec = `grant:${id}`
@@ -1553,25 +1614,31 @@ export class MockAgent implements AgentClient {
 
   // ---------- P5 (p5-w4): the Slack channels listed for notices ----------
   // The demo's list lives in ./mock-notify, loaded on first use, so none of it weighs on Today's first load.
-  private notifyLoad: Promise<typeof import('./mock-notify')> | null = null
-  private loadNotify = () => (this.notifyLoad ??= import('./mock-notify'))
+  private notifyLoad: Promise<DemoNotify> | null = null
+  private notifyInstance: DemoNotify | null = null
+  /** This demo's own channel list (one per `MockAgent`, never shared), made on first use. */
+  private loadNotify = () => (this.notifyLoad ??= import('./mock-notify').then(m => (this.notifyInstance = m.createDemoNotify())))
   /** The list with the alerts channel's standing permission on it, when an admin's mark gave one (M2-N, N27). */
   private withAlertsPermission = async (list: NotifyChannelList): Promise<NotifyChannelList> => {
     const a = await this.demoActions()
     return { ...list, channels: list.channels.map(c => { const permission = c.alerts ? a.alertsPermission(c.name) : undefined; return permission ? { ...c, permission } : c }) }
   }
-  listNotifyChannels = (): Promise<NotifyChannelList> => this.loadNotify().then(async m => this.withAlertsPermission(await m.demoNotify.list()))
-  availableNotifyChannels = (): Promise<AvailableChannels> => this.loadNotify().then(m => m.demoNotify.available())
-  saveNotifyChannels = (input: PutNotifyChannels): Promise<NotifyChannelList> => this.loadNotify().then(async m => {
-    const before = (await m.demoNotify.list()).channels.find(c => c.alerts)?.channelId ?? null
-    const list = await m.demoNotify.save(input)
+  listNotifyChannels = (): Promise<NotifyChannelList> => this.loadNotify().then(async m => this.withAlertsPermission(await m.list()))
+  /** Routes 74 and 75: an Admin or the Inhouse team picks and saves the list; a Member reads it only (the server's matrix refuses them). */
+  private mayEditNotify = () => this.me()?.role !== 'member'
+  availableNotifyChannels = (): Promise<AvailableChannels> => this.mayEditNotify()
+    ? this.loadNotify().then(m => m.available())
+    : this.rejected('forbidden', NOTIFY_REFUSED, false)
+  saveNotifyChannels = (input: PutNotifyChannels): Promise<NotifyChannelList> => !this.mayEditNotify() ? this.rejected('forbidden', NOTIFY_REFUSED, false) : this.loadNotify().then(async m => {
+    const before = (await m.list()).channels.find(c => c.alerts)?.channelId ?? null
+    const list = await m.save(input)
     // Moving the alerts mark gives the brand's standing permission to the channel it lands on (an admin's mark only), and takes it from the one it left.
     const marked = list.channels.find(c => c.alerts)
-    if ((marked?.channelId ?? null) !== before) (await this.demoActions()).markAlerts(marked?.name ?? null)
+    if ((marked?.channelId ?? null) !== before) { (await this.demoActions()).markAlerts(marked?.name ?? null); this.persistActions() }
     // The demo's Slack cards and permissions follow the list (#653).
-    this.slackListed = m.demoNotify.names()
+    this.slackListed = m.names()
     // A post to a channel that left the list is a finding now, and one in its hold goes back with the outbox's words.
-    void this.demoActions().then(a => { a.channelsChanged(); this.lapsePosts(a.lapseText('channel'), 'today', p => !this.slackListed.includes(channelOf(p))) })
+    void this.demoActions().then(a => { a.channelsChanged(); this.persistActions(); this.lapsePosts(a.lapseText('channel'), 'today', p => !this.slackListed.includes(channelOf(p))) })
     this.listeners.forEach(l => l())
     return this.withAlertsPermission(list)
   })

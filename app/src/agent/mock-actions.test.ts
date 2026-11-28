@@ -29,7 +29,7 @@ function world() {
   let slack = true
   let listed: string[] = ['ops-alerts']
   const a = new MockActions({
-    now: () => now, shown: () => shown, hasTool: t => t !== 'slack' || slack, listedChannels: () => listed, meId: 'm_sam', memberId: id => `m_${id}`, role: () => role, paused: () => paused,
+    now: () => now, shown: () => shown, hasTool: t => t !== 'slack' || slack, listedChannels: () => listed, meId: 'm_sam', memberId: id => `m_${id}`, role: () => role, session: 'testsession0', paused: () => paused,
     changed: u => { changed.push(u) }, sentBack: u => { sentBack.push(u) },
   })
   return { a, tick: (ms: number) => { now += ms }, hide: (h: boolean) => { shown = !h }, pause: (p: boolean) => { paused = p }, as: (r: 'admin' | 'member') => { role = r }, noSlack: () => { slack = false }, list: (names: string[]) => { listed = names }, changed, sentBack, now: () => now }

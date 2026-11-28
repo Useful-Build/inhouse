@@ -147,6 +147,26 @@ test('a late answer on Approvals: Allow once, the hold, and the agent comes back
   await shot(page, 'demo-late-answer-chat', true)
 })
 
+test('a reload keeps what was answered: the card went out, the question is closed, and the agent\'s follow-up is in the chat', async ({ page }) => {
+  await start(page, '#/approvals')
+  await buttons(page, WHOLESALE).filter({ hasText: 'Allow once' }).click()
+  await questionOf(page, CHAT_Q).getByRole('button', { name: 'Every wholesale order', exact: true }).click()
+  await expect(questionOf(page, CHAT_Q)).toHaveAttribute('data-question', 'answered')
+  await page.clock.runFor(14_000)
+  await expect(cardOf(page, WHOLESALE)).toHaveAttribute('data-action-card', 'sent')
+  await page.reload()
+  await expect(page.getByRole('heading', { name: /^Questions for you/ })).toBeVisible()
+  // One question is left, and the Wholesale card has left "Actions for you": it went out.
+  await expect(page.locator('section[aria-labelledby="agent-questions"]').locator('[data-question]')).toHaveCount(1)
+  await expect(cardOf(page, WHOLESALE)).toHaveCount(0)
+  // The chat's history is read for the first time in this page load: the follow-up turns are in it, in the order they happened.
+  await go(page, '#/chats/order-tags')
+  await expect(cardOf(page, WHOLESALE)).toHaveAttribute('data-action-card', 'sent')
+  await expect(log(page)).toContainText('Your Inhouse agent went on once the action was settled.')
+  await expect(log(page)).toContainText('Done. Order 4512 has the Wholesale tag.')
+  await expect(log(page)).toContainText('Got it. I’ll post the heads-up for every wholesale order.')
+})
+
 test('the Slack page says what a mark gives before it is saved; the mark gives the standing permission, listed for the whole team', async ({ page }) => {
   await start(page, '#/settings/team-slack')
   const main = page.locator('main')
@@ -220,6 +240,9 @@ test('the seeded chats for the other write cards: the draft order, the refused s
 test('View as Member: only their own cards, the refund waits for an admin and can be withdrawn, and no admin controls', async ({ page }) => {
   await start(page, '#/approvals')
   await expect(cardOf(page, PRIYA)).toHaveCount(1)
+  const badge = page.getByRole('navigation', { name: 'Main' }).getByRole('button', { name: /Approvals/ })
+  const count = async () => Number(/(\d+)\s*$/.exec((await badge.textContent()) ?? '')?.[1])
+  const asAdmin = await count()
   await viewAs(page, 'Member')
   await expect(page.getByRole('heading', { level: 1, name: 'Approvals', exact: true })).toBeVisible()
   // A teammate's card isn't a member's to see, and nothing waits "on your team".
@@ -228,6 +251,9 @@ test('View as Member: only their own cards, the refund waits for an admin and ca
   const refund = cardOf(page, REFUND)
   await expect(refund).toContainText('Waiting for an admin')
   await expect(buttons(page, REFUND)).toHaveText(['Withdraw'])
+  // The sidebar's badge counts what waits on a member (their own cards and the two questions), not the admin's.
+  // The member can't answer the admin's refund (they asked it, and it waits for an admin): one fewer than the admin's number.
+  await expect.poll(count).toBe(asAdmin - 1)
   await shot(page, 'demo-approvals-member', true)
   await axeClean(page, 'demo approvals as a member')
   await buttons(page, REFUND).click()
@@ -235,6 +261,17 @@ test('View as Member: only their own cards, the refund waits for an admin and ca
   await expect(refund).toHaveAttribute('data-action-card', 'withdrawn')
   await expect(refund).toContainText('It was withdrawn. Nothing went out.')
 
+  // What the product hides from a member is hidden: the Inhouse team access switch, a tool's Pause access and Disconnect, and the
+  // Slack list's controls (a member reads them, as the server's matrix has it).
+  await go(page, '#/settings/team-data')
+  await expect(page.getByRole('heading', { level: 1, name: 'Data and access', exact: true })).toBeVisible()
+  await expect(page.locator('main')).not.toContainText('Inhouse team access')
+  await go(page, '#/tools/shopify')
+  await expect(page.getByRole('heading', { level: 1, name: 'Shopify', exact: true })).toBeVisible()
+  await expect(page.locator('main').getByRole('button', { name: /^(Pause access|Resume access|Disconnect)/ })).toHaveCount(0)
+  await go(page, '#/settings/team-slack')
+  await expect(page.locator('main').getByText('#ops-alerts', { exact: true })).toBeVisible()
+  await expect(page.locator('main').getByRole('combobox')).toHaveCount(0)
   // The admin's pages are out of reach: no What the agent can do, and only their own permission.
   await go(page, '#/settings/you-general')
   const nav = page.getByRole('navigation', { name: 'Settings' })
@@ -249,4 +286,8 @@ test('View as Member: only their own cards, the refund waits for an admin and ca
   await go(page, '#/approvals')
   await expect(cardOf(page, PRIYA)).toHaveCount(1)
   await expect(buttons(page, REFUND)).toHaveText(['Approve', 'No'])
+  await go(page, '#/settings/team-data')
+  await expect(page.locator('main')).toContainText('Inhouse team access')
+  await go(page, '#/tools/shopify')
+  await expect(page.locator('main').getByRole('button', { name: /^Pause access/ })).toBeVisible()
 })

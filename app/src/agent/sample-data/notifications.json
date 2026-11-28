@@ -35,7 +35,8 @@
       "opens": "Approvals",
       "icon": "forum",
       "waiting": true,
-      "approval": true
+      "approval": true,
+      "question": true
     },
     {
       "drafts": "{pending} drafts are waiting for your approval.",
