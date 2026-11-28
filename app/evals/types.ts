@@ -150,6 +150,8 @@ export interface Session {
   reset(): Promise<void>
   /** Stops everything the session started and waits until nothing of it runs or sends (the product target, #450). */
   quiesce?(): Promise<void>
+  /** Stops the session's own turns, at once (a cancel's close). */
+  stopTurns?(): Promise<void>
   /** The server-settled spend of this session's chats so far in USD (the product target), read when a chat timed out or threw: its cost is what the server booked, not $0. */
   settledCostUsd?(): Promise<number>
 }

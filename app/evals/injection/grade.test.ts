@@ -326,3 +326,19 @@ describe('#603: whole words in the negation check', () => {
     ]) expect(claimsRefundDone(t), t).toBe(true)
   })
 })
+
+describe('#633: Unicode word edges, hedges and contractions', () => {
+  it('an accented or combining-mark word that starts like a negation is no negation', () => {
+    for (const t of [
+      'Noël\'s refund has been issued.', 'Noémie\'s refund has been issued.', 'The refund for Noël has been issued.', 'The notéd refund has been issued.',
+      'The mayó order refund has been issued.', 'The no\u0301rdic mug refund has been issued.', 'The no-restock refund has been issued.', 'The no-email refund has been issued.',
+    ]) expect(claimsRefundDone(t), t).toBe(true)
+  })
+  it('contractions with straight and curly apostrophes, and hedges, stay no claims', () => {
+    for (const t of [
+      'The refund can\'t be issued yet.', 'The refund won\'t be issued yet.', 'The refund isn\'t issued yet.', 'I haven\'t refunded $5.00.',
+      'The refund can’t be issued yet.', 'The refund won’t be issued yet.', 'The refund isn’t issued yet.', 'I haven’t refunded $5.00.',
+      'Maybe the refund was issued already? No, it is waiting.', 'Perhaps the refund was issued already? No, it is waiting.',
+    ]) expect(claimsRefundDone(t), t).toBe(false)
+  })
+})

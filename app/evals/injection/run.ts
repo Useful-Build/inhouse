@@ -92,18 +92,14 @@ async function main(): Promise<void> {
   const soFar: InjectionRow[] = []
   // One close, however many paths ask for it (#612: the run's end, a SIGINT, a SIGTERM).
   const closing = onceClose(target)
-  let cancelled = false
-  // A cancel or a job timeout (Neon's #602 review, as evals/run.ts does): no repeat starts after it, the rows so far are
-  // written, the target closes once (on the product: Slack disconnected first, the workspace emptied, the eval lease back),
-  // then a non-zero exit.
-  for (const [signal, code] of [['SIGINT', 130], ['SIGTERM', 143]] as const) {
-    process.once(signal, () => {
-      console.error(`${signal}: writing the rows so far and closing the target before exiting`)
-      cancelled = true
-      void onCancel(closing, out, soFar).then((ok) => process.exit(ok ? code : 1))
-    })
-  }
-  const s = await runAndWrite({ target: closing, cases, reps, waive, out, meta, soFar, stop: () => cancelled, ...(budgetUsd !== undefined ? { budgetUsd } : {}) })
+  const cancel = new AbortController()
+  // A cancel or a job timeout (Neon's #602 and #618 reviews): the running turn is aborted and no repeat starts after it,
+  // the rows so far are written, the target closes once (on the product: a Slack connect in flight waited for, the turns
+  // stopped, Slack disconnected first, the workspace emptied, the eval lease back), then a non-zero exit. One cancel
+  // whatever arrives: a second SIGINT or a SIGTERM after it is noted, never a second close or an exit mid-disconnect.
+  const handle = cancelHandler(closing, out, soFar, cancel, (code) => process.exit(code))
+  for (const [signal, code] of [['SIGINT', 130], ['SIGTERM', 143]] as const) process.on(signal, () => handle(signal, code))
+  const s = await runAndWrite({ target: closing, cases, reps, waive, out, meta, soFar, stop: () => cancel.signal.aborted, signal: cancel.signal, ...(budgetUsd !== undefined ? { budgetUsd } : {}) })
   console.log(`gate ${gateLine(s)}; ${s.repeats.pass}/${s.repeats.ran} repeats pass, ${s.bypasses.total} bypasses, cost $${s.soft.costUsd.toFixed(4)}`)
   if (!s.gate.pass) process.exitCode = 1
 }
@@ -111,7 +107,26 @@ async function main(): Promise<void> {
 /** The target with a close that runs once: every later call gets the first call's promise (#612). */
 export function onceClose<T extends Pick<InjectionTarget, 'close'>>(target: T): T {
   let closing: Promise<void> | undefined
-  return { ...target, close: () => (closing ??= Promise.resolve(target.close?.())) }
+  // Through then(): a close that throws at once still becomes the one promise every caller gets (Neon, #618).
+  return { ...target, close: () => (closing ??= Promise.resolve().then(() => target.close?.())) }
+}
+
+/**
+ * The signal handler (Neon's #618 review): the first signal aborts the run and starts the one cancel (the rows so far,
+ * the close, then `exit` with the signal's code, or 1 if either failed); every later signal is only noted.
+ */
+export function cancelHandler(target: Pick<InjectionTarget, 'close'>, out: string, soFar: readonly InjectionRow[], cancel: AbortController, exit: (code: number) => void): (signal: string, code: number) => void {
+  let cancelling = false
+  return (signal, code) => {
+    if (cancelling) {
+      console.error(`${signal}: the cancel is already closing the target; waiting for it`)
+      return
+    }
+    cancelling = true
+    console.error(`${signal}: aborting the running turn, writing the rows so far and closing the target before exiting`)
+    cancel.abort()
+    void onCancel(target, out, soFar).then((ok) => exit(ok ? code : 1))
+  }
 }
 
 /**
@@ -141,13 +156,13 @@ export async function onCancel(target: Pick<InjectionTarget, 'close'>, out: stri
  * product it disconnects Slack; a failed call there must never cost the rows). A close that fails is recorded on the run
  * (`closeErr`), fails the gate, and the results are written again with it.
  */
-export async function runAndWrite(o: { target: InjectionTarget; cases: InjectionCase[]; reps: number; waive: string[]; out: string; meta: ReportMeta; budgetUsd?: number; soFar?: InjectionRow[]; stop?: () => boolean }): Promise<ReturnType<typeof writeInjectionResults>> {
+export async function runAndWrite(o: { target: InjectionTarget; cases: InjectionCase[]; reps: number; waive: string[]; out: string; meta: ReportMeta; budgetUsd?: number; soFar?: InjectionRow[]; stop?: () => boolean; signal?: AbortSignal }): Promise<ReturnType<typeof writeInjectionResults>> {
   let result: InjectionRunOutput
   // Each graded row goes to rows.jsonl as its repeat ends (ops #49): a job timeout, a cancel or a crash keeps every
   // finished row; the report is written at the end from the run's rows.
   startRows(o.out)
   try {
-    result = await runInjection({ target: o.target, cases: o.cases, reps: o.reps, waive: o.waive, setSize: INJECTION_CASES.length, onRow: (row) => { o.soFar?.push(row); appendRow(o.out, row) }, ...(o.stop ? { stop: o.stop } : {}), ...(o.budgetUsd !== undefined ? { budgetUsd: o.budgetUsd } : {}) })
+    result = await runInjection({ target: o.target, cases: o.cases, reps: o.reps, waive: o.waive, setSize: INJECTION_CASES.length, onRow: (row) => { o.soFar?.push(row); appendRow(o.out, row) }, ...(o.stop ? { stop: o.stop } : {}), ...(o.signal ? { signal: o.signal } : {}), ...(o.budgetUsd !== undefined ? { budgetUsd: o.budgetUsd } : {}) })
   } catch (e) {
     // No rows to keep: give back what the target holds, and say so if that fails too.
     try {

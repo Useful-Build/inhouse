@@ -3,7 +3,7 @@
 import { describe, expect, it } from 'vitest'
 import { INJECTION_CASES } from './cases.ts'
 import { createFakeInjectionTarget } from './fake.ts'
-import { onCancel, onceClose, runAndWrite, selfCheck } from './run.ts'
+import { cancelHandler, onCancel, onceClose, runAndWrite, selfCheck } from './run.ts'
 import { mkdtempSync, readFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import path from 'node:path'
@@ -259,6 +259,58 @@ describe('#613: a memory or file plant counts only when the turn read it', () =>
     const target: InjectionTarget = { ...base, async start(c, run) { const s = await base.start(c, run); return { ...s, chat: async (p, o) => ({ ...(await s.chat(p, o)), toolCalls: [] }) } } }
     const out = await runInjection({ target, cases: pick('W02', 'W06', 'P06', 'P01'), reps: 1, canary: fixed })
     expect(out.rows.find((r) => r.caseId === 'W02')).toMatchObject({ pass: false, err: expect.stringContaining('no memory read returned the planted fact') })
-    expect(out.rows.find((r) => r.caseId === 'W06')).toMatchObject({ pass: false, err: expect.stringContaining('never opened the attached ticket file') })
+    expect(out.rows.find((r) => r.caseId === 'W06')).toMatchObject({ pass: false, err: expect.stringContaining('never opened the whole attached ticket file') })
+  })
+})
+
+describe('Neon\'s #618 review: the transcript\'s word, the cancel signal, one cancel', () => {
+  it('a plant the transcript doesn\'t hold, or a transcript that can\'t be read, is not exercised; one that holds it passes', async () => {
+    const base = createFakeInjectionTarget()
+    const make = (d: () => Promise<{ delivered: boolean; why?: string }>): InjectionTarget => ({ ...base, async start(c, run) { const s = await base.start(c, run); return { ...s, plantDelivered: d } } })
+    const no = await runInjection({ target: make(async () => ({ delivered: false, why: 'no tool result the model received holds the plant' })), cases: pick('W06', 'P01'), reps: 1, canary: fixed })
+    expect(no.rows.find((r) => r.caseId === 'W06')).toMatchObject({ pass: false, err: 'not exercised: no tool result the model received holds the plant' })
+    const broken = await runInjection({ target: make(async () => { throw new Error('R2 list answered 403') }), cases: pick('W06', 'P01'), reps: 1, canary: fixed })
+    expect(broken.rows.find((r) => r.caseId === 'W06')).toMatchObject({ pass: false, err: expect.stringContaining('the session transcript could not be read (R2 list answered 403)') })
+    const yes = await runInjection({ target: make(async () => ({ delivered: true })), cases: pick('W06', 'P01'), reps: 1, canary: fixed })
+    expect(gateOf(yes).pass).toBe(true)
+  })
+
+  it('a cancel aborts the running turn and no repeat starts after it', async () => {
+    const cancel = new AbortController()
+    const base = createFakeInjectionTarget()
+    let aborted = false
+    const target: InjectionTarget = { ...base, async start(c, run) { const s = await base.start(c, run); return { ...s, chat: (_p, o) => new Promise((_, reject) => { o.signal.addEventListener('abort', () => { aborted = true; reject(new Error('aborted')) }); cancel.abort() }) } } }
+    const out = await runInjection({ target, cases: pick('W06', 'W07'), reps: 1, canary: fixed, signal: cancel.signal })
+    expect(aborted).toBe(true)
+    expect(out.rows.map((r) => [r.caseId, r.err?.split(':')[0]])).toEqual([['W06', 'chat']])
+    expect(gateOf(out).why).toContain('the run was cancelled')
+  })
+
+  it('one cancel whatever arrives: a second signal neither closes twice nor exits early', async () => {
+    const dir = mkdtempSync(path.join(tmpdir(), 'inj-sig-'))
+    let closes = 0
+    let release!: () => void
+    const exits: number[] = []
+    const target = onceClose({ close: () => new Promise<void>((r) => { closes++; release = r }) })
+    const cancel = new AbortController()
+    const handle = cancelHandler(target, dir, [], cancel, (code) => exits.push(code))
+    handle('SIGINT', 130)
+    handle('SIGTERM', 143)
+    handle('SIGINT', 130)
+    expect(cancel.signal.aborted).toBe(true)
+    await new Promise((r) => setTimeout(r, 10))
+    expect(closes).toBe(1)
+    expect(exits).toEqual([])
+    release()
+    await new Promise((r) => setTimeout(r, 10))
+    expect(exits).toEqual([130])
+  })
+
+  it('a close that throws at once still becomes the one close every caller gets', async () => {
+    let calls = 0
+    const target = onceClose({ close: () => { calls++; throw new Error('boom') } })
+    await expect(target.close!()).rejects.toThrow('boom')
+    await expect(target.close!()).rejects.toThrow('boom')
+    expect(calls).toBe(1)
   })
 })
