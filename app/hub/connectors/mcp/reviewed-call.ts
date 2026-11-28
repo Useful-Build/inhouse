@@ -12,10 +12,18 @@
 // is `mode: 'read'`: a 2025 session is reused across calls and a lost answer is sent once more (N36 "Reads").
 // The definition passed is the bare name with an open object schema: the reviewed entry's zod input already checked
 // the arguments, and M4-H brings the confirmed upstream definition.
+// Slack's era is pinned as legacy (`LEGACY_PINNED`): its reads run the plain 2025 handshake and never probe with
+// `server/discover`, so its wire is exactly the old client's (initialize, the notification, the call). Unpinned, a
+// probe answered with a 401 would read as a rejected token and delete Slack's credentials, and a 403, 5xx or non-MCP
+// answer would fail every read (Fable, #692 round 1; #696 tracks the probe's 401 for unpinned servers). The notes
+// fixture stays unpinned, so the probe path stays covered.
 import type { HubErrorCode } from '../../index/contract'
 import type { McpToolResult } from '../../registry/registry'
 import type { WireEvent } from '../../oauth/http'
-import { sdkCallTool, type LegacySession, type McpFail, type SdkDeps } from './sdk'
+import { ERA_TTL_MS, sdkCallTool, type LegacySession, type McpFail, type SdkDeps } from './sdk'
+
+/** Connectors (by id) whose server is known to speak only the 2025 protocol: their era is pinned, never probed. */
+export const LEGACY_PINNED: ReadonlySet<string> = new Set(['slack'])
 
 export type ReviewedOutcome =
   | { kind: 'ok'; result: McpToolResult; dropped: number; session: LegacySession | null }
@@ -31,6 +39,8 @@ export type ReviewedCall = {
   session: LegacySession | null
   name: string
   args: Record<string, unknown>
+  /** `legacy`: the endpoint's era is pinned, so the call runs the 2025 handshake and never sends `server/discover`. */
+  era?: 'legacy'
 }
 
 const OPEN_OBJECT = { type: 'object' } as const
@@ -75,6 +85,7 @@ export function reviewedFailure(f: McpFail, reused: boolean): Exclude<ReviewedOu
 
 /** One reviewed read. Never throws on an upstream answer; nothing from a body, header or SDK error reaches the result. */
 export async function reviewedCall(deps: SdkDeps, c: ReviewedCall): Promise<ReviewedOutcome> {
+  if (c.era === 'legacy') deps.eras.set(c.endpoint, c.generation, { kind: 'legacy' }, deps.now() + ERA_TTL_MS)
   const reused = c.session !== null && c.session.endpoint === c.endpoint && c.session.generation === c.generation
   const out = await sdkCallTool(
     deps,

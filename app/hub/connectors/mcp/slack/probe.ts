@@ -19,7 +19,7 @@ export async function probe(upstream: Upstream, token: string): Promise<ProbeRes
   const target: McpTarget = { endpoint: slackConnector.mcp.endpoint, generation: 0, credential: { header: 'Authorization', value: `Bearer ${token}` } }
   const list = await sdkListTools(deps, target)
   const names = list.kind === 'ok' ? list.tools.map(t => t.name) : []
-  const out = await reviewedCall(deps, { endpoint: target.endpoint, token, generation: 0, session: null, name: 'slack_search_users', args: { query: 'test' } })
+  const out = await reviewedCall(deps, { endpoint: target.endpoint, token, generation: 0, session: null, name: 'slack_search_users', args: { query: 'test' }, era: 'legacy' })
   return {
     listed: { slack_search_users: names.includes('slack_search_users'), slack_read_file: names.includes('slack_read_file') },
     searchUsers: out.kind === 'ok' ? 'ok' : out.kind === 'unauthorized' ? 'unauthorized' : out.code,

@@ -16,7 +16,7 @@
 import type { AccountStatus, HubErrorCode, HubResult, Instant, SignInState } from '../index/contract'
 import type { McpClientConfig, McpConnectorModule, McpToolResult } from '../registry/registry'
 import { MCP_SCOPE, requestedScopes, sameScopeSet, type Readiness } from '../registry/registry'
-import { reviewedCall } from '../connectors/mcp/reviewed-call'
+import { LEGACY_PINNED, reviewedCall } from '../connectors/mcp/reviewed-call'
 import { EraCache, type LegacySession } from '../connectors/mcp/sdk'
 import { constantTimeEqual } from '../oauth/http'
 import {
@@ -1296,11 +1296,12 @@ export class SignInCore {
     if (!ring.ok) return err('key_unavailable')
     const started = this.#d.now()
     const endpoint = c.mcp.endpoint
+    const era = LEGACY_PINNED.has(c.id) ? ('legacy' as const) : undefined
 
     const first = await this.#mcpAcquire(accountId, ring.ring, requested, true)
     if (!first.ok) return this.#mcpLogged(accountId, name, started, err(first.code, first.detail))
     const sdk = { upstream: await this.#d.upstream(), now: () => this.#d.now(), eras: this.#eras }
-    let out = await reviewedCall(sdk, { endpoint, token: first.token, generation: first.generation, session: this.#session, name, args })
+    let out = await reviewedCall(sdk, { endpoint, token: first.token, generation: first.generation, session: this.#session, name, args, era })
     if (out.kind === 'unauthorized') {
       this.#session = null
       const now = this.#read()
@@ -1313,7 +1314,7 @@ export class SignInCore {
       }
       const second = await this.#mcpAcquire(accountId, ring.ring, requested, false)
       if (!second.ok) return this.#mcpLogged(accountId, name, started, err(second.code, second.detail))
-      out = await reviewedCall(sdk, { endpoint, token: second.token, generation: second.generation, session: null, name, args })
+      out = await reviewedCall(sdk, { endpoint, token: second.token, generation: second.generation, session: null, name, args, era })
       if (out.kind === 'unauthorized') {
         this.#mcpRejected(accountId, second.generation)
         return this.#mcpLogged(accountId, name, started, err('credentials_rejected'))

@@ -165,6 +165,16 @@ describe('the MCP client (the SDK wrapper, through reviewed-call.ts since M4-C2)
     expect(r).toMatchObject({ kind: 'ok', result: { content: [{ type: 'text', text: 'hi' }] }, dropped: 1 })
   })
 
+  it('one invalid or unknown content part fails the whole read as upstream_unavailable (the SDK checks the schema; #695)', async () => {
+    // The old client dropped and counted such a part; the SDK refuses a result that breaks the CallToolResult schema.
+    // This pins today's strict reading until #695 decides strict or lenient.
+    const answer = (part: Record<string, unknown>) => (id: unknown) => json({ jsonrpc: '2.0', id, result: { content: [{ type: 'text', text: 'hi' }, part] } })
+    expect(await call(answer({ type: 'image', data: 'x' }))).toEqual({ kind: 'error', code: 'upstream_unavailable' })
+    expect(await call(answer({ type: 'widget', value: 1 }))).toEqual({ kind: 'error', code: 'upstream_unavailable' })
+    // Control: the same answer with a spec-valid part is read, the part dropped and counted.
+    expect(await call(answer({ type: 'image', data: 'aGk=', mimeType: 'image/png' }))).toMatchObject({ kind: 'ok', dropped: 1 })
+  })
+
   it('a body over 4 MiB is result_too_large', async () => {
     const big = 'x'.repeat(MCP_MAX_BYTES + 1)
     expect(await call(() => new Response(big, { headers: { 'Content-Type': 'application/json' } }))).toEqual({ kind: 'error', code: 'result_too_large' })
