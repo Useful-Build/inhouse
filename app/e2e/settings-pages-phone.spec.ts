@@ -1,4 +1,5 @@
-// Phone (390): your own Settings pages (Notifications, Memory) keep their controls and a change survives a reload; the
+// Phone (390): your own Settings pages (General, Memory; Notifications left with decision A13) keep their controls and a
+// change survives a reload; the
 // team pages Inhouse agent, Data and access and Audit log read as text (decision D4) while their buttons still work;
 // Help opens from the account menu and fits. The desktop flows are in settings-your-pages.spec.ts,
 // settings-agent-data.spec.ts and help-account-menu.spec.ts.
@@ -37,17 +38,13 @@ async function openFromMenu(page: Page, name: string) {
   await expect(h1(page, name)).toBeVisible()
 }
 
-test('Phone: Notifications and Memory keep their controls, and a change survives a reload', async ({ fx, page }) => {
+test('Phone: General and Memory keep their controls, and a change survives a reload', async ({ fx, page }) => {
   await start(page, fx, '#/today')
-  await openFromMenu(page, 'Notifications')
+  await openFromMenu(page, 'General')
   await expect(page.getByRole('note')).toHaveCount(0)
-  const weekly = main(page).getByRole('switch', { name: 'Weekly report', exact: true })
-  await expect(weekly).toBeChecked()
-  await weekly.click()
-  await expect(weekly).not.toBeChecked()
-  await main(page).getByRole('combobox', { name: 'Approvals waiting: Right away', exact: true }).click()
-  await page.getByRole('option', { name: 'Once an hour' }).click()
-  await expect(main(page).getByRole('combobox', { name: 'Approvals waiting: Once an hour', exact: true })).toBeVisible()
+  await main(page).getByRole('combobox', { name: 'Language: English (US)', exact: true }).click()
+  await page.getByRole('option', { name: 'English (UK)' }).click()
+  await expect(main(page).getByRole('combobox', { name: 'Language: English (UK)', exact: true })).toBeVisible()
   await noSidewaysScroll(page)
 
   await openFromMenu(page, 'Memory')
@@ -56,13 +53,16 @@ test('Phone: Notifications and Memory keep their controls, and a change survives
   await forgets.first().click()
   await expect(forgets).toHaveCount(2)
   await expect(toast(page, 'Forgotten. Your Inhouse agent will no longer use this.')).toBeVisible()
+  const learn = main(page).getByRole('switch', { name: 'Learn from my chats', exact: true })
+  await learn.click()
+  await expect(learn).not.toBeChecked()
   await noSidewaysScroll(page)
 
   await page.reload()
   await expect(forgets).toHaveCount(2)
-  await openFromMenu(page, 'Notifications')
-  await expect(weekly).not.toBeChecked()
-  await expect(main(page).getByRole('combobox', { name: 'Approvals waiting: Once an hour', exact: true })).toBeVisible()
+  await expect(learn).not.toBeChecked()
+  await openFromMenu(page, 'General')
+  await expect(main(page).getByRole('combobox', { name: 'Language: English (UK)', exact: true })).toBeVisible()
 })
 
 test('Phone: Inhouse agent, Data and access and Audit log read as text, and their buttons still work', async ({ fx, page }) => {

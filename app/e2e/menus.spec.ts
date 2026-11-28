@@ -84,8 +84,9 @@ for (const width of [1440, 390]) {
           void r
         }
       }
-      // On a phone only Your settings has dropdowns (Theme, Language, Text size, Time zone and the two alert ones).
-      expect(opened, 'dropdowns opened').toBeGreaterThan(phone ? 3 : 15)
+      // On a phone only Your settings has dropdowns (Theme, Language, Text size, Time zone). 14 on desktop since the
+      // Notifications, Who approves what and Run limits pages (8 of the 22 before) left with decision A13.
+      expect(opened, 'dropdowns opened').toBeGreaterThan(phone ? 3 : 13)
       test.info().annotations.push({ type: 'dropdowns opened', description: String(opened) })
       test.info().annotations.push({ type: 'widest', description: `${widestPage} #${widestIdx} ${Math.round(widest)}px` })
 

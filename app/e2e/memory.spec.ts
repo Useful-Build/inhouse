@@ -150,7 +150,7 @@ async function scenarioTo(page: Page, scenario: string) {
   await page.getByRole('button', { name: /^Demo switches:/ }).click()
   await page.getByRole('dialog', { name: 'Demo switches' }).getByRole('button', { name: scenario, exact: true }).click()
   await page.getByRole('button', { name: 'Close demo switches' }).click()
-  await expect(page.getByRole('button', { name: new RegExp(`^Demo switches: \\w+, ${scenario}$`) })).toBeVisible()
+  await expect(page.getByRole('button', { name: `Demo switches: ${scenario}`, exact: true })).toBeVisible()
 }
 
 test('Memory: a message added to a sample chat survives a reload on First day and is there back on Normal', async ({ page }) => {
