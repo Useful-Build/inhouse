@@ -56,7 +56,8 @@ test('open mode with no host listed: the clean page on an unlisted host goes thr
     const steps = (await call(request, dana, 'GET', `/api/traces/${sent.turnId}`)).json.steps as { kind: string; detail: string }[]
     expect(steps.filter(s => s.kind === 'tool' && s.detail === 'WebFetch')).toHaveLength(2)
   } finally {
-    await putSetting(request, inhouse, 'technical', 't:webfetch_mode', typeof prevMode === 'string' ? prevMode : 'list')
-    await putSetting(request, inhouse, 'technical', 't:webfetch', typeof prevList === 'string' ? prevList : '')
+    // Both rows go back to what they were: a reset (null) when there was none, so the brand returns to its default (#750).
+    await putSetting(request, inhouse, 'technical', 't:webfetch_mode', typeof prevMode === 'string' ? prevMode : null)
+    await putSetting(request, inhouse, 'technical', 't:webfetch', typeof prevList === 'string' ? prevList : null)
   }
 })
