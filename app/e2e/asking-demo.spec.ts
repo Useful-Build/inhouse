@@ -130,8 +130,7 @@ test('Remove in the hold of a card Always allow approved sends it back to waitin
   await start(page, '#/chats/order-tags')
   await cardOf(page, WHOLESALE).getByRole('button', { name: 'Always allow', exact: true }).click()
   await expect(cardOf(page, WHOLESALE)).toHaveAttribute('data-action-card', 'approved')
-  // Held, so the removal lands inside the 10 s hold however long the clicks take.
-  await page.clock.pauseAt(await page.evaluate(() => Date.now() + 500))
+  // The removal lands well inside the 10 s hold: a page change and two clicks.
   await go(page, '#/settings/you-permissions')
   const made = permission(page, 'Add tags to orders')
   await made.getByRole('button', { name: 'Remove: Add tags to orders' }).click()
@@ -140,7 +139,6 @@ test('Remove in the hold of a card Always allow approved sends it back to waitin
   await go(page, '#/chats/order-tags')
   await expect(cardOf(page, WHOLESALE)).toHaveAttribute('data-action-card', 'waiting')
   await expect(cardOf(page, WHOLESALE)).toContainText('The permission was removed, so this needs your OK again.')
-  await page.clock.resume()
   await page.clock.runFor(20_000)
   await expect(cardOf(page, WHOLESALE)).toHaveAttribute('data-action-card', 'waiting')
 })

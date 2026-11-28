@@ -32,7 +32,8 @@ const PAGES: [hash: string, ready: (p: Page) => ReturnType<Page['getByRole']>][]
   ['#/tools', p => p.getByRole('heading', { level: 1, name: 'Tools', exact: true })],
   ['#/tools/shopify', p => p.getByRole('heading', { level: 1, name: 'Shopify', exact: true })],
   ['#/tools/amazon', p => p.getByRole('heading', { level: 1, name: 'Amazon', exact: true })],
-  ['#/tools/slack', p => p.getByRole('heading', { level: 1, name: 'Slack', exact: true })],
+  // Slack is connected from the Normal day on; before, its link lands on Tools.
+  ['#/tools/slack', p => p.getByRole('heading', { level: 1, name: /^(Slack|Tools)$/ })],
   ['#/usage', p => p.getByRole('heading', { level: 1, name: 'Usage', exact: true })],
   ['#/chats/all', p => p.getByRole('heading', { level: 1, name: 'All chats', exact: true })],
   // On the first day there are no chats, so a chat's link opens a new one.

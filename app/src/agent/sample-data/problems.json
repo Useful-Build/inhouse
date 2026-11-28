@@ -339,7 +339,7 @@
         }
       ],
       "draft": {
-        "kind": "Slack post",
+        "kind": "Team post",
         "summary": "Asks Dana to claim back the large-item fee on 18 orders.",
         "amount": {
           "money": { "minor": 124000, "currency": "USD" },
@@ -350,7 +350,7 @@
         "lines": [
           [
             "To",
-            "#ops-alerts in Slack"
+            "#ops-alerts"
           ],
           [
             "Orders",
@@ -579,14 +579,14 @@
         }
       ],
       "draft": {
-        "kind": "Slack post",
+        "kind": "Team post",
         "summary": "Asks the team to chase ShipBob so it ships today.",
         "destination": "#ops-alerts",
         "title": "Ask the team to chase ShipBob on #4821",
         "lines": [
           [
             "To",
-            "#ops-alerts in Slack"
+            "#ops-alerts"
           ],
           [
             "Order",
