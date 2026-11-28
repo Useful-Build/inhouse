@@ -12,9 +12,9 @@ import { FixtureLoginServer } from './as'
 import { blockedFetch, privateTrapFetch, redirectFetch } from './detect'
 import { createHelpdeskServer, HELPDESK_KEY } from './helpdesk'
 import { LegacyMcpServer } from './legacy'
-import { createModernServer, MODERN_KEY } from './modern'
+import { createModernServer, MODERN_BEARER_KEY, MODERN_KEY } from './modern'
 import { FakeRestApi, REST_KEY } from '../rest/server'
-import { credentialOf, HOSTS, isObject, WireLog } from './wire'
+import { credentialOf, FIXTURE_EPOCH_MS, HOSTS, isObject, WireLog } from './wire'
 
 /** Found in the hub's test bundle only (the bundle scan reads it from here). */
 export const MCP_FIXTURES_CANARY = 'INHOUSE_MCP_FIXTURES_CANARY_61a9'
@@ -22,13 +22,15 @@ export const MCP_FIXTURES_CANARY = 'INHOUSE_MCP_FIXTURES_CANARY_61a9'
 export const MCP_FIXTURE_HOSTS: readonly string[] = Object.values(HOSTS)
 
 /** The keys a test may revoke, by name (the hook's `revokeKey`). */
-export const FIXTURE_KEYS = { modern: MODERN_KEY, helpdesk: HELPDESK_KEY, rest: REST_KEY } as const
+export const FIXTURE_KEYS = { modern: MODERN_KEY, modernBearer: MODERN_BEARER_KEY, helpdesk: HELPDESK_KEY, rest: REST_KEY } as const
 export type FixtureKeyName = keyof typeof FIXTURE_KEYS
 
 export function createMcpFixtures(opts: { now?: () => number } = {}) {
   const log = new WireLog()
   const revokedKeys = new Set<string>()
-  const as = new FixtureLoginServer(opts)
+  // The fixtures' clock (codes, tokens and requestState expire on it): fixed at FIXTURE_EPOCH_MS until a test moves it.
+  let clockMs = FIXTURE_EPOCH_MS
+  const as = new FixtureLoginServer({ now: opts.now ?? (() => clockMs) })
   const modern = createModernServer(as, revokedKeys)
   const legacy = new LegacyMcpServer(as)
   const helpdesk = createHelpdeskServer(as, revokedKeys)
@@ -43,6 +45,7 @@ export function createMcpFixtures(opts: { now?: () => number } = {}) {
       case HOSTS.helpdesk:
         return helpdesk.fetch
       case HOSTS.login:
+      case HOSTS.loginForeign:
         return as.fetch
       case HOSTS.blocked:
         return blockedFetch
@@ -94,8 +97,29 @@ export function createMcpFixtures(opts: { now?: () => number } = {}) {
       if (name === 'rest') rest.revokeKey()
       else revokedKeys.add(FIXTURE_KEYS[name])
     },
-    /** Logs, sessions, tokens, counters, revoked keys: all back to a fresh fixture's. */
+    /**
+     * Switches one connection's plant to its second state (2) or back (1), by its address with any query (#624):
+     * `/changing/mcp` (modern and helpdesk) changes a tool, `/list-fails/mcp` fails page 2. False when the address has
+     * no second state.
+     */
+    setToolsVersion(address: string, version: 1 | 2): boolean {
+      return modern.setToolsVersion(address, version) || helpdesk.setToolsVersion(address, version)
+    },
+    /** Whether an address names a connection with a second state (what `setToolsVersion` accepts). */
+    hasToolsVersion(address: string): boolean {
+      return modern.versionKey(address) !== null || helpdesk.versionKey(address) !== null
+    },
+    /** Ends every login at the login server (every token it issued is refused from now on). */
+    revokeLogins(): void {
+      as.revokeAll()
+    },
+    /** Moves the fixtures' clock (only when no `now` was injected). */
+    setClock(ms: number): void {
+      clockMs = ms
+    },
+    /** Logs, sessions, tokens, switched plants, revoked keys, the clock: all back to a fresh fixture's. */
     reset(): void {
+      clockMs = FIXTURE_EPOCH_MS
       log.clear()
       revokedKeys.clear()
       as.reset()
@@ -108,6 +132,8 @@ export function createMcpFixtures(opts: { now?: () => number } = {}) {
     state() {
       return JSON.parse(JSON.stringify({
         log: log.entries,
+        clockMs: (opts.now ?? (() => clockMs))(),
+        switched: [...modern.switched, ...helpdesk.switched],
         modern: { calls: modern.calls, writes: modern.writes, violations: modern.violations, streamsCancelled: modern.streamsCancelled },
         legacy: { calls: legacy.calls, writes: legacy.writes, sessions: legacy.sessions.size },
         helpdesk: { calls: helpdesk.calls, writes: helpdesk.writes, violations: helpdesk.violations },

@@ -38,8 +38,38 @@ describe('the fixtures in the test-fakes hook', () => {
     expect((await me()).status).toBe(200)
   })
 
-  it('an unknown key name or field is invalid_args, and nothing is applied', async () => {
-    for (const bad of [{ op: 'set', fixtures: { revokeKey: 'slack' } }, { op: 'set', fixtures: { revokeAll: true } }]) {
+  it('toolsVersion switches one connection by address; state lists it; reset switches it back (#624)', async () => {
+    const list = async (url: string) => {
+      const res = await testUpstreamFetch(modernRequest(url, 1, 'tools/list'))
+      return ((await res.json()) as { result: { tools: { name: string; description: string }[] } }).result.tools
+    }
+    const url = 'https://modern.mcp-fixtures.example.com/changing/mcp?c=hook'
+    const before = await list(url)
+    await value({ op: 'set', fixtures: { toolsVersion: { address: url, version: 2 } } })
+    expect((await value<{ fixtures: { switched: string[] } }>({ op: 'state' })).fixtures.switched).toEqual(['modern.mcp-fixtures.example.com/changing/mcp?c=hook'])
+    expect(await list(url)).not.toEqual(before)
+    // Control: the same endpoint under another connection is untouched.
+    expect(await list('https://modern.mcp-fixtures.example.com/changing/mcp?c=other')).toEqual(before)
+    await value({ op: 'reset' })
+    expect(await list(url)).toEqual(before)
+  })
+
+  it('revokeLogins ends every fixture login; clockMs moves the fixtures clock; reset restores both', async () => {
+    await value({ op: 'set', fixtures: { clockMs: 1_000 } })
+    expect((await value<{ fixtures: { clockMs: number } }>({ op: 'state' })).fixtures.clockMs).toBe(1_000)
+    await value({ op: 'set', fixtures: { revokeLogins: true } })
+    await value({ op: 'reset' })
+    expect((await value<{ fixtures: { clockMs: number } }>({ op: 'state' })).fixtures.clockMs).toBe(Date.UTC(2026, 10, 28, 9, 0, 0))
+  })
+
+  it('an unknown key name or field, or an address with no second state, is invalid_args, and nothing is applied', async () => {
+    for (const bad of [
+      { op: 'set', fixtures: { revokeKey: 'slack' } },
+      { op: 'set', fixtures: { revokeAll: true } },
+      { op: 'set', fixtures: { revokeKey: 'rest', toolsVersion: { address: 'https://modern.mcp-fixtures.example.com/open/mcp', version: 2 } } },
+      { op: 'set', fixtures: { toolsVersion: { address: 'not a url', version: 2 } } },
+      { op: 'set', fixtures: { toolsVersion: { address: 'https://modern.mcp-fixtures.example.com/changing/mcp', version: 3 } } },
+    ]) {
       expect(await call(bad), JSON.stringify(bad)).toMatchObject({ ok: false, error: { code: 'invalid_args' } })
     }
     expect((await me()).status).toBe(200)

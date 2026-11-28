@@ -1,5 +1,5 @@
 // Helpers for M4-F's fixture tests (Stage 1 M4-F, N52). Test-only: under hub/testing/, never in a deployable bundle.
-import { authorizationServerOf, clientDocument, FIXTURE_APP, FIXTURE_REDIRECT_URIS, issuerOf, pkcePair, type ProfileId, PROFILES, type ProfileSpec } from '../../../test/upstreams/mcp/as'
+import { authorizationServerOf, clientDocument, endpointBaseOf, FIXTURE_APP, FIXTURE_REDIRECT_URIS, issuerOf, pkcePair, type ProfileId, PROFILES, type ProfileSpec } from '../../../test/upstreams/mcp/as'
 import { createMcpFixtures, type McpFixtures } from '../../../test/upstreams/mcp/index'
 import { modernRequest } from '../../../test/upstreams/mcp/modern'
 import { HOSTS } from '../../../test/upstreams/mcp/wire'
@@ -8,6 +8,7 @@ export const MODERN = `https://${HOSTS.modern}`
 export const LEGACY = `https://${HOSTS.legacy}`
 export const HELPDESK = `https://${HOSTS.helpdesk}`
 export const LOGIN = `https://${HOSTS.login}`
+export const LOGIN_FOREIGN = `https://${HOSTS.loginForeign}`
 
 /** The Client ID Metadata Document URL the tests use (the product's `/oauth/client.json`, N40). */
 export const CLIENT_DOC_URL = 'https://brand.example.com/oauth/client.json'
@@ -62,7 +63,7 @@ export async function signIn(fx: McpFixtures, profile: ProfileId, opts: { resour
   const clientId = client === 'cimd' ? CLIENT_DOC_URL : FIXTURE_APP.clientId
   const redirect = FIXTURE_REDIRECT_URIS[0]
   const { verifier, challenge } = await pkcePair(profile)
-  const ep = `${LOGIN}/${profile.split('/')[0]}`
+  const ep = endpointBaseOf(profile)
   const q = new URLSearchParams({ response_type: 'code', client_id: clientId, redirect_uri: redirect, code_challenge: challenge, code_challenge_method: 'S256', state: `st-${profile}`, scope: opts.scope ?? 'notes:read notes:write' })
   if (resource !== null) q.set('resource', resource)
   const auth = await fx.fetch(new Request(`${ep}/authorize?${q}`))
@@ -95,7 +96,7 @@ export function refresh(fx: McpFixtures, profile: ProfileId, refreshToken: strin
     form.set('client_id', FIXTURE_APP.clientId)
     form.set('client_secret', FIXTURE_APP.clientSecret)
   }
-  return fx.fetch(new Request(`${LOGIN}/${profile}/token`, { method: 'POST', headers, body: form }))
+  return fx.fetch(new Request(`${endpointBaseOf(profile)}/token`, { method: 'POST', headers, body: form }))
 }
 
 export { authorizationServerOf, issuerOf }

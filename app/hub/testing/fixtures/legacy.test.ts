@@ -4,7 +4,7 @@
 import { beforeEach, describe, expect, it } from 'vitest'
 import type { McpFixtures } from '../../../test/upstreams/mcp/index'
 import { legacyInitialize, legacyRequest } from '../../../test/upstreams/mcp/legacy'
-import { fixtures, LEGACY, modern, rpcOf } from './kit'
+import { fixtures, LEGACY, modern, rpcOf, signIn } from './kit'
 
 let fx: McpFixtures
 beforeEach(() => {
@@ -69,6 +69,25 @@ describe('a 2026-07-28 client meets it (streamable-http 2026-07-28 "Backward Com
     const code = (await rpcOf(probe)).error!.code
     expect([-32020, -32021, -32022]).not.toContain(code)
     expect(await session()).toBeTruthy()
+  })
+
+  it('a signed-in endpoint checks the tool scope: a notes:read token gets 403 insufficient_scope on notes_write, and the write never runs (#631)', async () => {
+    const url = `${LEGACY}/as/std/mcp`
+    const s = await signIn(fx, 'std', { resource: url, scope: 'notes:read', client: 'app' })
+    const init = await fx.fetch(new Request(url, { method: 'POST', headers: { 'Content-Type': 'application/json', Accept: 'application/json, text/event-stream', Authorization: `Bearer ${s.access}` }, body: JSON.stringify({ jsonrpc: '2.0', id: 1, method: 'initialize', params: { protocolVersion: '2025-11-25', capabilities: {}, clientInfo: { name: 't', version: '1' } } }) }))
+    const sid = init.headers.get('Mcp-Session-Id')!
+    const callAs = (name: string, args: Record<string, unknown>) => {
+      const r = legacyRequest(url, sid, { id: 2, method: 'tools/call', params: { name, arguments: args } })
+      r.headers.set('Authorization', `Bearer ${s.access}`)
+      return fx.fetch(r)
+    }
+    const write = await callAs('notes_write', { folder: 'ops', text: 'x' })
+    expect(write.status).toBe(403)
+    expect(write.headers.get('WWW-Authenticate')).toBe(`Bearer error="insufficient_scope", scope="notes:write", resource_metadata="${LEGACY}/.well-known/oauth-protected-resource/as/std/mcp"`)
+    expect(fx.legacy.writes).toEqual([])
+    // Control: a read the token's scope covers runs.
+    expect((await callAs('notes_read', { id: 'n1' })).status).toBe(200)
+    expect(fx.legacy.calls.map(c => c.tool)).toEqual(['notes_read'])
   })
 
   it('a signed-in endpoint answers 401 with the same Bearer challenge shape', async () => {

@@ -3,9 +3,9 @@
 // F4 (the connect plan's sections 6.3 and 7). The fixture only plants; how the hub reacts is M4-O1a's, M4-O2's and
 // M4-O3's to prove.
 import { beforeEach, describe, expect, it } from 'vitest'
-import { E8_OTHER_TENANT, E8_TENANT, FIXTURE_APP, FIXTURE_REDIRECT_URIS, issuerOf, pkcePair, PROFILES, recordedIssuerOf, SIGNIN_VECTORS, type ProfileId } from '../../../test/upstreams/mcp/as'
+import { E8_OTHER_TENANT, E8_TENANT, endpointBaseOf, FIXTURE_APP, FIXTURE_REDIRECT_URIS, issuerOf, pkcePair, PROFILE_IDS, PROFILES, recordedIssuerOf, SIGNIN_VECTORS, type ProfileId } from '../../../test/upstreams/mcp/as'
 import type { McpFixtures } from '../../../test/upstreams/mcp/index'
-import { CLIENT_DOC_URL, fixtures, LOGIN, modern, MODERN, refresh, rpcOf, signIn } from './kit'
+import { CLIENT_DOC_URL, fixtures, LOGIN, LOGIN_FOREIGN, modern, MODERN, refresh, rpcOf, signIn } from './kit'
 
 let fx: McpFixtures
 beforeEach(() => {
@@ -108,11 +108,46 @@ describe('where the client comes from (client-registration 2026-07-28)', () => {
     expect((await reg('noreg', { redirect_uris: [...FIXTURE_REDIRECT_URIS], application_type: 'web' })).status).toBe(404)
   })
 
+  it('a malformed Basic credential (no colon, a bad percent escape) is 401 invalid_client, never a throw', async () => {
+    for (const raw of ['no-colon-here', 'fixture-app-0001:%E0%A4%A', '%zz:secret']) {
+      const res = await fx.fetch(new Request(`${LOGIN}/std/token`, { method: 'POST', headers: { 'Content-Type': 'application/x-www-form-urlencoded', Authorization: `Basic ${btoa(raw)}` }, body: 'grant_type=refresh_token&refresh_token=x' }))
+      expect([res.status, await res.json()], raw).toEqual([401, { error: 'invalid_client' }])
+    }
+  })
+
   it("a client from one issuer isn't valid at another (\"Authorization Server Binding\")", async () => {
     const created = (await (await fx.fetch(new Request(`${LOGIN}/reg-only/register`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ redirect_uris: [...FIXTURE_REDIRECT_URIS], application_type: 'web' }) }))).json()) as { client_id: string }
     const { challenge } = await pkcePair('bind')
     const elsewhere = await fx.fetch(new Request(`${LOGIN}/std/authorize?${new URLSearchParams({ response_type: 'code', client_id: created.client_id, redirect_uri: FIXTURE_REDIRECT_URIS[0], code_challenge: challenge, code_challenge_method: 'S256' })}`))
     expect(elsewhere.status).toBe(400)
+  })
+})
+
+describe('OpenID Connect discovery documents (OpenID Connect Discovery 1.0 section 3)', () => {
+  it('every profile served at an openid-configuration address carries the required provider fields; the RFC 8414 documents need not', async () => {
+    const served: string[] = []
+    for (const id of PROFILE_IDS) {
+      const p = PROFILES[id] as (typeof PROFILES)[typeof id] & { issuerPath?: string; host?: string }
+      const origin = new URL(endpointBaseOf(id)).origin
+      const issuerPath = p.issuerPath ?? id
+      const urls = [
+        ...(p.meta.oidcInsert === 'serve' ? [`${origin}/.well-known/openid-configuration/${issuerPath}`] : []),
+        ...(p.meta.oidcAppend === 'serve' ? [`${origin}/${issuerPath}/.well-known/openid-configuration`] : []),
+      ]
+      for (const url of urls) {
+        const res = await meta(url)
+        expect(res.status, url).toBe(200)
+        const doc = (await res.json()) as Record<string, unknown>
+        for (const k of ['issuer', 'authorization_endpoint', 'token_endpoint', 'response_types_supported']) expect(doc[k], `${url} ${k}`).toBeDefined()
+        expect(doc, url).toMatchObject({ jwks_uri: `${endpointBaseOf(id)}/jwks.json`, subject_types_supported: ['public'], id_token_signing_alg_values_supported: ['RS256'] })
+        expect(await (await meta(doc.jwks_uri as string)).json()).toEqual({ keys: [] })
+        served.push(id)
+      }
+    }
+    // The control: all six OIDC profiles were checked.
+    expect(served.sort()).toEqual(['e10-401', 'e10-redirect', 'e8', 'e8-foreign', 'e8-other', 'oidc'])
+    const plain = (await (await meta(`${LOGIN}/.well-known/oauth-authorization-server/std`)).json()) as Record<string, unknown>
+    expect(plain.jwks_uri).toBeUndefined()
   })
 })
 
@@ -214,8 +249,13 @@ const PLANT_CHECKS: Partial<Record<ProfileId, () => Promise<void>>> = {
     expect((await signIn(fx, 'e8-other')).callback.searchParams.get('iss')).toBe(`${LOGIN}/e8-other/${E8_OTHER_TENANT}/v2.0`)
   },
   'e8-foreign': async () => {
-    const doc = (await (await meta(`${LOGIN}/e8-foreign/common/v2.0/.well-known/openid-configuration`)).json()) as Record<string, unknown>
-    expect(doc.issuer).toBe(`${LOGIN}/e8-foreign/{tenantid}/v2.0`)
+    // Another origin than E8's pinned one, so an origin pin can refuse it.
+    const doc = (await (await meta(`${LOGIN_FOREIGN}/e8-foreign/common/v2.0/.well-known/openid-configuration`)).json()) as Record<string, unknown>
+    expect(doc.issuer).toBe(`${LOGIN_FOREIGN}/e8-foreign/{tenantid}/v2.0`)
+    expect(new URL(doc.authorization_endpoint as string).host).toBe(new URL(LOGIN_FOREIGN).host)
+    // It isn't served on E8's origin.
+    expect((await meta(`${LOGIN}/e8-foreign/common/v2.0/.well-known/openid-configuration`)).status).toBe(404)
+    expect((await signIn(fx, 'e8-foreign')).callback.searchParams.get('iss')).toBe(`${LOGIN_FOREIGN}/e8-foreign/${E8_TENANT}/v2.0`)
   },
   e9: async () => {
     const { challenge } = await pkcePair('e9')
@@ -246,11 +286,14 @@ const PLANT_CHECKS: Partial<Record<ProfileId, () => Promise<void>>> = {
     expect((await signIn(fx, 'e11-match')).callback.searchParams.get('iss')).toBe(issuerOf('e11-match'))
   },
   e12: async () => {
+    // No ID documents and no public clients, so N40's order can't land on a client that sends no secret (#629).
+    const doc = (await (await meta(`${LOGIN}/.well-known/oauth-authorization-server/e12`)).json()) as Record<string, unknown>
+    expect(doc.token_endpoint_auth_methods_supported).toEqual(['client_secret_post'])
+    expect(doc.client_id_metadata_document_supported).toBeUndefined()
+    await expect(signIn(fx, 'e12', { client: 'cimd' })).rejects.toThrow(/authorize answered 400/)
     await expect(signIn(fx, 'e12', { client: 'app', secretIn: 'basic' })).rejects.toThrow(/token answered 401/)
     const s = await signIn(fx, 'e12', { client: 'app', secretIn: 'body' })
     expect(s.access).toBeTruthy()
-    const doc = (await (await meta(`${LOGIN}/.well-known/oauth-authorization-server/e12`)).json()) as Record<string, unknown>
-    expect(doc.token_endpoint_auth_methods_supported).toEqual(['client_secret_post', 'none'])
     expect(fx.as.tokenRequests.map(t => t.authMethod)).toEqual(['client_secret_basic', 'client_secret_post'])
   },
 }

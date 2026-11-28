@@ -2,7 +2,7 @@
 // no credential, as the spec pages say for its outcome; the hostile ones redirect or point at a private address. This is
 // the fixture's half: the probe below is raw requests, not M4-D's detect.
 import { beforeEach, describe, expect, it } from 'vitest'
-import { DETECT_ADDRESSES, DETECT_HOSTILE } from '../../../test/upstreams/mcp/detect'
+import { DETECT_ADDRESSES, DETECT_HOSTILE, DETECT_KEY_VARIANTS } from '../../../test/upstreams/mcp/detect'
 import type { McpFixtures } from '../../../test/upstreams/mcp/index'
 import { legacyInitialize } from '../../../test/upstreams/mcp/legacy'
 import { HOSTS } from '../../../test/upstreams/mcp/wire'
@@ -56,6 +56,18 @@ describe('six addresses, six outcomes (connect plan section 5 step 0)', () => {
     expect(res.status).toBe(401)
     expect(res.headers.get('WWW-Authenticate')).not.toMatch(/Bearer/i)
     expect((await fx.fetch(new Request(`https://${HOSTS.modern}/.well-known/oauth-protected-resource/key/mcp`))).status).toBe(404)
+    expect((await fx.fetch(new Request(`https://${HOSTS.modern}/.well-known/oauth-protected-resource`))).status).toBe(404)
+  })
+
+  it('key, whatever the scheme (#625): a bare Bearer challenge, or none, and no resource metadata at either well-known address', async () => {
+    const bearer = await modern(fx, DETECT_KEY_VARIANTS.bearerChallenge, 'server/discover')
+    expect([bearer.status, bearer.headers.get('WWW-Authenticate')]).toEqual([401, 'Bearer realm="fixture"'])
+    const none = await modern(fx, DETECT_KEY_VARIANTS.noChallenge, 'server/discover')
+    expect([none.status, none.headers.get('WWW-Authenticate')]).toEqual([401, null])
+    for (const url of Object.values(DETECT_KEY_VARIANTS)) {
+      const u = new URL(url)
+      expect((await fx.fetch(new Request(`${u.origin}/.well-known/oauth-protected-resource${u.pathname}`))).status, url).toBe(404)
+    }
     expect((await fx.fetch(new Request(`https://${HOSTS.modern}/.well-known/oauth-protected-resource`))).status).toBe(404)
   })
 

@@ -55,13 +55,16 @@ describe('the helpdesk', () => {
     expect(fx.helpdesk.writes).toEqual([{ endpoint: '/mcp', tool: 'macro_apply', args: { ticket_id: 1002, macro_id: 'm-refund' } }])
   })
 
-  it("/changing/mcp: ticket_reply's description and schema change from the 2nd list; /mcp's never do", async () => {
+  it("/changing/mcp: ticket_reply changes when the test switches the connection, not by list count; /mcp can't be switched (#624)", async () => {
     const reply = (l: Awaited<ReturnType<typeof listAll>>) => l.find(t => t.name === 'ticket_reply')!
     const a = reply(await listAll(fx, `${HELPDESK}/changing/mcp`, key))
+    expect(reply(await listAll(fx, `${HELPDESK}/changing/mcp`, key))).toEqual(a)
+    expect(fx.setToolsVersion(`${HELPDESK}/changing/mcp`, 2)).toBe(true)
     const b = reply(await listAll(fx, `${HELPDESK}/changing/mcp`, key))
     expect(b.description).not.toBe(a.description)
     expect(Object.keys(b.inputSchema.properties as object)).toContain('cc')
     expect(Object.keys(a.inputSchema.properties as object)).not.toContain('cc')
+    expect(fx.setToolsVersion(`${HELPDESK}/mcp`, 2)).toBe(false)
     const c = reply(await listAll(fx, `${HELPDESK}/mcp`, key))
     const d = reply(await listAll(fx, `${HELPDESK}/mcp`, key))
     expect(d).toEqual(c)

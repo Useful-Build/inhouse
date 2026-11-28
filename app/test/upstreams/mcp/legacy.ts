@@ -18,7 +18,7 @@
 // answer), `/as/<profile>/mcp` (signed in at the login fixture, as.ts).
 
 import { type FixtureLoginServer, PROFILE_IDS } from './as'
-import { authRefusal, type Endpoint, type FixtureTool, notesTools, prmAnswer } from './modern'
+import { authRefusal, type Endpoint, type FixtureTool, notesTools, prmAnswer, prmUrlOf } from './modern'
 import { CODES, HOSTS, isJsonType, isObject, json, LEGACY_VERSION, LEGACY_VERSIONS, readJson, rpcError, sseEvent } from './wire'
 
 export const LEGACY_SERVER_INFO = { name: 'fixture-legacy', version: '1.0.0' } as const
@@ -106,6 +106,15 @@ export class LegacyMcpServer {
         const args = isObject(params.arguments) ? params.arguments : {}
         const tool = this.#tools.find(t => t.def.name === name)
         if (!tool) return this.#answer(ep, msg.id, undefined, {}, { code: CODES.invalidParams, message: `Unknown tool: ${name}` })
+        // A signed-in endpoint checks the tool's scope (2025-11-25 authorization "Scope Challenge Handling", RFC 6750
+        // section 3.1): a token without it gets 403 insufficient_scope and the call never runs (#631).
+        if (ep.auth.kind === 'signin' && tool.scope !== undefined) {
+          const bearer = /^Bearer (.+)$/.exec(req.headers.get('Authorization') ?? '')?.[1]
+          const scopes = bearer === undefined ? [] : (this.as.introspect(bearer)?.scopes ?? [])
+          if (!scopes.includes(tool.scope)) {
+            return new Response(null, { status: 403, headers: { 'WWW-Authenticate': `Bearer error="insufficient_scope", scope="${tool.scope}", resource_metadata="${prmUrlOf(this.host, ep.path)}"` } })
+          }
+        }
         this.calls.push({ endpoint: ep.path, tool: name, args: structuredClone(args), session })
         const out = await tool.run(args, { endpoint: ep.path, declaredCapabilities: {}, params })
         if (out.kind !== 'result') return this.#answer(ep, msg.id, undefined, {}, { code: CODES.internal, message: 'unexpected outcome' })

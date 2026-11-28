@@ -32,6 +32,25 @@ describe('the REST fixture', () => {
     expect(JSON.stringify([fx.rest.requests, fx.log.entries])).not.toContain(REST_KEY)
   })
 
+  it("a write's body lands on its own log entry even when another request is logged while the body is read", async () => {
+    let send!: (text: string) => void
+    const body = new ReadableStream<Uint8Array>({
+      start(c) {
+        send = text => {
+          c.enqueue(new TextEncoder().encode(text))
+          c.close()
+        }
+      },
+    })
+    const init = { method: 'POST', headers: { Authorization: `Bearer ${REST_KEY}`, 'Content-Type': 'application/json' }, body, duplex: 'half' } as RequestInit
+    // Straight to the REST fake (the router reads a JSON body before routing, so the race only exists here).
+    const write = fx.rest.fetch(new Request(`${REST_BASE}/orders/o-1043/notes`, init))
+    expect((await fx.rest.fetch(new Request(`${REST_BASE}/me`, { headers: { Authorization: `Bearer ${REST_KEY}` } }))).status).toBe(200)
+    send(JSON.stringify({ text: 'late body' }))
+    expect((await write).status).toBe(201)
+    expect(fx.rest.requests.map(r => [r.path, r.body ?? null])).toEqual([['/api/v1/orders/o-1043/notes', { text: 'late body' }], ['/api/v1/me', null]])
+  })
+
   it('a JSON-RPC POST anywhere gets 404 with no challenge: no MCP answer', async () => {
     const res = await fx.fetch(new Request(REST_BASE, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ jsonrpc: '2.0', id: 1, method: 'server/discover' }) }))
     expect(res.status).toBe(404)

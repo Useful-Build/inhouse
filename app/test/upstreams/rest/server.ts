@@ -46,12 +46,12 @@ export class FakeRestApi {
     const auth = req.headers.get('Authorization')
     const entry: RestLogEntry = { method: req.method, path: url.pathname, query: url.search, credential: auth !== null, status: 0 }
     this.requests.push(entry)
-    const res = await this.#route(req, url, auth)
+    const res = await this.#route(req, url, auth, entry)
     entry.status = res.status
     return res
   }
 
-  async #route(req: Request, url: URL, auth: string | null): Promise<Response> {
+  async #route(req: Request, url: URL, auth: string | null, entry: RestLogEntry): Promise<Response> {
     const path = url.pathname.startsWith('/api/v1/') ? url.pathname.slice('/api/v1'.length) : null
     // An address with no route (the base address detect probes, say) is 404 before any auth: no MCP answer, no challenge.
     if (path === null || !/^\/(me|orders(\/[a-z0-9-]+(\/notes)?)?)$/.test(path)) return json({ message: 'Not Found' }, 404)
@@ -71,7 +71,8 @@ export class FakeRestApi {
       if (!ORDERS.some(x => x.id === m![1])) return json({ message: 'Not Found' }, 404)
       const body = (await req.json().catch(() => null)) as { text?: unknown } | null
       if (typeof body?.text !== 'string' || body.text.length === 0) return json({ message: 'text is required' }, 422)
-      this.requests[this.requests.length - 1]!.body = { text: body.text }
+      // This request's own entry: another request may have been logged while the body was read.
+      entry.body = { text: body.text }
       this.notes.push({ order: m[1]!, text: body.text })
       return json({ order: m[1], noted: true }, 201)
     }

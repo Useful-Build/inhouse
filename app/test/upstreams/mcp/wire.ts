@@ -10,6 +10,8 @@ export const HOSTS = {
   legacy: `legacy.${FIXTURE_DOMAIN}`,
   helpdesk: `helpdesk.${FIXTURE_DOMAIN}`,
   login: `login.${FIXTURE_DOMAIN}`,
+  /** A second login origin, for a template issuer no named profile pins (as.ts `e8-foreign`). */
+  loginForeign: `login-foreign.${FIXTURE_DOMAIN}`,
   blocked: `blocked.${FIXTURE_DOMAIN}`,
   redirect: `redirect.${FIXTURE_DOMAIN}`,
   rest: `rest.${FIXTURE_DOMAIN}`,
@@ -116,6 +118,12 @@ export function b64url(bytes: Uint8Array): string {
   let bin = ''
   for (const b of bytes) bin += String.fromCharCode(b)
   return btoa(bin).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '')
+}
+
+/** The text a base64url string holds (UTF-8); throws on a malformed one. */
+export function fromB64url(text: string): string {
+  const b64 = text.replace(/-/g, '+').replace(/_/g, '/') + '='.repeat((4 - (text.length % 4)) % 4)
+  return new TextDecoder('utf-8', { fatal: true, ignoreBOM: false }).decode(Uint8Array.from(atob(b64), c => c.charCodeAt(0)))
 }
 
 export function utf8ToB64(text: string): string {

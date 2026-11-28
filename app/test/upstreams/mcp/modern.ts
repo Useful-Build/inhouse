@@ -22,26 +22,30 @@
 // - basic/authorization: a protected endpoint answers 401 with a Bearer challenge naming its resource metadata and
 //   scope, checks each token's audience (its own resource), and answers 403 `insufficient_scope` for a missing scope.
 //
-// Endpoints (MODERN_ENDPOINTS): `/mcp` and `/as/<profile>/mcp` need a sign-in at the login fixture (as.ts); `/key/mcp`
-// an API key; the rest are open. Plants: `/changing/mcp` (a tool's definition changes from the 2nd list), `/input/mcp`
+// Endpoints (MODERN_ENDPOINTS): `/mcp` and `/as/<profile>/mcp` need a sign-in at the login fixture (as.ts); `/key/mcp`,
+// `/key-bearer/mcp` and `/key-none/mcp` an API key; the rest are open. Plants: `/changing/mcp` (a tool's definition
+// changes once a test switches the connection: `setToolsVersion`, the hook's `set.fixtures.toolsVersion`), `/input/mcp`
 // (`input_required`, state only and with a question), `/stream-open/mcp` (the answer arrives, the stream stays open),
-// `/list-fails/mcp` (page 2 fails from the 2nd list), `/codemode/mcp` and `/codemode-other/mcp` (its own code mode,
+// `/list-fails/mcp` (page 2 fails once switched), `/codemode/mcp` and `/codemode-other/mcp` (its own code mode,
 // plain tools only with `?mode=tools`), `/untrusted/mcp` (an untrusted server; the request log holds what it received),
 // `/lossy/mcp` (the first answer to each tool is lost after the call ran), `/header-drift/mcp` (checks a different
 // `Mcp-Param-*` name than it lists, so every call with one gets -32020). Detect's (detect.ts): `/moved/mcp` (a
 // same-origin 308) and `/private-meta/mcp` (its resource metadata names a login server at a private address).
 
 import { type FixtureLoginServer, authorizationServerOf, PROFILE_IDS, PROFILES, type ProfileId, type ProfileSpec } from './as'
-import { CODES, decodeHeaderValue, HOSTS, hmac, isJsonType, isObject, json, MODERN_VERSION, META, readJson, rpcError, rpcResult, sseEvent } from './wire'
+import { b64url, CODES, decodeHeaderValue, fromB64url, HOSTS, hmac, isJsonType, isObject, json, MODERN_VERSION, META, readJson, rpcError, rpcResult, sseEvent } from './wire'
 
 export const MODERN_SERVER_INFO = { name: 'fixture-modern', version: '1.0.0' } as const
 /** TEST-ONLY invented API key for `/key/mcp`. */
 export const MODERN_KEY = 'test-only-modern-key-3d1f'
+/** TEST-ONLY invented API key for `/key-bearer/mcp` (sent as `Authorization: Bearer <key>`). */
+export const MODERN_BEARER_KEY = 'test-only-modern-bearer-key-7e40'
 export const LIST_PAGE_SIZE = 2
 export const LIST_TTL_MS = 60_000
 
 export type Plant = 'changing' | 'input' | 'stream-open' | 'list-fails' | 'codemode' | 'untrusted' | 'lossy' | 'header-drift'
-export type Auth = { kind: 'none' } | { kind: 'signin'; profile: ProfileId } | { kind: 'key'; key: string }
+/** A key goes in `X-Api-Key` (default) or `Authorization: Bearer`; a refusal names an `ApiKey` scheme (default), a bare `Bearer`, or nothing. */
+export type Auth = { kind: 'none' } | { kind: 'signin'; profile: ProfileId } | { kind: 'key'; key: string; placement?: 'x-api-key' | 'bearer'; challenge?: 'apikey' | 'bearer' | 'none' }
 export type Endpoint = { path: string; auth: Auth; plant?: Plant; redirectTo?: string; privateMetadata?: boolean }
 
 /** Every endpoint on the modern host, by path. */
@@ -50,6 +54,10 @@ const MODERN_LIST: Endpoint[] = [
   ...PROFILE_IDS.map((p): Endpoint => ({ path: `/as/${p}/mcp`, auth: { kind: 'signin', profile: p } })),
   { path: '/open/mcp', auth: { kind: 'none' } },
   { path: '/key/mcp', auth: { kind: 'key', key: MODERN_KEY } },
+  // Key servers detect can't tell from the scheme alone (#625): a bare Bearer challenge with no resource metadata (the
+  // key in `Authorization: Bearer`), and a refusal with no challenge at all.
+  { path: '/key-bearer/mcp', auth: { kind: 'key', key: MODERN_BEARER_KEY, placement: 'bearer', challenge: 'bearer' } },
+  { path: '/key-none/mcp', auth: { kind: 'key', key: MODERN_KEY, challenge: 'none' } },
   ...(['changing', 'input', 'stream-open', 'list-fails', 'codemode', 'untrusted', 'lossy', 'header-drift'] as const).map((plant): Endpoint => ({ path: `/${plant}/mcp`, auth: { kind: 'none' }, plant })),
   { path: '/codemode-other/mcp', auth: { kind: 'none' }, plant: 'codemode' },
   // Detect's addresses (detect.ts): a same-origin redirect, and a protected resource whose metadata names a private address.
@@ -136,7 +144,7 @@ export function notesTools(writes: { endpoint: string; tool: string; args: Recor
   ]
 }
 
-/** `/changing/mcp` from its 2nd list: `notes_read` has a new description and a new parameter. */
+/** `/changing/mcp` once switched: `notes_read` has a new description and a new parameter. */
 function changed(tool: FixtureTool): FixtureTool {
   return {
     ...tool,
@@ -150,16 +158,20 @@ function changed(tool: FixtureTool): FixtureTool {
 
 /** The fixture's `requestState`: HMAC-protected, bound to the tool, its arguments and an expiry (MRTR requirements 4, 5). */
 export async function sealState(tool: string, args: Record<string, unknown>, nowMs: number): Promise<string> {
-  const body = btoa(JSON.stringify({ t: tool, a: JSON.stringify(args), e: nowMs + 5 * 60_000 }))
+  // UTF-8, then base64url: any argument text seals (#630).
+  const body = b64url(new TextEncoder().encode(JSON.stringify({ t: tool, a: JSON.stringify(args), e: nowMs + 5 * 60_000 })))
   return `${body}.${await hmac(body)}`
 }
 
 export async function openState(state: unknown, tool: string, args: Record<string, unknown>, nowMs: number): Promise<boolean> {
   if (typeof state !== 'string') return false
-  const [body, mac] = state.split('.')
+  // Exactly `body.mac`: a trailing `.suffix` is tampering, not a valid state (#630).
+  const parts = state.split('.')
+  if (parts.length !== 2) return false
+  const [body, mac] = parts as [string, string]
   if (!body || !mac || (await hmac(body)) !== mac) return false
   try {
-    const p = JSON.parse(atob(body)) as { t: string; a: string; e: number }
+    const p = JSON.parse(fromB64url(body)) as { t: string; a: string; e: number }
     return p.t === tool && p.a === JSON.stringify(args) && nowMs < p.e
   } catch {
     return false
@@ -269,10 +281,12 @@ const challenge = (host: string, ep: Endpoint, extra = ''): string => `Bearer re
 export function authRefusal(req: Request, ep: Endpoint, host: string, as: FixtureLoginServer, revokedKeys?: Set<string>): Response | null {
   if (ep.auth.kind === 'none') return null
   if (ep.auth.kind === 'key') {
-    const key = req.headers.get('X-Api-Key')
+    const key = ep.auth.placement === 'bearer' ? (/^Bearer (.+)$/.exec(req.headers.get('Authorization') ?? '')?.[1] ?? null) : req.headers.get('X-Api-Key')
     if (key !== null && key === ep.auth.key && !revokedKeys?.has(key)) return null
-    // A key server offers no Bearer challenge and no resource metadata (detect's `key`).
-    return json({ error: 'invalid_api_key' }, 401, { 'WWW-Authenticate': 'ApiKey realm="fixture", header="X-Api-Key"' })
+    // A key server has no resource metadata at either well-known address (detect's `key`), whatever its challenge says.
+    const challenge = ep.auth.challenge ?? 'apikey'
+    const headers: Record<string, string> = challenge === 'apikey' ? { 'WWW-Authenticate': 'ApiKey realm="fixture", header="X-Api-Key"' } : challenge === 'bearer' ? { 'WWW-Authenticate': 'Bearer realm="fixture"' } : {}
+    return json({ error: 'invalid_api_key' }, 401, headers)
   }
   const bearer = /^Bearer (.+)$/.exec(req.headers.get('Authorization') ?? '')?.[1]
   if (bearer === undefined) return new Response(null, { status: 401, headers: { 'WWW-Authenticate': challenge(host, ep) } })
@@ -295,7 +309,9 @@ export type ModernOptions = {
   serverInfo: { name: string; version: string }
   endpoints: Record<string, Endpoint>
   /** The tools an endpoint lists, before plants. */
-  tools: (endpoint: Endpoint, server: ModernMcpServer) => FixtureTool[]
+  tools: (endpoint: Endpoint, server: ModernMcpServer, url: URL) => FixtureTool[]
+  /** Endpoints with a second state a test switches on (`setToolsVersion`); default: the `changing` and `list-fails` plants. */
+  versioned?: (endpoint: Endpoint) => boolean
   as: FixtureLoginServer
   now?: () => number
   /** Keys revoked so far (shared with the other fixtures, so a test revokes by value). */
@@ -311,7 +327,8 @@ export class ModernMcpServer {
   violations: string[] = []
   /** Open streams the client cancelled (`/stream-open/mcp`). */
   streamsCancelled = 0
-  #lists = new Map<string, number>()
+  /** Connections switched to their second state, by `host + path + query` (so each connection has its own). */
+  #versions = new Set<string>()
   #lost = new Set<string>()
   #mrtrIds = new Map<string, unknown>()
 
@@ -325,14 +342,45 @@ export class ModernMcpServer {
     this.writes = []
     this.violations = []
     this.streamsCancelled = 0
-    this.#lists.clear()
+    this.#versions.clear()
     this.#lost.clear()
     this.#mrtrIds.clear()
   }
 
-  /** How many first-page lists an endpoint has answered. */
-  listCount(path: string): number {
-    return this.#lists.get(path) ?? 0
+  /**
+   * Which state a connection's plant is in (#624): 1 until a test switches it, never by how often it was listed (detect
+   * and the connection check list too, before any snapshot). A connection is the endpoint address with its query, so
+   * `/changing/mcp?c=a` and `/changing/mcp?c=b` are switched apart.
+   */
+  toolsVersion(url: URL): 1 | 2 {
+    return this.#versions.has(`${url.host}${url.pathname}${url.search}`) ? 2 : 1
+  }
+
+  /** A connection's key (`host + path + query`) when its endpoint has a second state; null otherwise. */
+  versionKey(address: string): string | null {
+    let url: URL
+    try {
+      url = new URL(address)
+    } catch {
+      return null
+    }
+    const ep = url.host === this.opts.host ? this.opts.endpoints[url.pathname] : undefined
+    const versioned = this.opts.versioned ?? (e => e.plant === 'changing' || e.plant === 'list-fails')
+    return ep && versioned(ep) ? `${url.host}${url.pathname}${url.search}` : null
+  }
+
+  /** Switches one connection's plant; false (nothing changed) for an address with no second state. */
+  setToolsVersion(address: string, version: 1 | 2): boolean {
+    const key = this.versionKey(address)
+    if (key === null) return false
+    if (version === 2) this.#versions.add(key)
+    else this.#versions.delete(key)
+    return true
+  }
+
+  /** The connections switched to state 2. */
+  get switched(): string[] {
+    return [...this.#versions].sort()
   }
 
   get host(): string {
@@ -341,10 +389,10 @@ export class ModernMcpServer {
 
   /** The tools an endpoint lists right now (plants applied). */
   toolsFor(ep: Endpoint, url: URL): FixtureTool[] {
-    const base = this.opts.tools(ep, this)
+    const base = this.opts.tools(ep, this, url)
     switch (ep.plant) {
       case 'changing':
-        return (this.#lists.get(ep.path) ?? 0) >= 2 ? base.map(t => (t.def.name === 'notes_read' ? changed(t) : t)) : base
+        return this.toolsVersion(url) === 2 ? base.map(t => (t.def.name === 'notes_read' ? changed(t) : t)) : base
       case 'input':
         return [...base, ...inputTools(this.now)]
       case 'codemode':
@@ -484,9 +532,9 @@ export class ModernMcpServer {
       const m = typeof cursor === 'string' ? /^page-(\d+)$/.exec(cursor) : null
       if (!m) return rpcError(200, id, CODES.invalidParams, 'Invalid cursor')
       offset = Number(m[1])
-    } else this.#lists.set(ep.path, (this.#lists.get(ep.path) ?? 0) + 1)
-    // `/list-fails/mcp`: the first full list works; from the 2nd on, page 2 fails (a refresh that can't complete).
-    if (ep.plant === 'list-fails' && offset > 0 && (this.#lists.get(ep.path) ?? 0) >= 2) return new Response('upstream unavailable', { status: 503, headers: { 'Content-Type': 'text/plain' } })
+    }
+    // `/list-fails/mcp`: lists work until a test switches the connection; then page 2 fails (a refresh that can't complete).
+    if (ep.plant === 'list-fails' && offset > 0 && this.toolsVersion(url) === 2) return new Response('upstream unavailable', { status: 503, headers: { 'Content-Type': 'text/plain' } })
     const tools = this.toolsFor(ep, url)
     const page = tools.slice(offset, offset + LIST_PAGE_SIZE).map(t => t.def)
     const next = offset + LIST_PAGE_SIZE < tools.length ? { nextCursor: `page-${offset + LIST_PAGE_SIZE}` } : {}

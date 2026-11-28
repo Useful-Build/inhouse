@@ -73,6 +73,8 @@ export type ProfileSpec = {
   refusesResource?: boolean
   /** The issuer's path; defaults to the profile id. */
   issuerPath?: string
+  /** The login host; defaults to `login.mcp-fixtures.example.com`. */
+  host?: string
 }
 
 const base: ProfileSpec = {
@@ -121,8 +123,8 @@ export const PROFILES = {
   e8: { ...base, template: true, issuerPath: 'e8/common/v2.0', meta: { oauth: 'absent', oidcInsert: 'absent', oidcAppend: 'serve' } },
   /** E8's negative control: the sign-in comes back from another tenant. */
   'e8-other': { ...base, template: true, issuerPath: 'e8-other/common/v2.0', issSent: 'other-tenant', meta: { oauth: 'absent', oidcInsert: 'absent', oidcAppend: 'serve' } },
-  /** E8's other negative control: a template from a server no named profile pins. */
-  'e8-foreign': { ...base, template: true, issuerPath: 'e8-foreign/common/v2.0', meta: { oauth: 'absent', oidcInsert: 'absent', oidcAppend: 'serve' } },
+  /** E8's other negative control: a template from a server (another origin) no named profile pins. */
+  'e8-foreign': { ...base, template: true, host: HOSTS.loginForeign, issuerPath: 'e8-foreign/common/v2.0', meta: { oauth: 'absent', oidcInsert: 'absent', oidcAppend: 'serve' } },
   e9: { ...base, refusesResource: true },
   /** E10 (Apple): the RFC 8414 address redirects (to another issuer's document); OIDC insertion serves the real one. */
   'e10-redirect': { ...base, meta: { oauth: 'redirect', oidcInsert: 'serve', oidcAppend: 'absent' } },
@@ -132,8 +134,8 @@ export const PROFILES = {
   e11: { ...base, issAdvertised: false, issSent: 'trailing-slash' },
   /** E11's control: sent, not advertised, equal (row 3 of the table: compare, it matches). */
   'e11-match': { ...base, issAdvertised: false, issSent: 'match' },
-  /** E12 (HubSpot): the client secret only from the body. */
-  e12: { ...base, authMethods: ['client_secret_post', 'none'] },
+  /** E12 (HubSpot): the client secret only from the body. No ID documents and no public clients, so a client must send it. */
+  e12: { ...base, cimd: false, authMethods: ['client_secret_post'] },
 } satisfies Record<string, ProfileSpec>
 
 export type ProfileId = keyof typeof PROFILES
@@ -157,7 +159,7 @@ export const SIGNIN_VECTORS: readonly { rows: string[]; profile: ProfileId; plan
   { rows: ['E7', 'F2'], profile: 'e7-rate-limited', plant: 'renewal answered 429 slow_down with Retry-After', reaction: 'temporary: retry later, keep the old credential' },
   { rows: ['E8', 'F3'], profile: 'e8', plant: 'issuer published as .../{tenantid}/v2.0', reaction: "match the connection's tenant against the template, exactly" },
   { rows: ['E8'], profile: 'e8-other', plant: 'the callback comes back from another tenant', reaction: 'refuse' },
-  { rows: ['E8'], profile: 'e8-foreign', plant: 'a template from a server no named profile pins', reaction: 'refuse' },
+  { rows: ['E8'], profile: 'e8-foreign', plant: 'a template from another login origin no named profile pins', reaction: 'refuse' },
   { rows: ['E9'], profile: 'e9', plant: 'invalid_target whenever resource is sent', reaction: 'leave resource out only for the named profile' },
   { rows: ['E10'], profile: 'e10-redirect', plant: 'RFC 8414 address redirects to another issuer\'s document', reaction: 'never follow; try the next address in the spec order' },
   { rows: ['E10'], profile: 'e10-401', plant: 'RFC 8414 address answers 401', reaction: 'try the next address in the spec order' },
@@ -171,11 +173,18 @@ type CodeRecord = { profile: string; client: Client; redirectUri: string; challe
 export type TokenRecord = { profile: string; clientId: string; user: string; tenant: string; scopes: string[]; resource: string | null; expiresAtMs: number; revoked: boolean; refresh: string | null }
 type RefreshRecord = { profile: string; client: Client; access: string; used: boolean; scopes: string[]; resource: string | null; tenant: string }
 
+const originOf = (p: ProfileSpec): string => `https://${p.host ?? HOSTS.login}`
+
 /** The issuer a profile's metadata names (the template itself for E8's profiles). */
 export function issuerOf(profile: ProfileId): string {
   const p: ProfileSpec = PROFILES[profile]
-  if (p.template) return `${LOGIN}/${p.issuerPath!.split('/')[0]}/{tenantid}/v2.0`
-  return `${LOGIN}/${p.issuerPath ?? profile}`
+  if (p.template) return `${originOf(p)}/${p.issuerPath!.split('/')[0]}/{tenantid}/v2.0`
+  return `${originOf(p)}/${p.issuerPath ?? profile}`
+}
+
+/** Where a profile's authorize, token, register and revoke endpoints live (`<base>/authorize` and so on). */
+export function endpointBaseOf(profile: ProfileId): string {
+  return `${originOf(PROFILES[profile])}/${profile}`
 }
 
 /** The issuer a client records for a sign-in at this profile (E8: the template with the connection's tenant). */
@@ -186,7 +195,7 @@ export function recordedIssuerOf(profile: ProfileId, tenant = E8_TENANT): string
 /** What a protected resource's metadata names in `authorization_servers` (E8: the pinned discovery base). */
 export function authorizationServerOf(profile: ProfileId): string {
   const p: ProfileSpec = PROFILES[profile]
-  return `${LOGIN}/${p.issuerPath ?? profile}`
+  return `${originOf(p)}/${p.issuerPath ?? profile}`
 }
 
 export class FixtureLoginServer {
@@ -254,15 +263,22 @@ export class FixtureLoginServer {
     // Discovery (authorization-server-discovery: RFC 8414 insertion, OIDC insertion, OIDC appending).
     if (req.method === 'GET') {
       let m = /^\/\.well-known\/oauth-authorization-server\/(.+)$/.exec(path)
-      if (m) return this.#meta(m[1]!, 'oauth')
+      if (m) return this.#meta(url.host, m[1]!, 'oauth')
       m = /^\/\.well-known\/openid-configuration\/(.+)$/.exec(path)
-      if (m) return this.#meta(m[1]!, 'oidcInsert')
+      if (m) return this.#meta(url.host, m[1]!, 'oidcInsert')
       m = /^\/(.+)\/\.well-known\/openid-configuration$/.exec(path)
-      if (m) return this.#meta(m[1]!, 'oidcAppend')
+      if (m) return this.#meta(url.host, m[1]!, 'oidcAppend')
+    }
+    if (req.method === 'GET') {
+      // OpenID Connect Discovery's `jwks_uri`: this fixture signs no ID tokens, so the set is empty.
+      const jwks = /^\/([a-z0-9-]+)\/jwks\.json$/.exec(path)
+      if (jwks && (profileOf(jwks[1]!)?.host ?? HOSTS.login) === url.host) return json({ keys: [] })
     }
     const m = /^\/([a-z0-9-]+)\/(authorize|token|register|revoke)$/.exec(path)
     const id = m?.[1]
-    const profile = id === undefined ? undefined : profileOf(id)
+    const found = id === undefined ? undefined : profileOf(id)
+    // A profile answers only on its own login host.
+    const profile = found && (found.host ?? HOSTS.login) === url.host ? found : undefined
     if (!m || !profile || id === undefined) return json({ error: 'not_found' }, 404)
     if (m[2] === 'authorize' && req.method === 'GET') return this.#authorize(id as ProfileId, profile, url)
     if (m[2] === 'token' && req.method === 'POST') return this.#token(id as ProfileId, profile, req)
@@ -273,8 +289,11 @@ export class FixtureLoginServer {
 
   // ---------- discovery ----------
 
-  #meta(issuerPath: string, where: keyof ProfileSpec['meta']): Response {
-    const id = PROFILE_IDS.find(p => (PROFILES[p] as ProfileSpec).issuerPath === issuerPath || ((PROFILES[p] as ProfileSpec).issuerPath === undefined && p === issuerPath))
+  #meta(host: string, issuerPath: string, where: keyof ProfileSpec['meta']): Response {
+    const id = PROFILE_IDS.find(p => {
+      const spec: ProfileSpec = PROFILES[p]
+      return (spec.host ?? HOSTS.login) === host && (spec.issuerPath === issuerPath || (spec.issuerPath === undefined && p === issuerPath))
+    })
     if (!id) return json({ error: 'not_found' }, 404)
     const p: ProfileSpec = PROFILES[id]
     const answer = p.meta[where]
@@ -282,7 +301,7 @@ export class FixtureLoginServer {
     if (answer === 'unauthorized') return json({ error: 'unauthorized' }, 401)
     // E10 (Apple): a redirect, to another issuer's document. A client that follows it gets `std`'s issuer.
     if (answer === 'redirect') return new Response(null, { status: 302, headers: { Location: `${LOGIN}/.well-known/oauth-authorization-server/std` } })
-    const ep = `${LOGIN}/${id.split('/')[0]}`
+    const ep = endpointBaseOf(id)
     const doc: Record<string, unknown> = {
       issuer: issuerOf(id),
       authorization_endpoint: `${ep}/authorize`,
@@ -297,6 +316,13 @@ export class FixtureLoginServer {
     if (p.registration !== 'none') doc.registration_endpoint = `${ep}/register`
     if (p.cimd) doc.client_id_metadata_document_supported = true
     if (p.issAdvertised) doc.authorization_response_iss_parameter_supported = true
+    // OpenID Connect Discovery 1.0 section 3: an OpenID Provider's metadata also needs these (REQUIRED), and the official
+    // client 2.4.0 parses every openid-configuration answer with a schema that requires them.
+    if (where !== 'oauth') {
+      doc.jwks_uri = `${ep}/jwks.json`
+      doc.subject_types_supported = ['public']
+      doc.id_token_signing_alg_values_supported = ['RS256']
+    }
     return json(doc)
   }
 
@@ -430,8 +456,20 @@ export class FixtureLoginServer {
         }
       })()
       const i = decoded.indexOf(':')
-      clientId = decodeURIComponent(decoded.slice(0, i))
-      secret = decodeURIComponent(decoded.slice(i + 1))
+      const parts = (() => {
+        try {
+          return i < 0 ? null : [decodeURIComponent(decoded.slice(0, i)), decodeURIComponent(decoded.slice(i + 1))]
+        } catch {
+          return null
+        }
+      })()
+      // A malformed credential (no colon, a bad percent escape) is a failed client authentication, never a throw.
+      if (parts === null) {
+        log('invalid_client')
+        return this.#tokenError(p, 401, 'invalid_client')
+      }
+      clientId = parts[0]!
+      secret = parts[1]!
     } else authMethod = secret !== null ? 'client_secret_post' : 'none'
     if (!p.authMethods.includes(authMethod)) {
       log('invalid_client')

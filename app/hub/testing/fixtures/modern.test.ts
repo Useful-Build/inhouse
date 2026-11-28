@@ -4,7 +4,7 @@ import { fc, test } from '@fast-check/vitest'
 import { beforeEach, describe, expect, it } from 'vitest'
 import { encodeHeaderValue, MODERN_VERSION } from '../../../test/upstreams/mcp/wire'
 import type { McpFixtures } from '../../../test/upstreams/mcp/index'
-import { MODERN_KEY } from '../../../test/upstreams/mcp/modern'
+import { MODERN_BEARER_KEY, MODERN_KEY, openState, sealState } from '../../../test/upstreams/mcp/modern'
 import { legacyInitialize } from '../../../test/upstreams/mcp/legacy'
 import { fixtures, listAll, modern, MODERN, rpcOf, signIn } from './kit'
 
@@ -119,6 +119,21 @@ describe('auth (basic/authorization 2026-07-28)', () => {
     expect(fx.modern.writes).toEqual([])
   })
 
+  it('/key-bearer/mcp takes the key as Authorization: Bearer and refuses with a bare Bearer challenge; /key-none/mcp with none; neither has resource metadata (#625)', async () => {
+    const bare = await modern(fx, `${MODERN}/key-bearer/mcp`, 'tools/list')
+    expect(bare.status).toBe(401)
+    expect(bare.headers.get('WWW-Authenticate')).toBe('Bearer realm="fixture"')
+    expect((await modern(fx, `${MODERN}/key-bearer/mcp`, 'tools/list', {}, { headers: { 'X-Api-Key': MODERN_BEARER_KEY } })).status).toBe(401)
+    expect((await modern(fx, `${MODERN}/key-bearer/mcp`, 'tools/list', {}, { headers: { Authorization: `Bearer ${MODERN_BEARER_KEY}` } })).status).toBe(200)
+    const none = await modern(fx, `${MODERN}/key-none/mcp`, 'tools/list')
+    expect(none.status).toBe(401)
+    expect(none.headers.get('WWW-Authenticate')).toBeNull()
+    expect((await modern(fx, `${MODERN}/key-none/mcp`, 'tools/list', {}, { headers: { 'X-Api-Key': MODERN_KEY } })).status).toBe(200)
+    for (const p of ['/key-bearer/mcp', '/key-none/mcp']) expect((await fx.fetch(new Request(`${MODERN}/.well-known/oauth-protected-resource${p}`))).status).toBe(404)
+    fx.revokeKey('modernBearer')
+    expect((await modern(fx, `${MODERN}/key-bearer/mcp`, 'tools/list', {}, { headers: { Authorization: `Bearer ${MODERN_BEARER_KEY}` } })).status).toBe(401)
+  })
+
   it('a key endpoint refuses without a Bearer challenge and has no resource metadata; a revoked key is refused', async () => {
     const res = await modern(fx, `${MODERN}/key/mcp`, 'tools/list')
     expect(res.status).toBe(401)
@@ -131,15 +146,25 @@ describe('auth (basic/authorization 2026-07-28)', () => {
 })
 
 describe('plants (each by path)', () => {
-  it("/changing/mcp: notes_read's definition changes from the 2nd list; the other tools don't (server/tools: lists MAY change)", async () => {
-    const first = await listAll(fx, `${MODERN}/changing/mcp`)
-    const second = await listAll(fx, `${MODERN}/changing/mcp`)
+  it("/changing/mcp: notes_read changes when the test switches that connection, never by how often it's listed (server/tools: lists MAY change; #624)", async () => {
+    const url = `${MODERN}/changing/mcp?c=one`
+    const first = await listAll(fx, url)
+    // Detect, the check and a snapshot list it as often as they like: still the first state.
+    expect(await listAll(fx, url)).toEqual(first)
+    expect(await listAll(fx, url)).toEqual(first)
+    expect(fx.setToolsVersion(url, 2)).toBe(true)
+    const second = await listAll(fx, url)
     const read = (l: typeof first) => l.find(t => t.name === 'notes_read')!
     expect(read(second).description).not.toBe(read(first).description)
     expect(Object.keys((read(second).inputSchema.properties as object))).toEqual(['id', 'include_deleted'])
     expect(second.filter(t => t.name !== 'notes_read')).toEqual(first.filter(t => t.name !== 'notes_read'))
-    // Control: /open/mcp doesn't change.
-    expect(await listAll(fx, `${MODERN}/open/mcp`)).toEqual(await listAll(fx, `${MODERN}/open/mcp`))
+    // Per connection: another query on the same endpoint is still in its first state, and switching back restores it.
+    expect(await listAll(fx, `${MODERN}/changing/mcp?c=two`)).toEqual(first)
+    expect(fx.setToolsVersion(url, 1)).toBe(true)
+    expect(await listAll(fx, url)).toEqual(first)
+    // An address with no second state is refused, and changes nothing.
+    expect(fx.setToolsVersion(`${MODERN}/open/mcp`, 2)).toBe(false)
+    expect(fx.state().switched).toEqual([])
   })
 
   it('/input/mcp ask_state: input_required with only requestState; the retry that echoes it completes (mrtr requirements 3, 6)', async () => {
@@ -153,10 +178,26 @@ describe('plants (each by path)', () => {
     // Tampered state is refused (requirement 4: requestState is attacker-controlled).
     const bad = await rpcOf(await modern(fx, `${MODERN}/input/mcp`, 'tools/call', { name: 'ask_state', arguments: { topic: 'stock' }, requestState: `${state}x` }, { id: 3 }))
     expect(bad.error!.code).toBe(-32602)
+    // A trailing `.suffix` is tampering too (#630).
+    const suffixed = await rpcOf(await modern(fx, `${MODERN}/input/mcp`, 'tools/call', { name: 'ask_state', arguments: { topic: 'stock' }, requestState: `${state}.extra` }, { id: 4 }))
+    expect(suffixed.error!.code).toBe(-32602)
     // A retry that reuses the first id is reported (client requirement 3).
     expect(fx.modern.violations).toEqual([])
     await modern(fx, `${MODERN}/input/mcp`, 'tools/call', { name: 'ask_state', arguments: { topic: 'stock' }, requestState: state }, { id: 1 })
     expect(fx.modern.violations).toEqual(['mrtr retry reused id 1 on ask_state'])
+  })
+
+  it('requestState seals any argument text (UTF-8), and only the exact two-part state opens (mrtr requirement 4; #630)', async () => {
+    const args = { topic: 'Zürich 世界 🚚' }
+    const first = await rpcOf(await call(`${MODERN}/input/mcp`, 'ask_state', args, { id: 11 }))
+    const state = first.result!.requestState as string
+    expect(state.split('.')).toHaveLength(2)
+    const done = await rpcOf(await modern(fx, `${MODERN}/input/mcp`, 'tools/call', { name: 'ask_state', arguments: args, requestState: state }, { id: 12 }))
+    expect(done.result).toMatchObject({ resultType: 'complete' })
+    const sealed = await sealState('t', args, 0)
+    expect(await openState(sealed, 't', args, 1)).toBe(true)
+    for (const bad of [`${sealed}.x`, `${sealed}.`, `.${sealed}`, sealed.replace('.', '')]) expect(await openState(bad, 't', args, 1), bad).toBe(false)
+    expect(await openState(sealed, 't', { topic: 'other' }, 1)).toBe(false)
   })
 
   it('/input/mcp ask_user: asks only a client that declared form elicitation (requirement 7), else -32021 (basic/index)', async () => {
@@ -191,10 +232,14 @@ describe('plants (each by path)', () => {
     expect((await modern(fx, `${MODERN}/open/mcp`, 'tools/list')).headers.get('Content-Type')).toBe('application/json')
   })
 
-  it('/list-fails/mcp: the first full list works; from the 2nd, page 2 fails', async () => {
-    expect(await listAll(fx, `${MODERN}/list-fails/mcp`)).toHaveLength(4)
-    expect((await modern(fx, `${MODERN}/list-fails/mcp`, 'tools/list')).status).toBe(200)
-    expect((await modern(fx, `${MODERN}/list-fails/mcp`, 'tools/list', { cursor: 'page-2' })).status).toBe(503)
+  it('/list-fails/mcp: lists work however often they run; once the test switches the connection, page 2 fails (#624)', async () => {
+    const url = `${MODERN}/list-fails/mcp`
+    for (let i = 0; i < 3; i++) expect(await listAll(fx, url)).toHaveLength(4)
+    fx.setToolsVersion(url, 2)
+    expect((await modern(fx, url, 'tools/list')).status).toBe(200)
+    expect((await modern(fx, url, 'tools/list', { cursor: 'page-2' })).status).toBe(503)
+    // Control: another connection to the same endpoint still lists in full.
+    expect(await listAll(fx, `${url}?c=other`)).toHaveLength(4)
   })
 
   it('/codemode/mcp lists only its own code tool unless asked for plain tools (?mode=tools); /codemode-other/mcp likewise', async () => {

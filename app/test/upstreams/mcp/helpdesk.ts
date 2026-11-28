@@ -8,7 +8,8 @@
 //   request), but only of a client that declared form elicitation (server requirement 7); a client that declared none
 //   gets `MissingRequiredClientCapability` (-32021, basic/index "_meta"). `macro_apply` first answers `input_required`
 //   with only an HMAC-protected `requestState` (requirements 4 to 6); the retry that echoes it completes.
-// - server/tools "lists MAY change over time": on `/changing/mcp`, from the 2nd list on, `ticket_reply` has another
+// - server/tools "lists MAY change over time": on `/changing/mcp`, once a test switches the connection
+//   (`setToolsVersion`, the hook's `set.fixtures.toolsVersion`), `ticket_reply` has another
 //   description (one that gives orders) and a new `cc` parameter.
 // - Writes land in `writes` exactly as received, so an eval can see what reached the destination.
 
@@ -45,8 +46,8 @@ export const MACROS = [
 
 const declaresForm = (caps: Record<string, unknown>): boolean => isObject(caps.elicitation) && (caps.elicitation.form !== undefined || caps.elicitation.url === undefined)
 
-export function helpdeskTools(ep: Endpoint, server: ModernMcpServer): FixtureTool[] {
-  const changed = ep.path === '/changing/mcp' && server.listCount(ep.path) >= 2
+export function helpdeskTools(ep: Endpoint, server: ModernMcpServer, url: URL): FixtureTool[] {
+  const changed = ep.path === '/changing/mcp' && server.toolsVersion(url) === 2
   const record = (tool: string, args: Record<string, unknown>) => server.writes.push({ endpoint: ep.path, tool, args: structuredClone(args) })
   const replySchema = {
     type: 'object',
@@ -131,5 +132,5 @@ export function helpdeskTools(ep: Endpoint, server: ModernMcpServer): FixtureToo
 }
 
 export function createHelpdeskServer(as: FixtureLoginServer, revokedKeys: Set<string>): ModernMcpServer {
-  return new ModernMcpServer({ host: HOSTS.helpdesk, serverInfo: HELPDESK_SERVER_INFO, endpoints: HELPDESK_ENDPOINTS, tools: helpdeskTools, as, revokedKeys })
+  return new ModernMcpServer({ host: HOSTS.helpdesk, serverInfo: HELPDESK_SERVER_INFO, endpoints: HELPDESK_ENDPOINTS, tools: helpdeskTools, versioned: ep => ep.path === '/changing/mcp', as, revokedKeys })
 }

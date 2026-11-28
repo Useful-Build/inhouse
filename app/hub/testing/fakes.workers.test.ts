@@ -114,6 +114,8 @@ describe('state (failure 2)', () => {
       connect: { bodies: [] },
       // Stage 1 M4-F: the M4 fixtures, untouched by this test (a fresh fixture's state after the reset).
       fixtures: {
+        clockMs: Date.UTC(2026, 10, 28, 9, 0, 0),
+        switched: [],
         log: [],
         modern: { calls: [], writes: [], violations: [], streamsCancelled: 0 },
         legacy: { calls: [], writes: [], sessions: 0 },

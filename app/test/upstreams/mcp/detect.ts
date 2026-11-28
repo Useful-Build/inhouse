@@ -29,6 +29,16 @@ export const DETECT_ADDRESSES: Record<DetectOutcome, string> = {
   not_mcp: `https://${HOSTS.rest}/api/v1`,
 }
 
+/**
+ * Key servers detect can't tell from the scheme alone (#625): N37 splits `signin` from `key` on the metadata. One
+ * answers a bare `Bearer` challenge with no resource metadata (its key goes in `Authorization: Bearer`), one answers
+ * no challenge at all. Both are `key`.
+ */
+export const DETECT_KEY_VARIANTS = {
+  bearerChallenge: `https://${HOSTS.modern}/key-bearer/mcp`,
+  noChallenge: `https://${HOSTS.modern}/key-none/mcp`,
+} as const
+
 /** The hostile addresses, and what detect must make of each. */
 export const DETECT_HOSTILE = {
   /** 308 to `/open/mcp` on the same origin: `blocked`, never followed. */

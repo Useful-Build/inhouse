@@ -85,9 +85,17 @@ const ShopifyWriteSwitchesSchema = z.strictObject({
   }).optional(),
 })
 
-/** Stage 1 M4-F: revokes one of M4's fixture keys (the modern server's, the helpdesk's or Path C's REST API's). */
+/**
+ * Stage 1 M4-F: M4's fixtures. `revokeKey` revokes one fixture key (the modern server's two, the helpdesk's or Path C's
+ * REST API's). `toolsVersion` switches one connection's plant (`/changing/mcp`, `/list-fails/mcp`, by its address with
+ * any query) to its second state or back: a test, not a list count, decides when a tool changes (#624). `revokeLogins`
+ * ends every login at the fixture login server. `clockMs` moves the fixtures' clock (codes, tokens, requestState).
+ */
 const FixturesSwitchesSchema = z.strictObject({
   revokeKey: z.enum(Object.keys(FIXTURE_KEYS) as [FixtureKeyName, ...FixtureKeyName[]]).optional(),
+  toolsVersion: z.strictObject({ address: z.string().url().max(500), version: z.union([z.literal(1), z.literal(2)]) }).optional(),
+  revokeLogins: z.literal(true).optional(),
+  clockMs: z.number().int().min(0).max(8_640_000_000_000_000).optional(),
 })
 
 /** The hub ops (the product's hook forwards these as they are). */
@@ -257,8 +265,10 @@ export function resetFakes(kv?: Pick<SyncKvStorage, 'delete'>): void {
 }
 
 function applySet(op: Extract<HubFakesOp, { op: 'set' }>): HubResult<{ set: true }> {
-  // Check every channel id before changing anything.
+  // Check every channel id, and the plant address, before changing anything.
   for (const c of op.web?.channels ?? []) if (!slackWeb.channels.has(c.id)) return err('invalid_args', 'web.channels.id')
+  const tv = op.fixtures?.toolsVersion
+  if (tv && !mcpFixtures.hasToolsVersion(tv.address)) return err('invalid_args', 'fixtures.toolsVersion.address')
   if (op.mcp) {
     const { profile, staleSessions, ...switches } = op.mcp
     const targets = profile === 'slack' ? [slackMcp] : profile === 'notes' ? [notesMcp] : [slackMcp, notesMcp]
@@ -276,6 +286,9 @@ function applySet(op: Extract<HubFakesOp, { op: 'set' }>): HubResult<{ set: true
     Object.assign(shopifyWrite.faults, op.shopifyWrite.faults)
   }
   if (op.fixtures?.revokeKey) mcpFixtures.revokeKey(op.fixtures.revokeKey)
+  if (tv) mcpFixtures.setToolsVersion(tv.address, tv.version)
+  if (op.fixtures?.revokeLogins) mcpFixtures.revokeLogins()
+  if (op.fixtures?.clockMs !== undefined) mcpFixtures.setClock(op.fixtures.clockMs)
   return { ok: true, value: { set: true } }
 }
 
