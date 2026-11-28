@@ -5,7 +5,11 @@
 // refuses a `run` scope, the import-boundary lint and the product config check are the orchestrator's.
 import { safeError } from '../../server/safe-error'
 import { WorkerEntrypoint } from 'cloudflare:workers'
-import type { AccountSummary, CallToolOptions, CallerScope, CardFacts, CardFactsRequest, ConnectGateway as ConnectApi, HubResult, Instant } from '../index/contract'
+import type {
+  AccountSummary, CallToolOptions, CallerScope, CardFacts, CardFactsRequest, ConfirmToolsRequest, ConnectGateway as ConnectApi, ConnectionActor,
+  ConnectionCredential, ConnectionState, ConnectionSummary, ConnectionTools, ConnectionView, DetectResult, HubResult, Instant, PrepareConnectionRequest,
+  UpdateConnectionRequest, WriteToolInfo,
+} from '../index/contract'
 import { CardFactsRequestSchema } from '../index/schemas'
 import { err } from '../index/errors'
 import { log } from '../index/log'
@@ -71,6 +75,14 @@ async function deps(env: Env): Promise<G.ConnectDeps> {
   }
 }
 
+/**
+ * Stage 1 M4 (M4-A): a connection method frozen in the contract before M4-R1 lands it. A `server` scope only, as every
+ * method here; then `not_built`, with nothing read, parsed or kept.
+ */
+async function notBuilt(env: Env, scope: CallerScope, method: string): Promise<HubResult<never>> {
+  return guarded(env, async () => (G.serverScope(scope) ? err('not_built', method) : err('invalid_args', 'scope')))
+}
+
 export class ConnectGateway extends WorkerEntrypoint<Env> implements ConnectApi {
   async startConnect(scope: CallerScope, req: { accountId: string; memberId: string }): Promise<HubResult<{ authorizeUrl: string; expiresAt: Instant }>> {
     return answered(this.env, async () => G.startConnect(await deps(this.env), scope, req))
@@ -131,6 +143,46 @@ export class ConnectGateway extends WorkerEntrypoint<Env> implements ConnectApi 
       }
       return err('not_configured', 'shopify_write')
     })
+  }
+  // Stage 1 M4 (M4-A): every connection method answers `not_built` until M4-R1 lands it (contract.ts, N35).
+  async detectConnection(scope: CallerScope, _req: { actor: ConnectionActor; url: string }): Promise<HubResult<DetectResult>> {
+    return notBuilt(this.env, scope, 'detectConnection')
+  }
+  async prepareConnection(scope: CallerScope, _req: PrepareConnectionRequest): Promise<HubResult<ConnectionView>> {
+    return notBuilt(this.env, scope, 'prepareConnection')
+  }
+  async getConnection(scope: CallerScope, _req: { actor: ConnectionActor; accountId: string }): Promise<HubResult<ConnectionView>> {
+    return notBuilt(this.env, scope, 'getConnection')
+  }
+  async updateConnection(scope: CallerScope, _req: UpdateConnectionRequest): Promise<HubResult<ConnectionView>> {
+    return notBuilt(this.env, scope, 'updateConnection')
+  }
+  async setTrusted(scope: CallerScope, _req: { actor: ConnectionActor; accountId: string; trusted: boolean; ifRev: number }): Promise<HubResult<{ trusted: boolean; policyRev: number }>> {
+    return notBuilt(this.env, scope, 'setTrusted')
+  }
+  async startConnectionSignIn(scope: CallerScope, _req: { actor: ConnectionActor; accountId: string }): Promise<HubResult<{ authorizeUrl: string; host: string; expiresAt: Instant }>> {
+    return notBuilt(this.env, scope, 'startConnectionSignIn')
+  }
+  async setConnectionCredential(scope: CallerScope, _req: { actor: ConnectionActor; accountId: string; credential: ConnectionCredential }): Promise<HubResult<{ state: ConnectionState }>> {
+    return notBuilt(this.env, scope, 'setConnectionCredential')
+  }
+  async checkConnection(scope: CallerScope, _req: { actor: ConnectionActor; accountId: string }): Promise<HubResult<{ listed: number }>> {
+    return notBuilt(this.env, scope, 'checkConnection')
+  }
+  async listConnectionTools(scope: CallerScope, _req: { actor: ConnectionActor; accountId: string }): Promise<HubResult<ConnectionTools>> {
+    return notBuilt(this.env, scope, 'listConnectionTools')
+  }
+  async confirmConnectionTools(scope: CallerScope, _req: ConfirmToolsRequest): Promise<HubResult<{ policyRev: number }>> {
+    return notBuilt(this.env, scope, 'confirmConnectionTools')
+  }
+  async removeConnection(scope: CallerScope, _req: { actor: ConnectionActor; accountId: string }): Promise<HubResult<{ revoked: boolean }>> {
+    return notBuilt(this.env, scope, 'removeConnection')
+  }
+  async listConnections(scope: CallerScope): Promise<HubResult<ConnectionSummary[]>> {
+    return notBuilt(this.env, scope, 'listConnections')
+  }
+  async listWriteTools(scope: CallerScope): Promise<HubResult<WriteToolInfo[]>> {
+    return notBuilt(this.env, scope, 'listWriteTools')
   }
   /**
    * TEST BUILD ONLY (contract.ts `testFakes`): refused with `not_configured` outside the test bundle whatever the scope,

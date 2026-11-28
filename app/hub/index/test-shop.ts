@@ -13,6 +13,9 @@ export function decideTestShop(options: unknown, testBuild: boolean, registered:
   if (options === undefined) return { ok: true, value: { shop: null } }
   const parsed = CallToolOptionsSchema.safeParse(options)
   if (!parsed.success) return err('invalid_args', 'options')
+  // Stage 1 M4 (M4-A): `propose` (M4-K3) and `name` (M4-T) are frozen in the contract before their owners build them:
+  // refused here as an unknown option was, so a call that sends one never runs as if it hadn't.
+  if (parsed.data.propose !== undefined || parsed.data.name !== undefined) return err('invalid_args', 'options')
   const host = parsed.data.testShopHost
   if (host === undefined) return { ok: true, value: { shop: null } }
   if (!testBuild) return err('invalid_args', 'testShopHost')

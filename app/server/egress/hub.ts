@@ -71,10 +71,12 @@ type Id = string | number
 // Worker takes no hub dependency). Anything that doesn't parse is a binding failure. Plain objects that strip unknown
 // keys, and any string as an error code: a hub deployed ahead of the product Worker (a new field, a new code) keeps
 // working; an unknown code is answered as `internal`.
-const HUB_ERROR_CODES: readonly HubErrorCode[] = [
+export const HUB_ERROR_CODES: readonly HubErrorCode[] = [
   'invalid_args', 'unknown_tool', 'write_refused', 'not_configured', 'credentials_rejected', 'scope_mismatch', 'key_unavailable',
   'upstream_unavailable', 'upstream_rejected', 'upstream_version_mismatch', 'rate_limited', 'result_too_large', 'internal',
   'state_invalid', 'workspace_mismatch', 'connect_stale', 'connect_refused', 'paused',
+  // Stage 1 M4 (M4-A): checked against HubErrorCode by contract-coverage.test.ts.
+  'needs_key', 'definition_changed', 'needs_input', 'leak', 'client_fault', 'not_built', 'connections_off',
 ]
 const isHubCode = (c: string): c is HubErrorCode => (HUB_ERROR_CODES as readonly string[]).includes(c)
 const HubErrorMirror = z.object({ code: z.string(), message: z.string(), retryAfterMs: z.number().optional() })

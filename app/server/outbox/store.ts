@@ -265,7 +265,8 @@ export function openOutbox(d: OutboxDeps): OutboxPort & {
       const dup = await waitingDup(ctx.chatId, r.payloadHash)
       if (dup) return { outcome: 'waiting', action: dup, existing: true }
       const entry = operationEntry(r.operation)
-      const account = entry ? rf.accounts[entry.connector] : null
+      // Stage 1 M4 (N46): a connection's write takes its label from `rf.connections` (M4-W2); none exists before then.
+      const account = entry && entry.connector !== 'mcp' ? rf.accounts[entry.connector] : null
       if (!entry || !account) throw new Error('outbox: a resolved action names no operation or account')
       const words = entry.card(r.args, rf)
       const card = (nudge: boolean): StoredCard => ({ title: words.title, lines: words.lines, label: account.label, nudge })

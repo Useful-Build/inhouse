@@ -21,7 +21,7 @@ export const shopifyInventoryRestock: OperationEntry<RestockArgs> & { key: 'shop
   itemRow: a => stockItemRow('+', a),
   rowHeads: STOCK_ROW_HEADS,
   batchTitle: c => `Restock ${countOf(c.records, 'item', 'items')}`,
-  effects: { money: false, customer: false, destructive: false, access: false },
+  effects: { money: false, customer: false, destructive: false, access: false, unreviewed: false },
   memberMay: true,
   reversible: true,
   idempotent: false,

@@ -302,8 +302,14 @@ export interface WranglerOptions {
   spawn?: (args: string[], env: Record<string, string | undefined>) => { status: number | null; stdout: string }
 }
 
+/**
+ * How long one wrangler call may take (#672): it runs synchronously, so a hung one would hold the whole process (a
+ * cancel's close included). Killed past this; its null status is a refusal.
+ */
+export const WRANGLER_TIMEOUT_MS = 120_000
+
 const defaultSpawn: NonNullable<WranglerOptions['spawn']> = (args, env) => {
-  const r = spawnSync('npx', ['--no-install', 'wrangler', ...args], { cwd: path.resolve(import.meta.dirname, '../..'), encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'], env: env as NodeJS.ProcessEnv, maxBuffer: 16 * 1024 * 1024 })
+  const r = spawnSync('npx', ['--no-install', 'wrangler', ...args], { cwd: path.resolve(import.meta.dirname, '../..'), encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'], env: env as NodeJS.ProcessEnv, maxBuffer: 16 * 1024 * 1024, timeout: WRANGLER_TIMEOUT_MS, killSignal: 'SIGKILL' })
   return { status: r.status, stdout: r.stdout ?? '' }
 }
 
@@ -335,6 +341,7 @@ export function wranglerQueries(o: WranglerOptions): (sql: string) => Promise<Qu
   const spawn = o.spawn ?? defaultSpawn
   return async (sql) => {
     const r = spawn(['d1', 'execute', database, '--remote', '--config', configPath, '--json', '--yes', '--command', sql], env)
+    if (r.status === null) throw new DoorRefusal(`wrangler d1 execute did not end (killed after ${WRANGLER_TIMEOUT_MS / 1000} s, or by a signal)`)
     if (r.status !== 0) throw new DoorRefusal(`wrangler d1 execute exited ${r.status}`)
     try {
       return JSON.parse(r.stdout) as QueryResult[]

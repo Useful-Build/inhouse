@@ -76,7 +76,11 @@ function size(bytes: number): string {
 
 /** A connector account as the log names it: its connector's name (P5 W1). */
 const CONNECTOR: Record<string, string> = { slack: 'Slack', shopify: 'Shopify' }
-const connectorName = (accountId: string) => CONNECTOR[accountId.split(':')[0]!] ?? accountId
+/**
+ * Stage 1 M4: a connection by address (`mcp:<slug>`) is named by its slug, which the Inhouse team chose (the line holds
+ * no name the brand typed).
+ */
+const connectorName = (accountId: string) => (accountId.startsWith('mcp:') ? `Connected tool ${accountId.slice(4)}` : CONNECTOR[accountId.split(':')[0]!] ?? accountId)
 /** Why a connect didn't finish, in a few words; any other code shows as it is. */
 const CONNECT_FAILED: Record<string, string> = {
   state_invalid: 'the link was used or expired',
@@ -85,6 +89,10 @@ const CONNECT_FAILED: Record<string, string> = {
   connect_stale: 'it was disconnected meanwhile',
   connect_refused: 'the provider refused',
   not_configured: 'it isn’t set up',
+  // Stage 1 M4 (M4-A)
+  client_fault: 'the login server refused Inhouse’s app',
+  needs_key: 'the key was refused',
+  connections_off: 'connections are off for now',
 }
 
 /** Why a notice didn't go, or where it went instead (P5 W4); any other code shows as it is. */
@@ -110,6 +118,14 @@ const NOTIFY_DETAIL: Record<string, string> = {
   below_act: 'Slack posts start at the Act stage',
   app_origin_missing: 'the app link isn’t set up at the hub',
 }
+/** Stage 1 M4: a connection's credential path, its edit's parts in a fixed order, and a tool's change, in words. */
+const CONNECTION_PATH = { none: 'no sign-in', signin: 'a sign-in', key: 'a key' } as const
+const CONNECTION_CHANGED = { name: 'name', about: 'about line', admin_may_sign_in: 'who may give the login', settings: 'settings' } as const
+const CONNECTION_CHANGED_ORDER = ['name', 'about', 'admin_may_sign_in', 'settings'] as const
+const TOOL_CHANGE = {
+  new: 'a connected tool offered a new tool', changed: 'a connected tool changed a tool', gone: 'a connected tool dropped a tool',
+  rejected: 'a connected tool offered a tool Inhouse can’t take',
+} as const
 const plural = (n: number, one: string) => `${n} ${one}${n === 1 ? '' : 's'}`
 
 /** P6a: a team request's kind, as the Inhouse team window names it. */
@@ -167,6 +183,8 @@ const FAILED: Record<string, string> = {
   not_configured: 'writing to the tool isn’t set up', paused: 'the tool is paused', credentials_rejected: 'the tool refused the sign-in',
   scope_mismatch: 'the connection can’t do this', upstream_rejected: 'the tool refused it', upstream_unavailable: 'the tool couldn’t be reached',
   rate_limited: 'the tool asked to slow down', connect_stale: 'the tool’s connection changed', invalid_args: 'the tool refused the details',
+  // Stage 1 M4 (M4-A)
+  definition_changed: 'the tool changed since it was reviewed', needs_key: 'the tool needs a new key', leak: 'it carried another tool’s data',
 }
 const thousands = (n: number) => String(n).replace(/\B(?=(\d{3})+(?!\d))/g, ',')
 
@@ -308,5 +326,19 @@ export function auditText(args: AuditArgs, name: (memberId: string) => string | 
     case 'question.expired': return { what: 'a question expired', detail: 'No one answered in 7 days' }
     case 'ceiling.changed': return { what: 'changed what the agent can do', detail: `${operation(args.operation)}: ${ceilingWords(args.operation, args.new)}${args.old === null ? '' : ` (was ${ceilingWords(args.operation, args.old)})`}` }
     case 'data.exported': return { what: 'downloaded all brand data', detail: `${String(args.items).replace(/\B(?=(\d{3})+(?!\d))/g, ',')} ${args.items === 1 ? 'item' : 'items'}` }
+    // Stage 1 M4 (M4-A). The slug, closed words and counts only: never an address, a typed name or a server's text.
+    case 'connection.prepared': return { what: 'prepared a tool to connect', detail: `${connectorName(args.accountId)}: ${CONNECTION_PATH[args.path]}` }
+    case 'connection.changed':
+      return { what: 'changed a connected tool', detail: `${connectorName(args.accountId)}: ${CONNECTION_CHANGED_ORDER.filter(c => args.changed.includes(c)).map(c => CONNECTION_CHANGED[c]).join(', ')}` }
+    case 'connection.trusted': return { what: args.trusted ? 'trusted a connected tool' : 'stopped trusting a connected tool', detail: connectorName(args.accountId) }
+    case 'connection.credential':
+      return args.outcome === 'ok'
+        ? { what: args.kind === 'key' ? 'gave a connected tool its key' : 'gave a connected tool its app', detail: connectorName(args.accountId) }
+        : { what: args.kind === 'key' ? 'couldn’t give a connected tool its key' : 'couldn’t give a connected tool its app', detail: `${connectorName(args.accountId)}: ${CONNECT_FAILED[args.outcome] ?? args.outcome}` }
+    case 'connection.tools_confirmed':
+      return { what: 'reviewed a connected tool’s tools', detail: `${connectorName(args.accountId)}: ${args.read} to read, ${args.write} to write, ${args.off} off` }
+    case 'connection.tool_changed': return { what: TOOL_CHANGE[args.change], detail: `${connectorName(args.accountId)}: ${args.tool}` }
+    case 'connection.removed':
+      return { what: 'removed a connected tool', detail: args.revoked ? connectorName(args.accountId) : `${connectorName(args.accountId)}: its login wasn’t removed on the tool’s side, so remove the app there too` }
   }
 }

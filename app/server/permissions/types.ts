@@ -4,7 +4,7 @@
 import type { WriteOperationKey } from '../../hub/index/contract.ts'
 import type { Guardrail } from '../../shared/contract/permissions.ts'
 import type { MemberRole } from '../../shared/contract/members.ts'
-import type { Effects } from '../outbox/operations/types.ts'
+import type { AccountConnector, Effects } from '../outbox/operations/types.ts'
 
 export type { Guardrail, WriteOperationKey }
 
@@ -90,11 +90,42 @@ export interface ConnectedAccountFacts {
 /** A Slack channel the admin listed (`notify_channels`, not removed). */
 export interface ListedChannel { id: string; name: string }
 
+/**
+ * Stage 1 M4 (N46): one confirmed `write` tool of a connection, as the hub's `listWriteTools` answered it now. A write
+ * pins all three of `defHash`, the connection's `generation` and its `policyRev` from here, never from the request.
+ */
+export interface ConnectionWriteToolFacts {
+  /** The server's tool name (what the wire carries). */
+  name: string
+  /** Ours, the name the agent calls (`<slug>_<tool>`, N45). */
+  hubName: string
+  defHash: string
+}
+
+/**
+ * Stage 1 M4 (N35, N46, N49): one runtime connection (`mcp:<slug>`), as `resolve` reads it: the hub's word now, never
+ * the D1 copy. `label` is the connection's name (our words, the D1 copy's typed name). A connection the hub didn't
+ * answer for isn't listed (refused, never assumed open).
+ */
+export interface ConnectionFacts {
+  accountId: string
+  label: string
+  generation: number
+  policyRev: number
+  paused: boolean
+  trusted: boolean
+  /** Live only: a connection in any other state (waiting for a login, `needs_key`, `unavailable`) is refused. */
+  live: boolean
+  writeTools: readonly ConnectionWriteToolFacts[]
+}
+
 /** What `resolve` reads before it decides anything. */
 export interface ResolveFacts {
   nowMs: number
-  accounts: Readonly<Record<'shopify' | 'slack', ConnectedAccountFacts | null>>
+  accounts: Readonly<Record<AccountConnector, ConnectedAccountFacts | null>>
   listedChannels: readonly ListedChannel[]
+  /** Stage 1 M4 (N46): the runtime connections, for `mcp.tool.call` (M4-W2 reads them in `resolve`; empty until then). */
+  connections: readonly ConnectionFacts[]
 }
 
 /**

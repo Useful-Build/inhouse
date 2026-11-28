@@ -54,7 +54,7 @@ export const shopifyDraftOrderCreate: OperationEntry<DraftOrderArgs> & { key: 's
     change: [a.lines.map(lineWords).join(', '), ...(a.note !== undefined ? [`note: ${a.note}`] : []), ...(a.tags !== undefined ? [`tags: ${a.tags.join(', ')}`] : [])].join('; '),
   }),
   batchTitle: c => `Create ${countOf(c.records, 'draft order', 'draft orders')}`,
-  effects: { money: false, customer: false, destructive: false, access: false },
+  effects: { money: false, customer: false, destructive: false, access: false, unreviewed: false },
   memberMay: true,
   reversible: true,
   idempotent: false,
