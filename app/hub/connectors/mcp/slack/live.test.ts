@@ -12,8 +12,8 @@ const BASE = ['search:read.public', 'channels:read', 'channels:history', 'users:
 
 describe('the Slack probe against the fake', () => {
   for (const [mode, expected] of [
-    ['hide', { listed: { slack_search_users: false, slack_read_file: false }, searchUsers: 'upstream_rejected' }],
-    ['fail', { listed: { slack_search_users: true, slack_read_file: true }, searchUsers: 'scope_mismatch' }],
+    ['hide', { listed: { slack_search_users: false, slack_read_file: false }, list: 'ok', searchUsers: 'upstream_rejected' }],
+    ['fail', { listed: { slack_search_users: true, slack_read_file: true }, list: 'ok', searchUsers: 'scope_mismatch' }],
   ] as const) {
     it(`missing scope ${mode}`, async () => {
       const fake = createMcpUpstream('slack')
@@ -63,25 +63,56 @@ describe('the probe detail against the fake (Part of #697)', () => {
     }
     const r = await probeDetail(up, token)
     expect(r.discover).toEqual({ status: 200, body: 'sse', answer: 'result', versions: ['2026-07-28'] })
+    expect(r.list).toBe('ok')
     expect(JSON.stringify(r)).not.toContain('UPSTREAM')
+  })
+
+  /** The fake (missing scopes listed, then failing), with `refuse` answering some methods 401, every method recorded. */
+  const recording = (token: string, refuse: (method: string) => boolean) => {
+    const fake = fakeWith(token)
+    fake.missingScope = 'fail'
+    const seen: string[] = []
+    const up = async (req: Request) => {
+      const body = req.method === 'POST' ? ((await req.clone().json().catch(() => null)) as { method?: string } | null) : null
+      if (body?.method) seen.push(body.method)
+      return body?.method && refuse(body.method) ? new Response(null, { status: 401, headers: { 'WWW-Authenticate': 'Bearer' } }) : fake.fetch(req)
+    }
+    return { up, seen }
+  }
+
+  it('a server/discover answered 401 alone is reported, and the pinned list and call still run (#700)', async () => {
+    const token = 'xoxp-test-discover-401'
+    const { up, seen } = recording(token, m => m === 'server/discover')
+    const r = await probeDetail(up, token)
+    expect(r.discover).toEqual({ status: 401, body: 'empty', answer: 'unreadable' })
+    expect(r.list).toBe('ok')
+    expect(r.listed).toEqual({ slack_search_users: true, slack_read_file: true })
+    expect(r.searchUsers).toBe('scope_mismatch')
+    expect(seen.filter(m => m === 'server/discover')).toHaveLength(1)
+  })
+
+  it("the probe's call is pinned even when the list failed and cached nothing (#701)", async () => {
+    const token = 'xoxp-test-list-fails'
+    let inits = 0
+    const { up, seen } = recording(token, m => m === 'server/discover' || (m === 'initialize' && inits++ === 0))
+    const r = await probeDetail(up, token)
+    expect(r.list).toBe('unauthorized')
+    expect(r.searchUsers).toBe('scope_mismatch')
+    // The only server/discover is discoverOnce's: the list's handshake and the call's never probe.
+    expect(seen).toEqual(['server/discover', 'initialize', 'initialize', 'notifications/initialized', 'tools/call'])
   })
 })
 
 const tokenFile = process.env.SLACK_PROBE_TOKEN_FILE
 describe.skipIf(!tokenFile)('the Slack probe, live (orchestrator only)', () => {
-  it('records hidden or listed-and-failing', async () => {
+  it('records hidden or listed-and-failing, how Slack answers server/discover, and why a list failed (Part of #697)', async () => {
     const token = readFileSync(tokenFile!, 'utf8').trim()
-    const r = await probe(req => fetch(req), token)
-    // Outcome names only.
-    console.info(`probe: ${JSON.stringify(r)}`)
-    expect(typeof r.searchUsers).toBe('string')
-  })
-
-  it('records how Slack answers server/discover, and why a list failed (Part of #697)', async () => {
-    const token = readFileSync(tokenFile!, 'utf8').trim()
+    // One run: the detail carries the S4 answer too.
     const r = await probeDetail(req => fetch(req), token)
-    // Shapes, codes and versions only.
-    console.info(`probe detail: ${JSON.stringify(r)}`)
-    expect(JSON.stringify(r)).not.toContain(token)
+    expect(typeof r.searchUsers).toBe('string')
+    // Outcome names, shapes, codes and versions only; the token is checked absent before anything prints.
+    const line = JSON.stringify(r)
+    expect(line).not.toContain(token)
+    console.info(`probe detail: ${line}`)
   })
 })
