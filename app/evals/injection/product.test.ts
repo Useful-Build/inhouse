@@ -466,6 +466,65 @@ describe('Neon\'s #618 review on the product target', () => {
     expect(calls).toEqual(['lease back'])
   })
 
+  it('a close that lands during the Slack seed: the case refuses, never lists, undoes its setup, then the lease goes back (#679)', async () => {
+    const calls: string[] = []
+    const writes = new FakeWrites()
+    const { base, calls: baseCalls } = stand({ writes })
+    let release!: () => void
+    const held = new Promise<void>((r) => { release = r })
+    const slack = {
+      account: async () => null, read: async () => ({ channels: [], messages: [], listed: [] }),
+      seed: async () => { calls.push('slack seed'); await held },
+      list: async () => { calls.push('slack list'); return { alertsGrant: null } },
+      reset: async () => { calls.push('slack reset') },
+    }
+    const target = createProductInjectionTarget({
+      paid: true, env: {}, inhouse: async () => ({ status: 200, json: null, location: null }),
+      slackLink: { connect: async () => { calls.push('connect') }, disconnect: async () => { calls.push('disconnect') } },
+      base: { ...base, slackDoor: () => slack, async close() { calls.push('lease back') } } as unknown as ProductTarget,
+    })
+    const starting = target.start(kase('W15'), { rep: 1, canary: 'C' })
+    while (!calls.includes('slack seed')) await new Promise((r) => setTimeout(r, 0))
+    const closing = target.close!()
+    await new Promise((r) => setTimeout(r, 20))
+    expect(calls).toEqual(['connect', 'slack seed'])
+    release()
+    await expect(starting).rejects.toThrow(/the target is closing/)
+    await closing
+    expect(calls).not.toContain('slack list')
+    expect(baseCalls).toContain('session reset')
+    // The case's undo leaves Slack off before the close's own leave and the lease.
+    expect(calls.slice(2)).toEqual(['disconnect', 'slack reset', 'lease back'])
+  })
+
+  it('a close during the preflight waits for it; the preflight stops after the target\'s checks and the lease goes back after (#680)', async () => {
+    const calls: string[] = []
+    const { base } = stand({ writes: new FakeWrites() })
+    let release!: () => void
+    const held = new Promise<void>((r) => { release = r })
+    const b = {
+      ...base,
+      async ready() { calls.push('ready (lease taken)'); await held },
+      writeDoor: () => ({ ...base.writeDoor(), now: async () => { calls.push('d1'); return 1 } }),
+      async close() { calls.push('lease back') },
+    } as unknown as ProductTarget
+    const t = createProductInjectionTarget({ paid: true, env: {}, inhouse: null, base: b, sessions: { preflight: async () => { calls.push('r2') }, parts: async () => [] } })
+    const preflight = t.preflight!([kase('W06')])
+    await new Promise((r) => setTimeout(r, 0))
+    let closed = false
+    const closing = t.close!().then(() => { closed = true })
+    await new Promise((r) => setTimeout(r, 20))
+    expect(closed).toBe(false)
+    expect(calls).toEqual(['ready (lease taken)'])
+    release()
+    await expect(preflight).rejects.toThrow(/the target is closing/)
+    await closing
+    expect(calls).toEqual(['ready (lease taken)', 'lease back'])
+    // Once closed, a preflight refuses before it takes anything.
+    await expect(t.preflight!([kase('W06')])).rejects.toThrow(/the target is closing/)
+    expect(calls).toEqual(['ready (lease taken)', 'lease back'])
+  })
+
   it('a close whose case setup hangs gives the lease back after the bound and names the setup (#672)', async () => {
     const calls: string[] = []
     const { base } = stand({ writes: new FakeWrites() })

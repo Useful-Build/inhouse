@@ -242,19 +242,30 @@ export function createProductInjectionTarget(o: ProductInjectionOptions): Inject
       // The product target's own checks first (the eval brand, the lease, the cap: targets/product.ts setup), which make
       // its doors; then one read through each door the run uses, and one R2 LIST of the session transcripts (as the
       // read-side and store-data suites do). A refusal throws here, before any paid turn.
-      // A Slack case without the Inhouse app would fail at its own start, after the paid turns before it (#671).
-      const slackCases = cases.filter(needsSlack)
-      if (slackCases.length && !inhouse) throw new Error(`${slackCases.map((c) => c.id).join(', ')} need the Inhouse app (${EVAL_INHOUSE_ORIGIN_VAR} and ${EVAL_INHOUSE_AUD_VAR}), which is not set`)
-      await base.ready()
-      await base.writeDoor().now()
-      if (inhouse) {
-        await base.slackDoor().read()
-        // One read-only call through the Inhouse app the Slack connect uses (route 70, the Tools page), so a wrong origin
-        // or aud stops the run here, not at the first Slack case (#671).
-        await slackShown(inhouse)
+      // Tracked like a start (#680): a close waits for it, so the lease its setup takes goes back after it.
+      const p = (async () => {
+        if (closed) throw closingRefusal()
+        // A Slack case without the Inhouse app would fail at its own start, after the paid turns before it (#671).
+        const slackCases = cases.filter(needsSlack)
+        if (slackCases.length && !inhouse) throw new Error(`${slackCases.map((c) => c.id).join(', ')} need the Inhouse app (${EVAL_INHOUSE_ORIGIN_VAR} and ${EVAL_INHOUSE_AUD_VAR}), which is not set`)
+        await base.ready()
+        if (closed) throw closingRefusal()
+        await base.writeDoor().now()
+        if (inhouse) {
+          await base.slackDoor().read()
+          // One read-only call through the Inhouse app the Slack connect uses (route 70, the Tools page), so a wrong
+          // origin or aud stops the run here, not at the first Slack case (#671).
+          await slackShown(inhouse)
+        }
+        sessions ??= createSessionReader({ env: o.env, bucket: EVAL_BUCKET })
+        await sessions.preflight()
+      })()
+      starting.add(p)
+      try {
+        await p
+      } finally {
+        starting.delete(p)
       }
-      sessions ??= createSessionReader({ env: o.env, bucket: EVAL_BUCKET })
-      await sessions.preflight()
     },
     close: async () => {
       closed = true
@@ -320,24 +331,35 @@ export function createProductInjectionTarget(o: ProductInjectionOptions): Inject
       let mark = 0
       let teammate: string | undefined
       let ceilingsBefore: WriteEvidence['ceilingsBefore'] = null
+      // A close that began during any setup step (the seed above, or one below): the case stops at once, undone in the
+      // catch, and never hands back a live session (#663, #679).
+      const held = () => { if (closed) throw closingRefusal() }
       try {
-        // A close that began while the seed ran: this case stops here, undone below (#663).
-        if (closed) throw closingRefusal()
+        held()
         if (base.room) {
           const room = await base.room()
+          held()
           if (room.spentUsd + 0.25 > room.capUsd) throw new Error(`this month's spend ($${room.spentUsd.toFixed(2)}) leaves no room under the $${room.capUsd} cap`)
         }
         await w.resetWrites()
+        held()
         mark = (await w.now()) - CLOCK_SLACK_MS
-        for (const s of c.ceilings) await w.setCeiling(s.operation, { ...(s.perDayMax !== undefined ? { perDayMax: s.perDayMax } : {}), ...(s.unitsMax !== undefined ? { unitsMax: s.unitsMax } : {}) })
+        held()
+        for (const s of c.ceilings) {
+          await w.setCeiling(s.operation, { ...(s.perDayMax !== undefined ? { perDayMax: s.perDayMax } : {}), ...(s.unitsMax !== undefined ? { unitsMax: s.unitsMax } : {}) })
+          held()
+        }
         await checkSlackAtStart()
-        if (c.namedMember) teammate = await base.addTeammate({ caseId: c.id, rep: run.rep, name: c.namedMember })
+        held()
+        if (c.namedMember) {
+          teammate = await base.addTeammate({ caseId: c.id, rep: run.rep, name: c.namedMember })
+          held()
+        }
         if (slackCase) {
           if (!inhouse) throw new Error('a Slack case needs the Inhouse app (INHOUSE_EVAL_INHOUSE_ORIGIN and _AUD)')
           // A fresh connection per case-repeat (the fake keeps its tokens in memory), the workspace with the case's plant
           // in #support, then the case's listed channels (after its ceiling: the door lists only where posting is on).
           // Marked before the connect: a connect that fails after its callback committed is still disconnected later.
-          if (closed) throw closingRefusal()
           slackConnected = true
           connecting = link.connect(inhouse)
           try {
@@ -346,13 +368,19 @@ export function createProductInjectionTarget(o: ProductInjectionOptions): Inject
             connecting = null
           }
           // A close that began while the connect ran: this case stops here (its undo leaves Slack off).
-          if (closed) throw closingRefusal()
+          held()
           const slack = base.slackDoor()
           await slack.seed({ messages: c.plant?.via === 'slack' ? [{ channel: 'support', text: c.plant.text(run.canary) }] : [] })
+          held()
           await slack.list({ by: base.people.lena, channels: c.channels.map((name) => ({ name: name.replace(/^#/, '') })) })
+          held()
         }
-        if (c.grant) seeded.add(await w.grant({ memberId: asker, operation: c.grant.operation, ...(c.grant.perDay !== undefined ? { perDay: c.grant.perDay } : {}), ...(c.grant.unitsMax !== undefined ? { unitsMax: c.grant.unitsMax } : {}) }))
+        if (c.grant) {
+          seeded.add(await w.grant({ memberId: asker, operation: c.grant.operation, ...(c.grant.perDay !== undefined ? { perDay: c.grant.perDay } : {}), ...(c.grant.unitsMax !== undefined ? { unitsMax: c.grant.unitsMax } : {}) }))
+          held()
+        }
         ceilingsBefore = ceilingRows(await w.ceilings())
+        held()
       } catch (e) {
         // Every part of the undo runs even when one before it throws (the Slack workspace above all), and the seed's own
         // error stays the one thrown.
