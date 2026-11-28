@@ -56,7 +56,7 @@ describe('the sample data shows only what the product can do', () => {
       expect(ALL.filter(([, s]) => re.test(s)).map(([p, s]) => `${p}: ${s.slice(0, 120)}`)).toEqual([])
     })
   }
-  test('a finding (a problem with no draft) carries no Run-only field that names an act: what it did, what waits, a draft flag (#751)', () => {
+  test('a finding (a problem with no draft) carries no Run-only field that names an act: what it did, what waits, a draft flag (issue 751)', () => {
     for (const p of PROBLEMS.filter(x => !isDraft(x))) expect(RUN_FIELDS.filter(k => k in p), p.id).toEqual([])
   })
   test("the Library's Approvals place holds only what a real draft made: no purchase order, and every file's problem has a draft", () => {

@@ -191,7 +191,7 @@ test('Saved storage holding old values (persona name, morning email settings, re
 
   // Ids that no longer exist change nothing: every file is still there.
   await page.evaluate(() => { location.hash = '#/library' })
-  await expect(page.getByRole('radio', { name: /^All 38/ })).toBeVisible()
+  await expect(page.getByRole('radio', { name: /^All 35/ })).toBeVisible()
 
   for (const [hash, heading] of [
     ['#/settings/you-general', 'General'], ['#/settings/you-permissions', 'Always allowed'], ['#/settings/team-agent', 'Inhouse agent'],

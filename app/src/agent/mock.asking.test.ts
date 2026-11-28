@@ -191,7 +191,7 @@ describe('the mock: asking first and Always allow', () => {
       expect(await errorOf(a.editDraft('returns', 'a note'))).toBe('resolved')
     })
   })
-  describe('the chat a card came from is dated after its asks (#751)', () => {
+  describe('the chat a card came from is dated after its asks (issue 751)', () => {
     // This PR's chat only: the VIP and Ridge chats are older than their cards on main too (a separate follow-up).
     it('every ask card in the wholesale and gift tags chat was asked before that chat was last active', async () => {
       const a = fresh()

@@ -70,7 +70,7 @@ describe('an old value that cannot convert is dropped and reported (failure 2), 
     expect(warn).not.toHaveBeenCalled()
   })
 
-  test('the stored demo from before the seam loads with nothing dropped, except the reorder it approved: that is a finding now (#747), dropped without a warning', () => {
+  test('the stored demo from before the seam loads with nothing dropped, except the reorder it approved: that is a finding now (issue 747), dropped without a warning', () => {
     const s = load({}).getSnapshot()
     expect(warn).not.toHaveBeenCalled()
     expect(s.approved).toEqual({})
@@ -171,7 +171,7 @@ describe('a demo saved before C2 and C9 loads with ids, roles, photos and the gr
     expect(warned()).toContain('settings.a:2')
   })
 
-  test('the pre-seam fixture loads: its old reorder approval is gone (#747), the grant is live and nothing is warned', () => {
+  test('the pre-seam fixture loads: its old reorder approval is gone (issue 747), the grant is live and nothing is warned', () => {
     const agent = load({})
     expect(agent.getSnapshot().approved).toEqual({})
     expect(agent.read().people.supportGrant?.live).toBe(true)
@@ -223,7 +223,7 @@ describe('a demo saved before C2 and C9 loads with ids, roles, photos and the gr
   })
 })
 
-describe('what the demo no longer offers is dropped from a saved demo (#747)', () => {
+describe('what the demo no longer offers is dropped from a saved demo (issue 747)', () => {
   const at = { iso: '2026-11-16T07:03:00.000Z', ms: 1794812580000 }
   const rec = { at, loggedAt: at, by: 'm_sam', title: 't', doneText: 'Reorder of 600 sent to Kestrel Supply', partial: false }
   const saved = {

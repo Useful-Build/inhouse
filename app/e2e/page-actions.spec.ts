@@ -56,24 +56,29 @@ test('Approvals: edit then approve and Undo, Don\'t send and Undo, approve all l
   // Each draft shows the time it was made, from the data.
   await expect(draft(page, D.payout)).toContainText('· 6:06 AM')
 
-  // Edit opens the panel with the post's text ready to change; the change survives approving and undoing.
-  await moreItem(page, D.payout, 'Edit')
+  // Edit opens the panel on a note field (a Slack post has no Edit, the product's card goes out as written); the note survives
+  // approving and undoing.
+  await draft(page, D.payout).getByRole('button', { name: /^More actions/ }).click()
+  await expect(page.getByRole('menu', { name: 'Draft actions' }).getByRole('menuitem', { name: "Don't send", exact: true })).toBeVisible()
+  await expect(page.getByRole('menu', { name: 'Draft actions' }).getByRole('menuitem', { name: 'Edit', exact: true })).toHaveCount(0)
+  await page.keyboard.press('Escape')
+  await moreItem(page, D.returns, 'Edit')
   const panel = page.getByRole('dialog')
-  const text = panel.getByRole('textbox', { name: 'Post' })
+  const text = panel.getByRole('textbox', { name: 'Your note' })
   await expect(text).toBeVisible()
-  await text.fill('Dana, could you open the Seller Support case today? Edited in the e2e run.')
+  await text.fill('Edited in the e2e run.')
   await shot(page, 'approvals-editing')
-  await panel.getByRole('button', { name: 'Approve and post' }).click()
-  const held = toast(page, 'Approved. It goes out in 10 seconds.')
-  await expect(held).toBeVisible()
-  // The open panel hides the page from the accessibility tree, so the badge is read once it closes.
+  await panel.getByRole('button', { name: 'Approve and restock' }).click()
+  // A restock can be taken back, so it goes out at once with its Undo (no hold).
+  const done = toast(page, '11 units restocked on Shopify')
+  await expect(done).toBeVisible()
   await page.keyboard.press('Escape')
   await expect(panel).toHaveCount(0)
   await expect(badge(page)).toContainText(String(2 + ASKS))
-  await held.getByRole('button', { name: 'Undo', exact: true }).click()
+  await done.getByRole('button', { name: 'Undo', exact: true }).click()
   await expect(waiting(page)).toHaveText(/·\s3$/)
   await expect(badge(page)).toContainText(String(3 + ASKS))
-  await expect(draft(page, D.payout)).toContainText('Edited in the e2e run.')
+  await expect(draft(page, D.returns)).toContainText('Edited in the e2e run.')
 
   // Don't send takes the draft out of Waiting; Undo in the toast brings it back.
   await moreItem(page, D.returns, "Don't send")
