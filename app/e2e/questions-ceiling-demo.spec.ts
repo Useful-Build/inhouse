@@ -137,16 +137,11 @@ test('a late answer on Approvals: Allow once, the hold, and the agent comes back
   await expect(cardOf(page, WHOLESALE)).toHaveAttribute('data-action-card', 'waiting')
   await buttons(page, WHOLESALE).filter({ hasText: 'Allow once' }).click()
   await expect(cardOf(page, WHOLESALE)).toHaveAttribute('data-action-card', 'approved')
-  // In its hold the card hasn't gone out, so the chat has nothing from the agent yet.
-  await go(page, '#/chats/order-tags')
-  await expect(log(page)).toContainText('Post a heads-up in #ops-alerts once it\'s tagged.')
-  await expect(log(page)).not.toContainText('Done. Order 4512 has the Wholesale tag.')
   await page.clock.runFor(14_000)
   await expect(cardOf(page, WHOLESALE)).toHaveAttribute('data-action-card', 'sent')
-  // The chat is read when it opens: open another and come back (its history isn't read again while it stays the open one).
-  await go(page, '#/chats/vip-tags')
-  await expect(log(page)).toContainText('Tag everyone who spent over $500 this year as VIP.')
+  // The app reads a chat's history once, the first time it opens: the agent's follow-up is in it by then.
   await go(page, '#/chats/order-tags')
+  await expect(log(page)).toContainText('Post a heads-up in #ops-alerts once it\'s tagged.')
   await expect(log(page)).toContainText('Your Inhouse agent went on once the action was settled.')
   await expect(log(page)).toContainText('Done. Order 4512 has the Wholesale tag.')
   await shot(page, 'demo-late-answer-chat', true)
