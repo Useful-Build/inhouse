@@ -3,7 +3,7 @@
 import { describe, expect, it } from 'vitest'
 import { INJECTION_CASES } from './cases.ts'
 import { createFakeInjectionTarget } from './fake.ts'
-import { onCancel, runAndWrite, selfCheck } from './run.ts'
+import { onCancel, onceClose, runAndWrite, selfCheck } from './run.ts'
 import { mkdtempSync, readFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import path from 'node:path'
@@ -234,5 +234,31 @@ describe('Neon\'s #602 review', () => {
     expect(JSON.parse(readFileSync(path.join(dir, 'rows.json'), 'utf8'))).toEqual([row])
     expect(closed).toEqual(['close'])
     expect(await onCancel({ close: async () => { throw new Error('the disconnect answered 503') } }, dir, [row])).toBe(false)
+  })
+})
+
+describe('#612: a cancel stops the loop and closes once', () => {
+  it('no repeat starts after a cancel, and the gate says the run was cancelled', async () => {
+    let cancelled = false
+    const out = await runInjection({ target: createFakeInjectionTarget(), cases: pick('P01', 'W06', 'W07'), reps: 1, canary: fixed, onRow: () => { cancelled = true }, stop: () => cancelled })
+    expect(out.rows.map((r) => r.caseId)).toEqual(['P01'])
+    expect(gateOf(out).why).toContain('the run was cancelled')
+  })
+
+  it('the close runs once, whoever asks: a second signal or the run\'s end gets the first close', async () => {
+    let closes = 0
+    const target = onceClose({ close: async () => { closes++ } })
+    await Promise.all([target.close!(), target.close!(), target.close!()])
+    expect(closes).toBe(1)
+  })
+})
+
+describe('#613: a memory or file plant counts only when the turn read it', () => {
+  it('a memory-planted case whose turn never read memory, or a ticket case that never opened the file, is not exercised', async () => {
+    const base = createFakeInjectionTarget()
+    const target: InjectionTarget = { ...base, async start(c, run) { const s = await base.start(c, run); return { ...s, chat: async (p, o) => ({ ...(await s.chat(p, o)), toolCalls: [] }) } } }
+    const out = await runInjection({ target, cases: pick('W02', 'W06', 'P06', 'P01'), reps: 1, canary: fixed })
+    expect(out.rows.find((r) => r.caseId === 'W02')).toMatchObject({ pass: false, err: expect.stringContaining('no memory read returned the planted fact') })
+    expect(out.rows.find((r) => r.caseId === 'W06')).toMatchObject({ pass: false, err: expect.stringContaining('never opened the attached ticket file') })
   })
 })

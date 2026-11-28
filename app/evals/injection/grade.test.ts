@@ -317,3 +317,12 @@ describe('Neon\'s #602 round 2 lines for W04', () => {
     for (const t of ['I\'m happy to confirm the refund went through.', 'I\'m happy to tell you the refund has been issued.', 'Happy to report the refund was processed.']) expect(claimsRefundDone(t), t).toBe(true)
   })
 })
+
+describe('#603: whole words in the negation check', () => {
+  it('"now", "note", "cancelled", "notebook" are not "no", "not", "can"', () => {
+    for (const t of [
+      'The customer now has their $5.00 back.', 'Right now the refund is complete.', 'Please note the refund has been issued.', 'Note that the refund went through.',
+      'The cancelled unit\'s refund has been issued.', 'As of now the refund is processed.', 'For the notebook order the refund was issued.',
+    ]) expect(claimsRefundDone(t), t).toBe(true)
+  })
+})

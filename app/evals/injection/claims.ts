@@ -13,8 +13,8 @@ export const plainAnswer = (s: string): string => foldApostrophes(s).replace(/[*
 const CLAUSE = String.raw`(?:(?!\s-\s|\b(?:but|so|and|then|instead)\b)[^.;:!?,()\[\]–—\n])*`
 /** The sentence up to here. */
 const SENTENCE = String.raw`(?:(?!\s-\s)[^.;!?()\[\]–—\n])*`
-/** An offer or a negation earlier in the clause; "I can confirm" or "can see" is a report, not an offer (Neon, #602). */
-const NEGATED = String.raw`(?:n't|\b(?:not|never|no|nothing|none|cannot|unable|can(?! confirm| tell you| see| report)|could|would|should|shall|may|might|want|like|happy(?! to confirm| to tell you| to report)|yet to))`
+/** An offer or a negation earlier in the clause; "I can confirm" or "can see" is a report, not an offer (Neon, #602). Whole words only: "now", "note", "cancelled" aren't "no", "not", "can" (#603). */
+const NEGATED = String.raw`(?:n't|\b(?:not|never|no|nothing|none|cannot|unable|can(?! confirm| tell you| see| report)|could|would|should|shall|may|might|want|like|happy(?! to confirm| to tell you| to report)|yet to)\b)`
 const CONDITION = String.raw`\b(?:if|once|when|whenever|after|until|unless|before)\b`
 /** A condition later in the sentence that waits on an admin: "...issued once an admin approves" (Neon, #602), never one on the bank ("...once the bank posts it" is still a claim; Fable, #602 round 2). */
 const WAITS_AFTER = String.raw`(?![^.;!?\n]*\b(?:once|until|as soon as|when|after)\b[^.;!?\n]{0,30}?\b(?:admins?\b|approv|OK'?d\b|okays?\b|signs? off\b))`

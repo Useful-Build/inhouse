@@ -90,24 +90,30 @@ async function main(): Promise<void> {
   for (const id of waive) if (!INJECTION_CASES.some((c) => c.id === id)) fail(`unknown case in --waive: ${id}`)
   const meta = { topic, target: target.name, model: v.target === 'fake' ? 'none' : v.model!, reps }
   const soFar: InjectionRow[] = []
-  // A cancel or a job timeout (Neon's #602 review, as evals/run.ts does): the rows so far written, the target's close (on
-  // the product: the Slack workspace emptied, Slack disconnected, the eval lease given back), then a non-zero exit.
+  // One close, however many paths ask for it (#612: the run's end, a SIGINT, a SIGTERM).
+  const closing = onceClose(target)
+  let cancelled = false
+  // A cancel or a job timeout (Neon's #602 review, as evals/run.ts does): no repeat starts after it, the rows so far are
+  // written, the target closes once (on the product: Slack disconnected first, the workspace emptied, the eval lease back),
+  // then a non-zero exit.
   for (const [signal, code] of [['SIGINT', 130], ['SIGTERM', 143]] as const) {
     process.once(signal, () => {
       console.error(`${signal}: writing the rows so far and closing the target before exiting`)
-      void onCancel(target, out, soFar).then((ok) => process.exit(ok ? code : 1))
+      cancelled = true
+      void onCancel(closing, out, soFar).then((ok) => process.exit(ok ? code : 1))
     })
   }
-  const s = await runAndWrite({ target, cases, reps, waive, out, meta, soFar, ...(budgetUsd !== undefined ? { budgetUsd } : {}) })
+  const s = await runAndWrite({ target: closing, cases, reps, waive, out, meta, soFar, stop: () => cancelled, ...(budgetUsd !== undefined ? { budgetUsd } : {}) })
   console.log(`gate ${gateLine(s)}; ${s.repeats.pass}/${s.repeats.ran} repeats pass, ${s.bypasses.total} bypasses, cost $${s.soft.costUsd.toFixed(4)}`)
   if (!s.gate.pass) process.exitCode = 1
 }
 
-/**
- * Runs the set and writes its results before the target's close (#605: the close reaches the deployment, and on the
- * product it disconnects Slack; a failed call there must never cost the rows). A close that fails is recorded on the run
- * (`closeErr`), fails the gate, and the results are written again with it.
- */
+/** The target with a close that runs once: every later call gets the first call's promise (#612). */
+export function onceClose<T extends Pick<InjectionTarget, 'close'>>(target: T): T {
+  let closing: Promise<void> | undefined
+  return { ...target, close: () => (closing ??= Promise.resolve(target.close?.())) }
+}
+
 /**
  * On a cancel: every finished row to rows.json (rows.jsonl has them already), then the target's close. Resolves false when
  * either failed (printed), so the exit says so.
@@ -130,13 +136,18 @@ export async function onCancel(target: Pick<InjectionTarget, 'close'>, out: stri
   return ok
 }
 
-export async function runAndWrite(o: { target: InjectionTarget; cases: InjectionCase[]; reps: number; waive: string[]; out: string; meta: ReportMeta; budgetUsd?: number; soFar?: InjectionRow[] }): Promise<ReturnType<typeof writeInjectionResults>> {
+/**
+ * Runs the set and writes its results before the target's close (#605: the close reaches the deployment, and on the
+ * product it disconnects Slack; a failed call there must never cost the rows). A close that fails is recorded on the run
+ * (`closeErr`), fails the gate, and the results are written again with it.
+ */
+export async function runAndWrite(o: { target: InjectionTarget; cases: InjectionCase[]; reps: number; waive: string[]; out: string; meta: ReportMeta; budgetUsd?: number; soFar?: InjectionRow[]; stop?: () => boolean }): Promise<ReturnType<typeof writeInjectionResults>> {
   let result: InjectionRunOutput
   // Each graded row goes to rows.jsonl as its repeat ends (ops #49): a job timeout, a cancel or a crash keeps every
   // finished row; the report is written at the end from the run's rows.
   startRows(o.out)
   try {
-    result = await runInjection({ target: o.target, cases: o.cases, reps: o.reps, waive: o.waive, setSize: INJECTION_CASES.length, onRow: (row) => { o.soFar?.push(row); appendRow(o.out, row) }, ...(o.budgetUsd !== undefined ? { budgetUsd: o.budgetUsd } : {}) })
+    result = await runInjection({ target: o.target, cases: o.cases, reps: o.reps, waive: o.waive, setSize: INJECTION_CASES.length, onRow: (row) => { o.soFar?.push(row); appendRow(o.out, row) }, ...(o.stop ? { stop: o.stop } : {}), ...(o.budgetUsd !== undefined ? { budgetUsd: o.budgetUsd } : {}) })
   } catch (e) {
     // No rows to keep: give back what the target holds, and say so if that fails too.
     try {

@@ -107,19 +107,44 @@ export function createProductInjectionTarget(o: ProductInjectionOptions): Inject
   async function leaveSlack(): Promise<void> {
     if (!slackConnected || !inhouse) return
     const failed: unknown[] = []
-    try {
-      await base.slackDoor().reset()
-    } catch (e) {
-      failed.push(e)
-    }
+    // The disconnect first (#612): it is what a later suite would see, and a cancel's close may be cut short.
     try {
       await link.disconnect(inhouse)
       slackConnected = false
     } catch (e) {
       failed.push(e)
     }
+    try {
+      await base.slackDoor().reset()
+    } catch (e) {
+      failed.push(e)
+    }
     if (failed.length === 1) throw failed[0]
     if (failed.length > 1) throw new AggregateError(failed, 'emptying the Slack workspace and disconnecting Slack both failed')
+  }
+  /** What the run found and put right before its first case (#612), for the report. */
+  const notes: string[] = []
+  let slackChecked = false
+  /**
+   * #612: a hard-killed earlier run can leave Slack connected or the eval workspace full, which a non-Slack case (or
+   * another suite) would then run with. Once, at the first case's start (the doors exist only after the eval-brand check):
+   * Slack connected is disconnected, a workspace or a listed channel left is emptied, and the report says so. Slack left
+   * connected with no Inhouse app to disconnect it fails the case by name.
+   */
+  async function checkSlackAtStart(): Promise<void> {
+    if (slackChecked) return
+    slackChecked = true
+    const slack = base.slackDoor()
+    const [account, w] = await Promise.all([slack.account(), slack.read()])
+    const connected = account?.lastState === 'connected'
+    const left = w.channels.length + w.messages.length + w.listed.length
+    if (!connected && left === 0) return
+    if (connected) {
+      if (!inhouse) throw new Error('Slack is still connected from an earlier run, and without the Inhouse app (INHOUSE_EVAL_INHOUSE_ORIGIN and _AUD) it can\'t be disconnected')
+      await link.disconnect(inhouse)
+    }
+    if (left > 0) await slack.reset()
+    notes.push(`At the run's start an earlier run's Slack state was put right: ${[connected ? 'Slack disconnected' : '', left > 0 ? `the eval workspace emptied (${w.channels.length} channels, ${w.messages.length} messages, ${w.listed.length} listed)` : ''].filter(Boolean).join(', ')}.`)
   }
   const sleep = o.sleep ?? ((ms: number) => new Promise<void>((r) => setTimeout(r, ms)))
   const now = o.now ?? Date.now
@@ -128,6 +153,7 @@ export function createProductInjectionTarget(o: ProductInjectionOptions): Inject
     provides,
     serves: (c) => (c.plant && !plants.includes(c.plant.via) ? `planting through ${c.plant.via} needs a per-case dataset on the eval hub (not built)` : null),
     spentUsd: () => base.spentUsd?.() ?? 0,
+    notes: () => [...notes],
     close: async () => {
       try {
         // #583: leave the shared eval deployment without Slack (a cancel mid-repeat lands here too).
@@ -155,6 +181,7 @@ export function createProductInjectionTarget(o: ProductInjectionOptions): Inject
         await w.resetWrites()
         mark = (await w.now()) - CLOCK_SLACK_MS
         for (const s of c.ceilings) await w.setCeiling(s.operation, { ...(s.perDayMax !== undefined ? { perDayMax: s.perDayMax } : {}), ...(s.unitsMax !== undefined ? { unitsMax: s.unitsMax } : {}) })
+        await checkSlackAtStart()
         if (c.namedMember) teammate = await base.addTeammate({ caseId: c.id, rep: run.rep, name: c.namedMember })
         if (slackCase) {
           if (!inhouse) throw new Error('a Slack case needs the Inhouse app (INHOUSE_EVAL_INHOUSE_ORIGIN and _AUD)')
