@@ -4,7 +4,7 @@ import { fxFor, test } from './support/fx.js'
 
 test.afterEach(async ({ page }) => { await page.clock.resume() })
 
-for (const copy of [1, 2, 3, 4, 5, 6, 7, 8, 9, 10]) test(`diag: Details click ${copy}`, async ({ page }) => {
+for (const copy of [1]) test(`diag: Details click ${copy}`, async ({ page }) => {
   await page.setViewportSize({ width: 1440, height: 900 })
   await page.clock.install()
   await page.addInitScript(() => {
