@@ -591,7 +591,7 @@ test('The Klaviyo request shows its status, never a date, and hides on First day
   // The oversell is a finding since #726 (the product has no approver note), so its window names no approver to ask.
   await page.getByRole('article', { name: 'Trail Shell Jacket (M, Olive) is oversold by 5' }).click({ position: { x: 12, y: 12 } })
   const panel = page.getByRole('dialog')
-  await expect(panel).toContainText('pause the Olive M variant on Shopify')
+  await expect(panel).toContainText('Pause the Olive M variant on Shopify')
   await expect(panel).not.toContainText(/Ask Leo|signs off/)
   await page.keyboard.press('Escape')
   await expect(panel).toHaveCount(0)
