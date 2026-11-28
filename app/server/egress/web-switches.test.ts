@@ -177,6 +177,33 @@ describe('what a turn is resolved with (failure 4)', () => {
     expect(await (await handleWebFetch(new Request('https://example.com/'), webDeps(net.f).d)).text()).toBe('WebFetch refused: off')
     expect(net.calls).toEqual([])
   })
+  // #755: an unparseable mode or host list reads as never set (open for a brand with no list) unless it fails closed.
+  it.each([
+    ['a host list', { 't:webfetch': 'not json' }],
+    ['a mode', { 't:webfetch_mode': 'not json' }],
+    ['a mode over a good list', { 't:webfetch_mode': 'not json', 't:webfetch': '"example.com"' }],
+    ['both', { 't:webfetch_mode': 'not json', 't:webfetch': 'not json' }],
+    // #763: the egress reads both rows and refuses; a valid `open` beside a corrupt list must not read as open.
+    ['a list beside a valid open mode', { 't:webfetch_mode': '"open"', 't:webfetch': 'not json' }],
+  ])('a routine turn reads %s that does not parse as no website (fail closed), never as open', async (_n, rows) => {
+    await db.prepare("DELETE FROM settings WHERE owner = 'brand' AND key IN ('t:webfetch', 't:webfetch_mode')").run()
+    for (const [key, json] of Object.entries(rows)) {
+      await db.prepare("INSERT INTO settings (owner, key, value_json, rev, updated_at_ms, updated_by, req_id) VALUES ('brand', ?, ?, 1, 1, 'x', 'r')").bind(key, json).run()
+    }
+    expect(await submitSettings(db)).toMatchObject({ webFetchDomains: [] })
+  })
+  it('a routine turn with a valid open mode and a good list reads any public website (nothing corrupt, nothing closed)', async () => {
+    await db.prepare("DELETE FROM settings WHERE owner = 'brand' AND key IN ('t:webfetch', 't:webfetch_mode')").run()
+    await db.prepare("INSERT INTO settings (owner, key, value_json, rev, updated_at_ms, updated_by, req_id) VALUES ('brand', 't:webfetch_mode', '\"open\"', 1, 1, 'x', 'r')").run()
+    await listHosts('example.com')
+    expect(await submitSettings(db)).toMatchObject({ webFetchDomains: null })
+  })
+  it('a routine turn with no web row at all reads any public website (the default), and a saved empty list none', async () => {
+    await db.prepare("DELETE FROM settings WHERE owner = 'brand' AND key IN ('t:webfetch', 't:webfetch_mode')").run()
+    expect(await submitSettings(db)).toMatchObject({ webFetchDomains: null })
+    await listHosts('')
+    expect(await submitSettings(db)).toMatchObject({ webFetchDomains: [] })
+  })
   it('the defaults: search off, reading on (so the list decides)', async () => {
     await listHosts('example.com')
     expect(await resolveTurnSettings(stores.settings, 'sonnet')).toMatchObject({ webSearch: false, webFetchDomains: ['example.com'] })

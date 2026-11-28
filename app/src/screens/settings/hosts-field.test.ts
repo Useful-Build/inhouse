@@ -61,12 +61,37 @@ describe('the web rows\' words follow the fetch mode (M3-J)', () => {
 
   it('the words in each case', async () => {
     const { webFetchWords } = await import('./content')
-    // No mode, no saved list (#744): open, and saving it empty says it blocks.
-    expect(webFetchWords(undefined, undefined).list).toBe('Until a list is saved, any public website is allowed. Enter one website name per line to allow only those. Saving it empty blocks all websites.')
+    // No mode, no saved list (#744): open. The row offers the choice of listing some, or none (#754).
+    expect(webFetchWords(undefined, undefined).list).toBe('Any public website is allowed. Choose "Only the websites listed" to allow just some, or none.')
     // A saved empty list with no mode blocks (the screen's promise), not "any public website".
-    expect(webFetchWords(undefined, '')).toEqual({ read: 'Let your Inhouse agent open the websites listed below. Off blocks them all.', list: 'Enter one website name per line. Leave empty to block all websites.' })
-    // An invalid stored mode is what the server reads: the list (#745).
+    expect(webFetchWords(undefined, '')).toEqual({ read: 'Let your Inhouse agent open the websites listed below. Off blocks them all.', list: 'Enter one website name per line. Leave empty to block all websites.', reach: 'list', pinned: false })
+    // An invalid stored mode is what the server reads: the list (#745), and it is the team's, so the row says so.
     expect(webFetchWords('any', '')).toEqual(webFetchWords('list', ''))
     expect(webFetchWords('any', undefined).readOnly).toBeUndefined()
+    expect(webFetchWords('list', undefined).list).toBe('Set by the Inhouse team: only the websites listed. Enter one website name per line. Leave empty to block all websites.')
+    expect(webFetchWords('open', 'a.example.com').list).toBe('Set by the Inhouse team: any public website, so this list isn’t used.')
+  })
+
+  // #762: the choice on the row is what the server decides (`webFetchMode`), for every mode and list, and a mode that is
+  // saved pins it (it can't be changed from the screen, which would write a list the mode overrides or ignores).
+  it('the choice follows the server for every mode and list, and a saved mode pins it', async () => {
+    const { webFetchWords } = await import('./content')
+    const { webFetchMode } = await import('../../../shared/contract/settings-table')
+    const modes = [undefined, null, 'list', 'open', 'OPEN', 'any', true, 0, ''] as const
+    const lists = [undefined, null, '', 'a.example.com', 'not a list!', 7] as const
+    for (const mode of modes) for (const hosts of lists) {
+      const w = webFetchWords(mode, hosts)
+      const at = `${String(mode)} ${String(hosts)}`
+      expect(w.reach, at).toBe(webFetchMode(mode, hosts))
+      expect(w.pinned, at).toBe(mode !== undefined && mode !== null)
+    }
+    // The cases a reader checks by eye: mode list with no list blocks, mode open with a list is open, no mode follows the list.
+    expect(webFetchWords('list', undefined)).toMatchObject({ reach: 'list', pinned: true })
+    expect(webFetchWords('open', 'a.example.com')).toMatchObject({ reach: 'open', pinned: true })
+    // Mode open with no list: pinned, so "Only the websites listed" can't be chosen (it would save an empty list under a mode that overrides it).
+    expect(webFetchWords('open', undefined)).toMatchObject({ reach: 'open', pinned: true })
+    expect(webFetchWords(undefined, undefined)).toMatchObject({ reach: 'open', pinned: false })
+    expect(webFetchWords(undefined, '')).toMatchObject({ reach: 'list', pinned: false })
+    expect(webFetchWords(undefined, 'a.example.com')).toMatchObject({ reach: 'list', pinned: false })
   })
 })
