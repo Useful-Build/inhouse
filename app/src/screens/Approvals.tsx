@@ -71,7 +71,7 @@ export function Approvals() {
   return (
     <Page>
       <PageHeader title="Approvals" description="Work your Inhouse agent drafted. Nothing goes out until someone approves it." />
-      {/* Stage 1 M2-H: its questions and actions for this person. The demo has none, so nothing shows there. */}
+      {/* Stage 1 M2-H: its questions and actions for this person (the demo's are its sample cards). */}
       <AgentAsks />
 
       {S === 0 && (

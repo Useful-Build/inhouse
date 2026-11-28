@@ -35,7 +35,7 @@ const meAs = (role: Me['role']): Me => ({ ...agent.me()!, role, grant: null })
 function page(v: View, role: Me['role'], product = true) {
   const opened: string[] = []
   const e: Env = {
-    S: 2, stage: 'Run', agent: agent.getSnapshot(), data: { ...agent.read(), tools: { ...agent.read().tools, connected: ['slack'] } }, spent: agent.read().usage.total, phone: false,
+    agent: agent.getSnapshot(), data: { ...agent.read(), tools: { ...agent.read().tools, connected: ['slack'] } }, spent: agent.read().usage.total, phone: false,
     openTeam: noop, openPop: noop, openSettings: t => opened.push(t), newChat: noop, goSkills: noop, togglePause: noop,
     theme: 'system', setTheme: noop, toast: noop, forget: noop, download: noop, setRole: noop, setSupport: noop,
     me: meAs(role), invite: noop, removeMember: noop, grantUi: false, product, showGrant: true, loadingMore: false, loadMore: noop, exportFromServer: null, exportDataFromServer: null, notify: v,

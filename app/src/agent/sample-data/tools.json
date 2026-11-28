@@ -77,6 +77,7 @@
       "read": "Orders, products, inventory, customers and discounts",
       "draft": "Pause a variant, restock returns, update stock counts",
       "run": "Restock returns and pause oversold variants, within your limits",
+      "acts": true,
       "conn": "Custom app on your Shopify store, built by the Inhouse team",
       "site": "shopify.com",
       "since": "-14d 09:00"

@@ -7,14 +7,14 @@ import {
   traces, tools as sampleTools, usage, usageAtCap, usageHistory,
 } from './data'
 import { loadSkillBodies, routineIdOf, sampleAt, sampleRuns } from './data'
-import type { ProblemSeed, TraceKey } from './data'
+import type { TraceKey } from './data'
 import type {
   CreateChatInput, ApprovalRule, AuditLine, MemberRecord, MemberRole, Me, ResourceKey, ResourceStatus,
   AgentClient, AgentData, AgentErrorCode, AgentNotice, AgentNotification, AgentState, ApproveResult, ActiveRun, ChatList, ChatPage, ChatSendInput, ChatSummary, ChatThread, LinkState, RunFrame, SendTurnResult, StoredMessage, ClockTime, DemoContext,
   Instant, LibraryFile, MessagePart, NoticePage, RoutineCard, RoutineDef, RoutineRun, Scenario, SeedTurn, SetAsideReason, SetAsideRecord,
-  SkillDef, Stage, StampRecord, TablePart, TeamRequest, ToolSetup, ToolsData, Trace, UsageData, MemoryLine, WaitingMemory,
+  SkillDef, StageIndex, StampRecord, TablePart, TeamRequest, ToolSetup, ToolsData, Trace, UsageData, MemoryLine, WaitingMemory,
 } from './types'
-import { AgentError, CHAT_TITLE_MAX, stageIndex } from './types'
+import { AgentError, CHAT_TITLE_MAX, STAGES } from './types'
 import type { BatchCovers } from './types'
 import type { ChatEngine, Host } from './mock-chat'
 import { shownClock, shownDateTimeIn, shownTimeOn } from './upgrade-times'
@@ -28,14 +28,14 @@ import type { RoutineHistoryRun, RoutineRunHistory } from '../../shared/contract
 import type { Can } from '../../shared/contract/me'
 import type { InviteInput } from '../../shared/contract/members'
 import type { AvailableChannels, NotifyChannelList, PutNotifyChannels } from '../../shared/contract/notify-slack'
-import type { ActionCard, ActionChoice, ActionFilter, ActionItemsPage } from '../../shared/contract/actions'
+import type { ActionCard, ActionChoice, ActionFilter, ActionItemsPage, ActionResolution } from '../../shared/contract/actions'
 import type { MockActions } from './mock-actions'
 import type { Permission } from '../../shared/contract/permissions'
 import type { CeilingList, CeilingRow } from '../../shared/contract/ceiling'
 import type { Question } from '../../shared/contract/questions'
 import type { Job } from '../../shared/contract/jobs'
 import { MEMBER_ID_PATTERN, meetsRule, settingRow } from '../../shared/contract/settings-table'
-import { pendingIds, visibleProblems } from '../state/derive'
+import { PRODUCT_STAGE, pendingIds } from '../state/derive'
 
 /**
  * Test hook: a brand other than the sample one. `localStorage['inhouse.demo.data.v1']` is `{ "brandName"?: string, "channels"?: false }`:
@@ -122,7 +122,7 @@ const initialState = (): AgentState => ({
 
 // ---------- the read-only snapshot ----------
 
-type RawTurn = { user?: string; stage?: string; agent?: Record<string, unknown>[]; trace?: string; model?: string }
+type RawTurn = { user?: string; agent?: Record<string, unknown>[]; trace?: string; model?: string }
 /** A seeded answer's recorded trace: every one has its own, so its footer and steps are its own. */
 const needTrace = (turn: RawTurn, where: string): string => {
   if (!turn.trace) throw new Error(`Sample data: an answer in ${where} has no trace.`)
@@ -140,7 +140,6 @@ const seedPart = (a: Record<string, unknown>): MessagePart => {
     case 'text': return { type: 'text', text: a.text as string }
     case 'table': return { type: 'table', table: seedTable }
     case 'workRow': return { type: 'workRow', text: a.text as string, at: sampleAt('a work row', a.at) }
-    case 'notInThisStage': return { type: 'notInThisStage', text: a.text as string }
     case 'approval': return { type: 'approval', problemId: a.problemId as string }
     case 'routine':
       // The routine this chat set up: it is on the Routines page under its own name (routines.json).
@@ -152,7 +151,7 @@ const seedPart = (a: Record<string, unknown>): MessagePart => {
 const seedThread: SeedTurn[] = (chatScript.seedThread.turns as RawTurn[]).map((turn): SeedTurn =>
   turn.user
     ? { role: 'user', text: turn.user }
-    : { role: 'agent', stage: turn.stage as Stage | undefined, trace: traceKey(needTrace(turn, 'the seed thread')), model: needModel(turn, 'the seed thread'), parts: (turn.agent ?? []).map(seedPart) })
+    : { role: 'agent', trace: traceKey(needTrace(turn, 'the seed thread')), model: needModel(turn, 'the seed thread'), parts: (turn.agent ?? []).map(seedPart) })
 
 /** The other chats: plain text, work rows, tables with the table's own data, and the demo's action cards. */
 const chatPart = (a: Record<string, unknown>): MessagePart => {
@@ -165,15 +164,14 @@ const chatPart = (a: Record<string, unknown>): MessagePart => {
     default: throw new Error(`Unknown chat part type: ${String(a.type)}`)
   }
 }
-const STAGES_OK = ['Watch', 'Act', 'Run']
-/** The chats, newest first by `at`; an agent turn with a `stage` shows only in that stage. Bad data stops the app. */
+/** The chats, newest first by `at`. Bad data stops the app: the demo has no stages (decision A13), so no turn names one. */
 function loadChats(): ChatThread[] {
   const out = chatList.chats.map((c): ChatThread => ({
     id: c.id, title: c.title, at: sampleAt(`the chat "${c.id}"`, c.at),
     turns: c.turns === 'seedThread' ? seedThread : (c.turns as RawTurn[]).map((turn): SeedTurn => {
       if (turn.user) return { role: 'user', text: turn.user }
-      if (turn.stage !== undefined && !STAGES_OK.includes(turn.stage)) throw new Error(`Sample data: chat "${c.id}" has a turn for an unknown stage "${turn.stage}".`)
-      return { role: 'agent', stage: turn.stage as Stage | undefined, trace: traceKey(needTrace(turn, `chat "${c.id}"`)), model: needModel(turn, `chat "${c.id}"`), parts: (turn.agent ?? []).map(chatPart) }
+      if ('stage' in turn) throw new Error(`Sample data: chat "${c.id}" has a turn for a stage; the demo has none.`)
+      return { role: 'agent', trace: traceKey(needTrace(turn, `chat "${c.id}"`)), model: needModel(turn, `chat "${c.id}"`), parts: (turn.agent ?? []).map(chatPart) }
     }),
   }))
   // All chats lists them in this order, so it must be newest first by a real time (never by the shown `at`).
@@ -315,7 +313,23 @@ const linkOf = (opens: string): AgentNotification['link'] => {
 }
 /** A notification's id from what it says, so changed content arrives unread. */
 const noticeId = (text: string) => 'n-' + text.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '').slice(0, 48)
-type RawNotification = { text: string | Record<string, string>; who: string; at: string; unread: boolean; opens: string | Record<string, string> }
+/**
+ * A bell row in notifications.json: a plain one (`text`), or the drafts line (`drafts`, its count from Today). `approval`:
+ * an approval notice (the outbox's words, server/notices/templates.ts), shown only where the demo shows its actions (the
+ * Normal scenario); `waiting`: it says something waits on this person.
+ */
+type RawNotification = { text?: string; drafts?: string; who: string; at: string; unread: boolean; opens: string; icon?: string; waiting?: boolean; approval?: boolean }
+
+/**
+ * The view the demo shows, as the product's (decision A13, option B): no stages, pinned to the Act view (`PRODUCT_STAGE`),
+ * so what the sample data offers by stage (a routine's `need`) reads as the product does.
+ */
+const DEMO_VIEW = STAGES.indexOf(PRODUCT_STAGE) as StageIndex
+
+/** A card a Pause sent back to waiting, for its bell notice. */
+type SentBack = { id: string; actionId: string; rev: number; atMs: number }
+/** The outbox's notice title for an approval a Pause sent back (server/notices/templates.ts, the lapsed approval's). */
+const APPROVAL_SENT_BACK = 'Approval sent back'
 
 // ---------- saved state: keep only known shapes ----------
 
@@ -651,7 +665,7 @@ export class MockAgent implements AgentClient {
   private created = new Set<string>()
   /** What each chat made with `createChat` is called and when it began. */
   private createdInfo = new Map<string, { title: string; at: Instant }>()
-  private demo: DemoContext = { stage: 'Act', scenario: 'Normal' }
+  private demo: DemoContext = { scenario: 'Normal' }
 
   constructor() {
     const { state, server, startedAt, started, filledFromNow } = this.loadSaved()
@@ -863,9 +877,9 @@ export class MockAgent implements AgentClient {
   onNotice = (l: (n: AgentNotice) => void) => { this.noticeListeners.add(l); return () => { this.noticeListeners.delete(l) } }
   /** DemoControls (demo-controls.ts), not AgentClient: the real client has neither. */
   setDemo(ctx: DemoContext) {
-    const changed = ctx.stage !== this.demo.stage || ctx.scenario !== this.demo.scenario
+    const changed = ctx.scenario !== this.demo.scenario
     this.demo = ctx
-    // What `read`, `listFiles` and `listNotifications` return follows the scenario and stage.
+    // What `read`, `listFiles` and `listNotifications` return follows the scenario.
     if (changed) this.listeners.forEach(l => l())
   }
 
@@ -878,6 +892,7 @@ export class MockAgent implements AgentClient {
     this.runInfo.clear()
     // A demo whose actions loaded starts them again; one that never read them has nothing to reset.
     void this.demoActionsLoad?.then(a => a.reset())
+    this.sentBack = []
     try { localStorage.removeItem(RUNS_KEY) } catch (e) { console.warn('Inhouse demo: could not clear saved runs.', e) }
     try { localStorage.removeItem(DATA_OVERRIDE_KEY) } catch (e) { console.warn('Inhouse demo: could not clear the data override.', e) }
     this.startedAt = Date.now()
@@ -887,11 +902,6 @@ export class MockAgent implements AgentClient {
   }
 
   // ----- approvals -----
-
-  /** Run: Inhouse agent did part of this job and nobody undid it. Mirrors `ranByAgent && partial` in derive.ts. */
-  private isPartial(p: ProblemSeed) {
-    return stageIndex(this.demo.stage) === 2 && !!p.done && !!p.partial && !this.state.undone[p.id]
-  }
 
   private scheduleSend(id: string, delay: number) {
     clearTimeout(this.holdTimers[id])
@@ -918,14 +928,8 @@ export class MockAgent implements AgentClient {
     const held = !p.draft.rev
     const existing = this.state.approved[id]
     if (existing) return Promise.resolve({ record: existing, held, doneText: existing.doneText })
-    // Wording is fixed now, so history never rewrites itself when the stage or an undo changes later.
-    const part = this.isPartial(p)
-    const record = {
-      ...this.stamp(), loggedAt: instantOf(Date.now()),
-      title: part && p.draft.runTitle ? p.draft.runTitle : p.draft.title,
-      doneText: (part && p.runDoneText) || p.doneText,
-      partial: part,
-    }
+    // Wording is fixed now, so history never rewrites itself when an undo changes later.
+    const record = { ...this.stamp(), loggedAt: instantOf(Date.now()), title: p.draft.title, doneText: p.doneText, partial: false }
     // Approving a problem that was set aside brings it back as a normal approval everywhere.
     const setAside = { ...this.state.setAside }; delete setAside[id]
     if (!this.commit({ approved: { ...this.state.approved, [id]: record }, setAside }, true)) return this.rejected('unknown', SAVE_FAILED, false)
@@ -959,8 +963,12 @@ export class MockAgent implements AgentClient {
   pause(): Promise<Instant> {
     const { at } = this.stamp()
     const done = this.writeThen({ paused: at }, at)
-    // A paused agent ends what is running and cancels what waits (the server's fence).
-    if (this.state.paused === at) this.engine?.fence(() => true, 'paused')
+    // A paused agent ends what is running and cancels what waits (the server's fence), and sends every approval still in
+    // its hold back to waiting (N12). Actions never read have none in a hold.
+    if (this.state.paused === at) {
+      this.engine?.fence(() => true, 'paused')
+      void this.demoActionsLoad?.then(a => a.pause())
+    }
     return done
   }
   resume() { return this.write({ paused: null }) }
@@ -998,17 +1006,22 @@ export class MockAgent implements AgentClient {
     if (forgotten) forgot[key] = true; else delete forgot[key]
     return this.writeRecs([[rec, 1]], { forgot })
   }
-  // Stage 1 M2 (N18): the demo has no permissions or questions: its lists are empty and every answer is refused (there is
-  // nothing it could name), with no notice. Stage 1 M3-U: its actions are the real agent's cards on sample data
-  // (mock-actions.ts), in the Normal scenario whatever the stage; in the other scenarios none, as before.
-  // They load with the first read of them (their module and sample data), outside Today's first load (check-bundle).
+  // Stage 1 M2 (N18): the demo has no questions: its list is empty and every answer is refused (there is nothing it could
+  // name), with no notice. Stage 1 M3-U and the demo catch-up (PR 1): its actions and permissions are the real agent's
+  // cards and Always allowed list on sample data (mock-actions.ts), in the Normal scenario; in the other scenarios none,
+  // as before. They load with the first read of them (their module and sample data), outside Today's first load
+  // (check-bundle).
   private demoActionsLoad: Promise<MockActions> | null = null
+  private actionListeners = new Set<(u: { actionId: string; rev: number }) => void>()
   private demoActions(): Promise<MockActions> {
     return this.demoActionsLoad ??= import('./mock-actions').then(m => new m.MockActions({
       now: () => demoNow(this.startedAt).getTime(),
       shown: () => this.demo.scenario === 'Normal',
       meId: ME_ID,
       memberId: memberIdOf,
+      paused: () => this.state.paused !== null,
+      changed: u => { this.actionListeners.forEach(l => l(u)) },
+      sentBack: u => { this.sentBack = [{ ...u, id: `n-sent-back-${u.actionId}-${u.rev}` }, ...this.sentBack]; this.listeners.forEach(l => l()) },
     }))
   }
   /** A demo action's answer: the card, or the refusal as an AgentError (no notice: the card says it). */
@@ -1023,12 +1036,12 @@ export class MockAgent implements AgentClient {
   action(id: string): Promise<ActionCard> { return this.acted(a => a.get(id)) }
   answerAction(id: string, ifRev: number, choice: ActionChoice, covers?: BatchCovers): Promise<ActionCard> { return this.acted(a => a.answer(id, ifRev, choice, covers)) }
   undoAction(id: string, ifRev: number): Promise<ActionCard> { return this.acted(a => a.undo(id, ifRev)) }
-  resolveAction(id: string, ifRev: number): Promise<ActionCard> { return this.acted(a => a.resolve(id, ifRev)) }
+  resolveAction(id: string, ifRev: number, outcome: ActionResolution): Promise<ActionCard> { return this.acted(a => a.resolve(id, ifRev, outcome)) }
   withdrawAction(id: string, ifRev: number): Promise<ActionCard> { return this.acted(a => a.withdraw(id, ifRev)) }
   actionItems(id: string, after: number): Promise<ActionItemsPage> { return this.acted(a => a.items(id, after)) }
-  onActionUpdated(): () => void { return () => undefined }
-  permissions(): Promise<Permission[]> { return Promise.resolve([]) }
-  removePermission(): Promise<Permission[]> { return this.rejected(NOT_FOUND, NO_M2_RECORD, false) }
+  onActionUpdated(l: (u: { actionId: string; rev: number }) => void): () => void { this.actionListeners.add(l); return () => { this.actionListeners.delete(l) } }
+  permissions(): Promise<Permission[]> { return this.acted(a => a.permissions()) }
+  removePermission(id: string, ifRev: number): Promise<Permission[]> { return this.acted(a => a.removePermission(id, ifRev)) }
   questions(): Promise<Question[]> { return Promise.resolve([]) }
   answerQuestion(): Promise<Question> { return this.rejected(NOT_FOUND, NO_M2_RECORD, false) }
   // Stage 1 M1-D (N3): the demo runs no long jobs. A chat has none, and a Cancel names nothing it has.
@@ -1149,49 +1162,55 @@ export class MockAgent implements AgentClient {
 
   // ----- notifications -----
 
-  private notesFor: [AgentState, Stage, Scenario] | null = null
+  private notesFor: [AgentState, Scenario, readonly SentBack[]] | null = null
   private notes: AgentNotification[] = []
-  /** Rebuilt only when state, stage or scenario change, so React sees the same array until then. */
+  /** The approvals a Pause sent back (mock-actions.ts), newest first: each one's bell notice. In memory, like the cards. */
+  private sentBack: readonly SentBack[] = []
+  /** Rebuilt only when state, scenario or the notices sent back change, so React sees the same array until then. */
   listNotifications = (): AgentNotification[] => {
-    const { stage, scenario } = this.demo
+    const { scenario } = this.demo
     const f = this.notesFor
-    if (f && f[0] === this.state && f[1] === stage && f[2] === scenario) return this.notes
-    this.notesFor = [this.state, stage, scenario]
-    this.notes = this.buildNotifications(stage, scenario)
+    if (f && f[0] === this.state && f[1] === scenario && f[2] === this.sentBack) return this.notes
+    this.notesFor = [this.state, scenario, this.sentBack]
+    this.notes = this.buildNotifications(scenario)
     return this.notes
   }
 
-  private buildNotifications(stage: Stage, scenario: Scenario): AgentNotification[] {
+  private buildNotifications(scenario: Scenario): AgentNotification[] {
     // On day one, and while loading, nothing has happened yet.
     if (isNoData(scenario)) return []
-    const S = stageIndex(stage)
     const st = this.state
     const data = this.read()
-    const ctx = { S, agent: st, data }
-    // The same counts as Today: what's waiting in Act and Run, what Today lists in Watch.
-    const nNeed = S >= 1 ? pendingIds(ctx).length : visibleProblems(ctx).length
-    const out: AgentNotification[] = []
+    // The product's view (no stages, decision A13): the same count as Approvals' drafts.
+    const nNeed = pendingIds({ S: DEMO_VIEW, agent: st, data, noStages: true }).length
+    const actions = scenario === 'Normal'
+    // A Pause's notices, as the outbox sends them: "Approval sent back", to Approvals, waiting on this person again.
+    const out: AgentNotification[] = !actions ? [] : this.sentBack.map(b => ({
+      id: b.id, icon: 'undo', text: APPROVAL_SENT_BACK, who: 'Inhouse', at: instantOf(b.atMs), unread: !st.readNotices[b.id], waiting: true, link: { to: 'page', page: 'approvals' },
+    }))
     for (const n of notifications.notifications as RawNotification[]) {
-      if (typeof n.text !== 'string') {
+      if (n.approval && !actions) continue
+      if (n.drafts !== undefined) {
         // The waiting line. Its id carries the count, so a higher count arrives unread again; a count that fell (a draft
         // was approved) stays read.
         if (nNeed === 0) continue
-        const kind = `waiting-${S >= 1 ? 'drafts' : 'today'}`
+        const kind = 'waiting-drafts'
         const read = Object.keys(st.readNotices).some(k => k.startsWith(`${kind}-`) && Number(k.slice(kind.length + 1)) >= nNeed)
         out.push({
           id: `${kind}-${nNeed}`, icon: 'task_alt', who: n.who, at: sampleAt('a notification', n.at), unread: n.unread && !read, waiting: true,
-          text: S >= 1 ? `${nNeed} ${nNeed === 1 ? 'draft is' : 'drafts are'} waiting for your approval.` : `Today has ${nNeed} ${nNeed === 1 ? 'thing' : 'things'} that need${nNeed === 1 ? 's' : ''} you.`,
-          link: { to: 'page', page: S >= 1 ? 'approvals' : 'today' },
+          text: nNeed === 1 ? n.drafts.replace('{pending} drafts are', '1 draft is') : n.drafts.replace('{pending}', String(nNeed)),
+          link: linkOf(n.opens),
         })
         continue
       }
-      if (typeof n.opens !== 'string') throw new Error(`Sample data: notification "${n.text}" opens a stage-specific place, which only the waiting line may.`)
+      if (n.text === undefined) throw new Error(`Sample data: the notification at "${n.at}" has no text.`)
       const link = linkOf(n.opens)
       const person = data.people.members.some(m => m.name === n.who) ? n.who : undefined
       const id = noticeId(n.text)
       out.push({
         id, text: n.text, who: n.who, person, at: sampleAt(`the notification "${n.text}"`, n.at), unread: n.unread && !st.readNotices[id], link,
-        icon: person ? 'check_circle' : link.to === 'tool' ? 'support_agent' : link.to === 'chat' ? 'summarize' : 'notifications',
+        icon: n.icon ?? (person ? 'check_circle' : link.to === 'tool' ? 'support_agent' : link.to === 'chat' ? 'summarize' : 'notifications'),
+        ...(n.waiting ? { waiting: true } : {}),
       })
     }
     return out
@@ -1261,7 +1280,7 @@ export class MockAgent implements AgentClient {
       at: x.at, outcome: 'done', result: x.result ?? 'It finished', manual: true, ...(x.trace ? { trace: x.trace } : {}),
     }))
     const need = 'need' in r ? r.need : 1
-    const sample = 'last' in r && r.last && stageIndex(this.demo.stage) >= need ? sampleRuns[r.name] ?? [] : []
+    const sample = 'last' in r && r.last && DEMO_VIEW >= need ? sampleRuns[r.name] ?? [] : []
     const runs = [...now, ...sample].sort((a, b) => b.at.ms - a.at.ms).slice(0, ROUTINE_RUNS_MAX)
     return Promise.resolve({ runs })
   }
@@ -1428,8 +1447,6 @@ export class MockAgent implements AgentClient {
         ? { ...s, kind: 'fail' as const, label: v.with.label, endMs: v.with.endMs, detail: v.with.detail }
         : s)
     }
-    // In Run the message to ShipBob was sent within limits, so nothing waited.
-    if (stageIndex(this.demo.stage) === 2) steps = steps.filter(s => s.kind !== 'approval')
     return { ...base, id, steps }
   }
 

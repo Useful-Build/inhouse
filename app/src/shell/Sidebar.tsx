@@ -107,8 +107,7 @@ export function Sidebar() {
       variant="chrome" size={18} onClick={() => openTeam('tool')} />
   )
   const activeKey = page === 'app' ? 'apps' : page === 'skill' ? 'skills' : page
-  // Stage 1 M2-H: the agent's actions and questions waiting on this person count too, whatever the stage (they don't
-  // depend on it: N17 retires it), so a card never waits unseen.
+  // Stage 1 M2-H: the agent's actions and questions waiting on this person count too, so a card never waits unseen.
   const asks = useAsksCount()
   const drafts = ctx.S >= 1 ? pendingIds(ctx).length : 0
   const count = drafts + asks

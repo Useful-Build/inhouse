@@ -261,7 +261,6 @@ function ToolsFailed() {
 function ChannelPage({ channel: c }: { channel: ToolChannel }) {
   const ctx = useCtx()
   const go = useUi(s => s.go)
-  const openSettings = useUi(s => s.openSettings)
   const locked = stageLocked(ctx, c.need)
   const status = locked ? `Included from ${STAGE_TAGS[c.need]}` : `Connected · ${fmtDay(c.since, display())}`
   // Before Act the channel isn't live, so only the website shows.
@@ -276,13 +275,7 @@ function ChannelPage({ channel: c }: { channel: ToolChannel }) {
       </Button>
       <PageHeader className="mt-4" title={c.name} description={c.desc}
         leading={<LogoTile k={c.key} size="xl" className={cn('shadow-card', locked && 'grayscale')} />}
-        tag={<Badge variant="status" size="md">{status}</Badge>}
-        // Notification settings is a page only the demo has (settings/menu.ts).
-        actions={!locked && demo !== null && (
-          <Button variant="outline" size="lg" onClick={() => openSettings('you-notif')}>
-            <Icon name="notifications" size={17} />Notification settings
-          </Button>
-        )} />
+        tag={<Badge variant="status" size="md">{status}</Badge>} />
       <SectionHeader title="Details" className={LABEL} />
       <DetailList variant="relaxed" items={info} className={`${CARD} px-5 py-2.5 text-base`} />
     </Page>

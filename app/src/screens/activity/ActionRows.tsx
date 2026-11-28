@@ -1,6 +1,6 @@
 // Activity's Stage 1 M2-H rows: the actions the Inhouse agent took or proposed, with where each got to, and "Stop
 // allowing this" where a permission of this person's lets the agent do it without asking. Read when the page opens.
-// Nothing shows until read and only when there is an action, so the demo (no actions) looks exactly as before.
+// Nothing shows until read and only when there is an action (the demo's are its sample cards, mock-actions.ts).
 //
 // An action's card names its tool account, not the permission behind it, so a row offers "Stop allowing this" only
 // when exactly one permission this person may remove covers that account; the question names that permission, so it

@@ -3,8 +3,8 @@
 import { useMemo, useSyncExternalStore } from 'react'
 import { create } from 'zustand'
 import { agent, demo as demoControls, now } from '../agent'
-import type { AgentData, AgentState, Attachment, ChatMessage, Instant, LibraryFile, MessagePart, RunFrame, Scenario, SetAsideReason, SkillDef, Stage } from '../agent/types'
-import { AgentError, SCENARIOS, STAGES, stageIndex } from '../agent/types'
+import type { AgentData, AgentState, Attachment, ChatMessage, Instant, LibraryFile, MessagePart, RunFrame, Scenario, SetAsideReason, SkillDef } from '../agent/types'
+import { AgentError, SCENARIOS, stageIndex } from '../agent/types'
 import { NOT_FOUND, REASON } from '../../shared/contract/error-codes'
 import type { ChatView } from '../screens/chat/view'
 import { NO_MODEL_TEXT, RELOAD_NOTE, RUN_FAILED, STOPPED_NOTE, emptyView, upsert } from '../screens/chat/notes'
@@ -111,7 +111,6 @@ export interface ChatHistory { messages: ChatMessage[]; next: string | null; sta
 
 export interface UiState {
   // demo switches (dev only)
-  stage: Stage
   scenario: Scenario
   ambient: Ambient
   animateMark: boolean
@@ -256,7 +255,7 @@ export interface UiActions {
   unapprove(id: string): void
   undoHandled(id: string): void
   togglePause(): void
-  setDemo(p: Partial<Pick<UiState, 'stage' | 'scenario' | 'ambient' | 'animateMark'>>): void
+  setDemo(p: Partial<Pick<UiState, 'scenario' | 'ambient' | 'animateMark'>>): void
   resetDemo(): void
 
   /** Approve several drafts at once; the toast's Undo takes back every one that hasn't gone out. */
@@ -295,9 +294,9 @@ export interface UiActions {
 
 const DEMO_KEY = 'inhouse.demo.switches.v1'
 const AMBIENTS: Ambient[] = ['When Inhouse agent works', 'Always', 'Off']
-type DemoSwitches = Pick<UiState, 'stage' | 'scenario' | 'ambient' | 'animateMark'>
-/** Where a clean demo starts, and where Reset demo puts the stage and scenario back. */
-const DEFAULT_DEMO: DemoSwitches = { stage: 'Act', scenario: 'Normal', ambient: 'Always', animateMark: true }
+type DemoSwitches = Pick<UiState, 'scenario' | 'ambient' | 'animateMark'>
+/** Where a clean demo starts, and where Reset demo puts the scenario back. The demo has no stages, as the product (A13). */
+const DEFAULT_DEMO: DemoSwitches = { scenario: 'Normal', ambient: 'Always', animateMark: true }
 const saveDemo = (d: DemoSwitches) => {
   try { localStorage.setItem(DEMO_KEY, JSON.stringify(d)) }
   catch (e) { console.warn('Inhouse demo: could not save switches.', e) }
@@ -310,7 +309,6 @@ const loadDemo = (): DemoSwitches => {
     if (typeof raw !== 'object' || raw === null) return d
     const r = raw as Record<string, unknown>
     return {
-      stage: STAGES.find(x => x === r.stage) ?? d.stage,
       scenario: SCENARIOS.find(x => x === r.scenario) ?? d.scenario,
       // Earlier versions saved this switch as 'When Ava works' and then 'When agent works'.
       ambient: AMBIENTS.find(x => x === (r.ambient === 'When Ava works' || r.ambient === 'When agent works' ? 'When Inhouse agent works' : r.ambient)) ?? d.ambient,
@@ -640,10 +638,10 @@ const initialUi = (): Omit<UiState, 'stage' | 'scenario' | 'ambient' | 'animateM
 })
 
 export const useUi = create<UiState & UiActions>()((set, get) => {
-  // The demo's saved switches are the demo's alone. The product starts from the defaults and saves nothing: it has no
-  // stages (Stage 1 M2-I, `useCtx` pins its view to Act), so `stage` here is a placeholder there, and so is `scenario`.
+  // The demo's saved switches are the demo's alone. The product starts from the defaults and saves nothing: `scenario`
+  // is a placeholder there.
   const demo = demoControls ? loadDemo() : DEFAULT_DEMO
-  demoControls?.setDemo({ stage: demo.stage, scenario: demo.scenario })
+  demoControls?.setDemo({ scenario: demo.scenario })
   const session = restoreSession(loadSession())
   // The reload note goes into the saved session once, not again on every reload until something else saves.
   saveAfterSetup = !!session.noted
@@ -1158,9 +1156,9 @@ export const useUi = create<UiState & UiActions>()((set, get) => {
       // changes it, the old one's additions go to the stash and the new one's come out, so a save can't overwrite them.
       const was = openChatKey(get(), agent.read())
       set(p)
-      const { stage, scenario, ambient, animateMark } = get()
-      demoControls?.setDemo({ stage, scenario })
-      if (demoControls) saveDemo({ stage, scenario, ambient, animateMark })
+      const { scenario, ambient, animateMark } = get()
+      demoControls?.setDemo({ scenario })
+      if (demoControls) saveDemo({ scenario, ambient, animateMark })
       const now = openChatKey(get(), agent.read())
       if (now !== was) {
         set(s => {
@@ -1177,10 +1175,10 @@ export const useUi = create<UiState & UiActions>()((set, get) => {
       clearRevealed()
       demoControls?.reset()
       clearSession()
-      // The stage and scenario go back to their defaults with everything else; the dot sweep and mark animation stay.
+      // The scenario goes back to its default with everything else; the dot sweep and mark animation stay.
       const { ambient, animateMark } = get()
       const d = { ...DEFAULT_DEMO, ambient, animateMark }
-      demoControls?.setDemo({ stage: d.stage, scenario: d.scenario })
+      demoControls?.setDemo({ scenario: d.scenario })
       if (demoControls) saveDemo(d)
       set({ ...initialUi(), ...d, phone: get().phone, demoOpen: get().demoOpen })
       // The brand and channels came from the override at load, so a reload is what drops them.
@@ -1374,6 +1372,8 @@ export const useAgentState = (): AgentState => useSyncExternalStore(agent.subscr
 /** Read-only domain data (problems, tools, usage, people, chat strings): everything that is not state. */
 export const useAgentData = (): AgentData => useSyncExternalStore(agent.subscribe, agent.read)
 
+/** The stage index the view is pinned to. */
+const PRODUCT_S = stageIndex(PRODUCT_STAGE)
 /**
  * Stage index, agent state and data: the input every selector in derive.ts takes. The demo's scenario switch isn't in it:
  * a scenario shows through the data the client reads (the mock serves another snapshot per scenario).
@@ -1381,12 +1381,9 @@ export const useAgentData = (): AgentData => useSyncExternalStore(agent.subscrib
 export function useCtx(): Ctx {
   const agentState = useAgentState()
   const data = useAgentData()
-  const demoStage = useUi(s => s.stage)
-  // The demo's switch drives the stage there. The product has no stages (Stage 1 M2-I): its view is pinned to the Act
-  // view until M5, and the technical `stage` setting stays, unread.
-  const product = !demoControls
-  const stage = product ? PRODUCT_STAGE : demoStage
-  return useMemo(() => ({ S: stageIndex(stage), agent: agentState, data, ...(product ? { noStages: true } : {}) }), [stage, product, agentState, data])
+  // There are no stages (Stage 1 M2-I), in the product and, since decision A13 (option B), in the demo too: the view is
+  // pinned to the Act view until M5, and the technical `stage` setting stays, unread.
+  return useMemo(() => ({ S: PRODUCT_S, agent: agentState, data, noStages: true }), [agentState, data])
 }
 
 // ---------- composer drafts (PR 4): swap drafts when the open composer changes ----------

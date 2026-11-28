@@ -1,5 +1,5 @@
 {
-  "note": "The demo's agent actions (Stage 1 M3-U): what the real agent's cards look like, on invented data. They show in the Normal scenario, whatever the stage. Each batch is one card holding many changes. The VIP batch tags 450 orders, one each, its orders numbered from `firstOrder` up; its lines, rows and title are the server's words for that operation. The restock batch adds stock to 12 items at one location, one quantity each (a table with its total). The refund is a teammate's, so only an admin may approve it. Times are from the demo's Monday.",
+  "note": "The demo's agent actions and permissions: what the real agent's cards and its Always allowed list look like, on invented data, in the Normal scenario (the demo has no stages, as the product). Each batch is one card holding many changes. The VIP batch tags 450 orders, one each, its orders numbered from `firstOrder` up; its lines, rows and title are the server's words for that operation. The restock batch adds stock to 12 items at one location, one quantity each (a table with its total); it needs an exact OK because it's past Sam's Add stock permission (`count`). The refund is a teammate's, so only an admin may approve it. `singles` are one-change cards in the server's words (server/outbox/operations): `ask` ones offer Allow once, Always allow and No (`nudge`: Always allow first, after three Allow onces); one needs a check; one is Priya's, which Sam sees under Waiting on your team; one went out yesterday under Sam's permission. `operations` are each operation's permission title, units and default limits (server/outbox/operations, shared/audit-text.ts), which Always allow grants. `permissions` are the two seeded ones. Times are from the demo's Monday.",
   "tool": "Shopify",
   "shop": "northline-outdoor",
   "batches": [
@@ -37,5 +37,75 @@
     "lines": ["1 item, shipping $0.00.", "1 × line 48381", "Restock the items: no.", "The customer gets Shopify’s refund email: no."],
     "askedAt": "0d 07:31",
     "result": "Sent."
-  }
+    },
+  "tools": {
+    "shopify": { "accountId": "shopify:northline-outdoor", "label": "Shopify" },
+    "slack": { "accountId": "slack:northline", "label": "Slack" }
+  },
+  "operations": {
+    "shopify.order.tag_add": { "title": "Add tags to orders", "tool": "shopify", "scope": "northline-outdoor", "unitsLabel": "orders", "perDay": 50, "unitsMax": 5, "ceilingPerDay": 200, "ceilingUnitsMax": 100 },
+    "shopify.order.tag_remove": { "title": "Remove tags from orders", "tool": "shopify", "scope": "northline-outdoor", "unitsLabel": "orders", "perDay": 50, "unitsMax": 5, "ceilingPerDay": 200, "ceilingUnitsMax": 100 },
+    "shopify.inventory.restock": { "title": "Add stock", "tool": "shopify", "scope": "northline-outdoor", "unitsLabel": "stock units", "perDay": 200, "unitsMax": 50, "ceilingPerDay": 1000, "ceilingUnitsMax": 500 },
+    "slack.channel.post": { "title": "Post messages to a channel", "tool": "slack", "scope": "#ops-alerts", "unitsLabel": "posts", "perDay": 50, "unitsMax": 1, "ceilingPerDay": 200, "ceilingUnitsMax": 1, "reversible": false }
+  },
+  "singles": [
+    {
+      "id": "ac_demoOpsAlertsPost00000",
+      "operation": "slack.channel.post",
+      "chatId": "order-tags",
+      "state": "waiting",
+      "nudge": true,
+      "title": "Post to #ops-alerts in Slack",
+      "lines": ["Order 4512 for Harbor & Pine is tagged Wholesale. Pack it with today's trade orders."],
+      "askedAt": "0d 07:54"
+    },
+    {
+      "id": "ac_demoWholesaleTag000000",
+      "operation": "shopify.order.tag_add",
+      "chatId": "order-tags",
+      "state": "waiting",
+      "nudge": false,
+      "title": "Add a tag to order 4512",
+      "lines": ["Tag: Wholesale"],
+      "askedAt": "0d 07:52"
+    },
+    {
+      "id": "ac_demoPriyaHoldTag000000",
+      "operation": "shopify.order.tag_remove",
+      "askedBy": "priya",
+      "chatId": null,
+      "state": "waiting",
+      "nudge": false,
+      "title": "Remove a tag from order 4470",
+      "lines": ["Tag: Hold"],
+      "askedAt": "0d 07:36"
+    },
+    {
+      "id": "ac_demoStockAdded00000000",
+      "operation": "shopify.inventory.restock",
+      "chatId": "ridge",
+      "state": "sent",
+      "permission": "pg_demoAddStock0000000000",
+      "title": "Add 40 units of stock to item 8012",
+      "lines": ["Location: 601", "Reason: stock received"],
+      "result": "Sent.",
+      "askedAt": "-1d 14:05"
+    },
+    {
+      "id": "ac_demoGiftTagCheck000000",
+      "operation": "shopify.order.tag_add",
+      "chatId": "order-tags",
+      "state": "needs_check",
+      "title": "Add a tag to order 4377",
+      "lines": ["Tag: Gift"],
+      "result": "It isn’t clear whether this went out. Check in the tool, then say whether it did.",
+      "askedAt": "-3d 15:48"
+    }
+  ],
+  "resolved": { "sent": "Sent.", "failed": "It didn’t go out." },
+  "lapsed": { "paused": "The agent was paused, so this needs your OK again." },
+  "permissions": [
+    { "id": "pg_demoAddStock0000000000", "operation": "shopify.inventory.restock", "holder": "sam", "grantedBy": "sam", "grantedAt": "-6d 10:20" },
+    { "id": "pg_demoDanaOpsAlerts00000", "operation": "slack.channel.post", "holder": "dana", "grantedBy": "dana", "grantedAt": "-4d 09:15" }
+  ]
 }

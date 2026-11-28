@@ -298,8 +298,8 @@ export interface AgentClient {
   // ---------- Stage 1 M2 (N18): the agent's actions, the permissions and the questions ----------
   // Plain calls: none changes the snapshot or sends a notice. Each resolves with the server's answer or rejects with an
   // `AgentError`, and the card that asked says what happened. A 401, or a 403 for someone who left the team, puts the
-  // client in the signed-out state as any read does. The demo has none of them: its lists are empty and every answer is
-  // refused (not found).
+  // client in the signed-out state as any read does. The demo's actions and permissions are its sample ones
+  // (mock-actions.ts); it has no questions: that list is empty and every answer is refused (not found).
   /** Route 120: the cards this person may see, newest first, narrowed to some states or one chat. */
   actions(filter?: ActionFilter): Promise<ActionCard[]>
   /** Route 121: one card. Rejects with not found for one this person may not see. */

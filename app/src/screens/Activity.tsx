@@ -59,7 +59,7 @@ export function Activity() {
         <SearchBox value={query} onChange={setQuery} placeholder="Search activity" label="Search activity" className="grow basis-55" />
         <Segmented label="Filter activity" value={filter} options={TABS} onChange={v => { patch({ actFilter: v }); setOpen(null) }} />
       </div>
-      {/* Stage 1 M2-H: the agent's actions (the product; the demo has none). Not "Needs you": Approvals answers those. */}
+      {/* Stage 1 M2-H: the agent's actions (the demo's are its sample cards). Not "Needs you": Approvals answers those. */}
       {filter !== 'needs' && <ActionRows needle={needle} />}
       {days.length === 0 && (needle
         ? <EmptyState variant="inline" className="mt-7">No lines match "{query.trim()}".</EmptyState>

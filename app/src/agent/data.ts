@@ -342,11 +342,10 @@ export const memory = {
 }
 
 export const auditLog: AuditEntry[] = auditJson.entries.map(e => ({ ...e, at: sampleAt(`the audit line "${e.what}"`, e.at) }))
-/** Activity's fixed lines, each with its instant (a stage or time the app doesn't know stops it). */
-type RawActivityLine = Omit<ActivityLine, 'at' | 'minStage' | 'by'> & { at: string; minStage?: string; by: unknown }
-const STAGE_NAMES = ['Watch', 'Act', 'Run']
+/** Activity's fixed lines, each with its instant (a time the app doesn't know stops it). The demo has no stages (A13). */
+type RawActivityLine = Omit<ActivityLine, 'at' | 'minStage' | 'by'> & { at: string; by: unknown }
 const activityLine = (l: RawActivityLine): ActivityLine => {
-  if (l.minStage !== undefined && !STAGE_NAMES.includes(l.minStage)) throw new Error(`Activity data: "${l.text}" has an unknown stage "${l.minStage}".`)
+  if ('minStage' in l) throw new Error(`Activity data: "${l.text}" names a stage; the demo has none.`)
   const what = `the Activity line "${l.text}"`
   return { ...l, at: sampleAt(what, l.at), by: proseIn(what, l.by) } as ActivityLine
 }

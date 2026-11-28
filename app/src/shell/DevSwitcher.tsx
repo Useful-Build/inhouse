@@ -1,6 +1,5 @@
 // Demo switches. Dev builds, or any build opened with ?demo.
 import { demo } from '../agent'
-import { STAGES } from '../agent/types'
 import type { Ambient } from '../state/store'
 import { useUi } from '../state/store'
 import { Button, Icon, IconButton, Segmented, Switch } from '../ui'
@@ -11,7 +10,6 @@ import { demoEnabled } from './demo'
 /** The dashed circle that opens the switches. It sits in the top bar, so it never covers a page's controls. */
 export function DemoButton() {
   const open = useUi(s => s.demoOpen)
-  const stage = useUi(s => s.stage)
   const scenario = useUi(s => s.scenario)
   const patch = useUi(s => s.patch)
   if (!demoEnabled()) return null
@@ -20,19 +18,18 @@ export function DemoButton() {
   return (
     <Tooltip>
       <TooltipTrigger asChild>
-        <button type="button" onClick={() => patch({ demoOpen: true })} aria-label={`Demo switches: ${stage}, ${scenario}`}
+        <button type="button" onClick={() => patch({ demoOpen: true })} aria-label={`Demo switches: ${scenario}`}
           className="flex size-7.5 flex-none items-center justify-center rounded-full border border-dashed border-border-strong bg-card/85 text-foreground-3">
           <Icon name="tune" size={15} />
         </button>
       </TooltipTrigger>
-      <TooltipContent>Demo switches · {stage} · {scenario}</TooltipContent>
+      <TooltipContent>Demo switches · {scenario}</TooltipContent>
     </Tooltip>
   )
 }
 
 export function DevSwitcher() {
   const open = useUi(s => s.demoOpen)
-  const stage = useUi(s => s.stage)
   const scenario = useUi(s => s.scenario)
   const ambient = useUi(s => s.ambient)
   const animateMark = useUi(s => s.animateMark)
@@ -46,8 +43,6 @@ export function DevSwitcher() {
         <span className="text-2xs text-muted-foreground">Dev only</span>
         <IconButton icon="close" label="Close demo switches" size={18} box="icon-sm" onClick={() => patch({ demoOpen: false })} />
       </div>
-      <div className={label}>Stage</div>
-      <Segmented label="Stage" value={stage} options={STAGES.map(s => [s, s])} onChange={v => setDemo({ stage: v })} />
       <div className={label}>Scenario</div>
       <div className="flex flex-wrap gap-1">
         {(demo?.scenarios ?? []).map(s => (

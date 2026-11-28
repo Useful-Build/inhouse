@@ -20,7 +20,6 @@
     {
       "at": "0d 07:00",
       "kind": "read",
-      "minStage": "Act",
       "text": "Monday reorder list: nothing beyond the Ridge 30L draft",
       "who": "Read only",
       "why": "Scheduled routine, every Monday at 7:00 AM.",
@@ -30,7 +29,6 @@
     {
       "at": "0d 06:00",
       "kind": "read",
-      "minStage": "Act",
       "text": "Amazon payout check: found a $1,240 gap",
       "who": "Read only",
       "why": "Scheduled routine, every day at 6:00 AM.",
@@ -42,7 +40,6 @@
     {
       "at": "-3d 16:00",
       "kind": "read",
-      "minStage": "Act",
       "text": "Saved the weekly numbers report",
       "who": "Read only",
       "why": "Scheduled routine, every Friday at 4:00 PM.",
@@ -63,7 +60,6 @@
     {
       "at": "-4d 10:12",
       "kind": "change",
-      "minStage": "Act",
       "text": "Reorder of 300 Summit Fleece sent to Kestrel Supply",
       "who": "Dana approved",
       "why": "Summit Fleece had 16 days of stock left.",

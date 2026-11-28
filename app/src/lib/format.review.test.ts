@@ -89,9 +89,10 @@ describe('item 7: what the agent did, its note and Activity\'s "by" are sentence
     returns: 'Restocked 11 units at 6:10\u00a0AM',
     stuck: 'Asked ShipBob at 6:06\u00a0AM. Picked at 7:40\u00a0AM',
   }
+  // The demo no longer shows Run (decision A13), but derive.ts still words what the agent did by itself at S 2.
   test('the sentences read as they did, in Run', () => {
     const agent = new MockAgent()
-    agent.setDemo({ stage: 'Run', scenario: 'Normal' })
+    agent.setDemo({ scenario: 'Normal' })
     const data = agent.read()
     const shown = Object.fromEntries(data.problems.filter(p => p.done).map(p => [p.id, F.fmtProse(p.done!, d)]))
     expect(shown).toEqual(BEFORE)

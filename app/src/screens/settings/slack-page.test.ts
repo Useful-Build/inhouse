@@ -2,7 +2,7 @@
 //  1. a Member gets an add picker, an alerts choice or a Remove button (route 75 is Admin and Inhouse only);
 //  2. the picker offers a shared or non-member channel, or one already listed;
 //  3. a pick saves another channel's id, or the alerts choice keeps a removed channel;
-//  4. the page drops the stage, readiness or guests rule;
+//  4. the page drops the where-alerts-go, readiness or guests rule, or names a stage (none since M2-I; the demo since A13);
 //  5. the demo saves a shared or non-member channel, or a stale save.
 import { describe, expect, it, vi } from 'vitest'
 
@@ -27,7 +27,7 @@ function view(over: Partial<View> = {}) {
   return { v, calls }
 }
 const env = (notify: View): Env => ({
-  S: 2, stage: 'Run', agent: agent.getSnapshot(), data: agent.read(), spent: agent.read().usage.total, phone: false,
+  agent: agent.getSnapshot(), data: agent.read(), spent: agent.read().usage.total, phone: false,
   openTeam: noop, openPop: noop, openSettings: noop, newChat: noop, goSkills: noop, togglePause: noop,
   theme: 'system', setTheme: noop, toast: noop, forget: noop, download: noop, setRole: noop, setSupport: noop,
   me: agent.me(), invite: noop, removeMember: noop, grantUi: false, product: false, showGrant: true, loadingMore: false, loadMore: noop, exportFromServer: null, exportDataFromServer: null, notify,
@@ -55,22 +55,22 @@ describe('Slack notices', () => {
   it('a Member reads the list and the rules, and gets no control', () => {
     const { v } = view({ canEdit: false, available: null })
     const r = rows(v)
-    expect(r.map(x => x.title)).toEqual(['#ops-alerts', '#general', 'Before the Act stage', 'While Slack is paused', 'Who can read them'])
+    expect(r.map(x => x.title)).toEqual(['#ops-alerts', '#general', 'For now', 'While Slack is paused', 'Who can read them'])
     expect(r.some(x => x.remove || x.kind === 'select' || x.kind === 'button')).toBe(false)
   })
 
-  it('states the stage, readiness and guests rules, in every state', () => {
+  it('states where alerts go now, the readiness and guests rules, in every state', () => {
     for (const status of ['loading', 'error', 'ready'] as const) {
       const text = rows(view({ status }).v).map(x => x.desc).join(' ')
-      expect(text, status).toContain('Slack posts start at Act. Until then alerts reach the bell in the app.')
+      expect(text, status).toContain("The agent's notices reach the bell in the app. Inhouse's own alerts, like a failed routine, post to your alerts channel.")
       expect(text, status).toContain('Alerts pause while Slack is paused or needs a reconnect.')
       expect(text, status).toContain('Anyone in a listed channel can read these alerts, guests included.')
     }
   })
 
-  it('the product (no stages, M2-I) says where alerts go now with no stage word, in every state', () => {
-    for (const status of ['loading', 'error', 'ready'] as const) {
-      const p = settingsPage('team-slack', { ...env(view({ status }).v), product: true })
+  it('the product and the demo (no stages: M2-I, A13) say where alerts go now with no stage word, in every state', () => {
+    for (const product of [true, false]) for (const status of ['loading', 'error', 'ready'] as const) {
+      const p = settingsPage('team-slack', { ...env(view({ status }).v), product })
       const text = p.sections.flatMap(s => [s.label, ...s.rows.flatMap(x => [x.title, x.desc, x.value])]).join(' ')
       expect(text, status).toContain("The agent's notices reach the bell in the app. Inhouse's own alerts, like a failed routine, post to your alerts channel.")
       expect(text, status).toContain('Alerts pause while Slack is paused or needs a reconnect.')
@@ -110,9 +110,9 @@ describe('Slack notices only with Slack connected (CI round)', async () => {
   it('a brand without Slack gets no menu row and no page; with it as a tool or a channel, both show', () => {
     expect(hasSlack(none)).toBe(false)
     expect(tabs(menuFor(none))).not.toContain('team-slack')
-    // The demo's menu (`menuFor` without `product`): every page but Slack notices and the product-only Always allowed and
-    // What the agent can do (Stage 1 M3-C).
-    expect(tabs(menuFor(none))).toEqual(tabs(SECTIONS).filter(id => id !== 'team-slack' && id !== 'you-permissions' && id !== 'team-ceiling'))
+    // The demo's menu (`menuFor` without `product`): every page but Slack notices and the product-only What the agent can
+    // do (Stage 1 M3-C).
+    expect(tabs(menuFor(none))).toEqual(tabs(SECTIONS).filter(id => id !== 'team-slack' && id !== 'team-ceiling'))
     for (const t of [{ connected: ['slack'], channels: [] }, { connected: [], channels: [{ key: 'slack' }] }]) {
       expect(hasSlack(t)).toBe(true)
       expect(tabs(menuFor(t))).toContain('team-slack')

@@ -1,7 +1,7 @@
 // Settings > Always allowed (Stage 1 M2-H, N10, N15): what the Inhouse agent may do without asking, each with Remove.
 // A member sees their own permissions; an admin sees everyone's, each named by whose it is. Remove shows only where the
-// permission's own `can.remove` says so (display only: the server checks again) and asks first. The product only: the
-// demo has no permissions, so the page isn't in its menu (menu.ts).
+// permission's own `can.remove` says so (display only: the server checks again) and asks first. The demo lists its
+// sample permissions and those its Always allow makes (mock-actions.ts).
 import { useCallback, useEffect, useState } from 'react'
 import { agent } from '../../agent'
 import type { AgentErrorCode, Permission } from '../../agent/types'
