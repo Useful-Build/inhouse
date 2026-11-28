@@ -324,13 +324,13 @@ describe('the seeded chats for the other write cards (B7, B8, B11, B12)', () => 
     for (const m of kept) if (m.role === 'agent' && m.part.type === 'ask') expect(cards.get(m.part.actionId)).toBe('order-tags')
   })
 
-  it('the draft order went out in its chat, with the products and SKUs the store gave; finding the teammate is a step of its trace', async () => {
+  it('the draft order went out in its chat, with the products and SKUs the store gave; the teammate lookup is a step of its trace, labelled as the product labels `member_find`', async () => {
     const a = fresh()
     const draft = await a.action('ac_demoDraftOrder00000000')
     expect(draft).toMatchObject({ state: 'sent', chatId: 'draft-orders', title: 'Create a draft order of 12 items', result: 'Sent.', reversible: true })
     expect(draft.detail?.rows.map(r => [r.product, r.sku, r.quantity])).toEqual([['Cairn Insulated Bottle 750 ml, Olive', 'CB-750-OLV', 8], ['Cairn Insulated Bottle 750 ml, Black', 'CB-750-BLK', 4]])
     expect(askIds(a, 'draft-orders')).toEqual(['ac_demoDraftOrder00000000'])
-    expect((await a.getTrace('draft-orders'))?.steps.map(s => s.label)).toContain('Finding a teammate')
+    expect((await a.getTrace('draft-orders'))?.steps.map(s => s.label)).toContain('Using a tool')
   })
 
   it('the stock chat refuses 900 units against the 500-unit limit and says why; the 40-unit reduction is an exact, destructive card that went out', async () => {

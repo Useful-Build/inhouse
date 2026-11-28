@@ -1517,7 +1517,7 @@
           "detail": "Question in Chats"
         },
         {
-          "label": "Finding a teammate",
+          "label": "Using a tool",
           "kind": "tool",
           "startSeconds": 0.2,
           "endSeconds": 0.8,
