@@ -122,7 +122,22 @@ export function createSessionReader(o: SessionReaderOptions): SessionReader {
     return body
   }
   return {
-    preflight: () => refusing(async () => { await page(new URLSearchParams({ prefix: 'sessions/', per_page: '1' }), 'preflight') }),
+    preflight: () => refusing(async () => {
+      await page(new URLSearchParams({ prefix: 'sessions/', per_page: '1' }), 'preflight')
+      // One real GET of a known object (the live smoke after #670): a token can list a bucket and still be refused its
+      // objects. An earlier eval chat's first part is enough; with none in the bucket yet there is nothing to read.
+      const first = await page(new URLSearchParams({ prefix: 'sessions/eval-', per_page: '1' }), 'preflight list')
+      const item = Array.isArray(first.result) ? (first.result[0] as { key?: unknown; size?: unknown } | undefined) : undefined
+      if (item === undefined) return
+      const chat = typeof item.key === 'string' ? item.key.split('/')[1] ?? '' : ''
+      if (typeof item.key !== 'string' || !EVAL_CHAT.test(chat) || !transcriptKey(chat).test(item.key)) throw new DoorRefusal(`R2 preflight list holds ${JSON.stringify(item.key)}, not a transcript key: refusing to read it`)
+      if (!Number.isInteger(item.size) || (item.size as number) > caps.objectBytes) throw new DoorRefusal(`R2 object ${item.key} has no size or is over the cap`)
+      const r = await get(`${base}/${item.key.split('/').map(encodeURIComponent).join('/')}`, 'preflight get')
+      if (r.status !== 200) {
+        const words = r.status === 401 || r.status === 403 ? ': CLOUDFLARE_API_TOKEN can list the bucket but not read its objects' : ''
+        throw new DoorRefusal(`R2 preflight get answered ${r.status}${words}`)
+      }
+    }),
     parts: (chatId) => refusing(async () => {
       if (!EVAL_CHAT.test(chatId)) throw new DoorRefusal(`refusing: ${JSON.stringify(chatId)} is not an eval chat id`)
       const prefix = `sessions/${chatId}/`

@@ -15,7 +15,7 @@
 //    the run's close disconnects Slack (#583), so a later suite's tools don't change.
 // Planting in the store or a web page needs a per-case dataset on the eval hub, not built: those cases are listed as not
 // served here (their twins W31 to W37 plant the same attacks through a file or a memory hit).
-import { WRANGLER_TIMEOUT_MS } from '../targets/door.ts'
+import { WRANGLER_TIMEOUT_MS, assertProcessTreeListable } from '../targets/door.ts'
 import type { RetryOptions } from '../targets/retry.ts'
 import { accessHeaders, createProductTarget, EVAL_AUD_VAR, JOB_END_TIMEOUT_MS, testIssuerSignIn, type ProductTarget, type ProductTargetOptions } from '../targets/product.ts'
 import { connectSlack, disconnectSlack, slackShown, type InhouseApi } from '../targets/slack-door.ts'
@@ -145,6 +145,8 @@ export interface ProductInjectionOptions extends Pick<ProductTargetOptions, 'pai
   now?: () => number
   /** How long a close waits for the running repeat to end (tests); default REPEAT_END_WAIT_MS. */
   repeatEndWaitMs?: number
+  /** The process lister the preflight checks (tests); default `ps`. */
+  ps?: string
   /** The default session reader's fetch and retry backoff (tests); default fetch and DOOR_RETRY_DELAYS_MS. */
   sessionsFetch?: typeof fetch
   sessionsRetry?: Pick<RetryOptions, 'sleep' | 'delaysMs'>
@@ -277,6 +279,8 @@ export function createProductInjectionTarget(o: ProductInjectionOptions): Inject
       // Tracked like a start (#680): a close waits for it, so the lease its setup takes goes back after it.
       const p = (async () => {
         if (closed) throw closingRefusal()
+        // A wrangler call's deadline kills its whole process tree, which needs `ps` (#715): without it, refuse now.
+        assertProcessTreeListable(o.ps)
         // (A Slack case without the Inhouse app never reaches here: it is not run or not served, and the runner stops on
         // it before the preflight unless the run waived it.)
         await base.ready()

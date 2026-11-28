@@ -363,7 +363,7 @@ describe('run.mjs stop handlers (MEDIUM 3)', () => {
     const cleared = new Promise<void>(done => { release = done })
     const order: string[] = []
     const s = signals(async () => { order.push('clear started'); await cleared; order.push('clear done'); return null }, () => void order.push('closed'))
-    expect([...s.handlers.keys()]).toEqual(['SIGINT', 'SIGTERM'])
+    expect([...s.handlers.keys()]).toEqual(['SIGINT', 'SIGHUP', 'SIGTERM'])
     s.handlers.get(signal)!()
     expect(s.log.filter(l => l.startsWith('exit'))).toEqual([])
     release()

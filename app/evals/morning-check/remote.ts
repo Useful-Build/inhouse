@@ -6,6 +6,8 @@
 // deadline, as ever).
 // The graded run (run.mjs on EVAL_DB, gradedRun below) holds the eval lease, pins the eval brand's Spending cap and its
 // Default model through the door, and stops before the next case once the run has spent its --budget.
+import { CANCEL_SIGNALS } from '../signals.ts'
+import { shieldWranglerCalls } from '../targets/door.ts'
 import type { MemoryDoor } from '../targets/door.ts'
 import type { MorningDoor } from './door.ts'
 import type { RunnerEnv } from './runner.ts'
@@ -207,21 +209,23 @@ export function remoteEnv(d: RemoteDeps): RunnerEnv {
 }
 
 export interface SignalDeps {
-  on(signal: 'SIGINT' | 'SIGTERM', handler: () => void): void
+  on(signal: 'SIGINT' | 'SIGHUP' | 'SIGTERM', handler: () => void): void
   exit(code: number): void
   error(line: string): void
 }
 const processSignals: SignalDeps = { on: (s, h) => void process.once(s, h), exit: code => process.exit(code), error: line => console.error(line) }
 
 /**
- * run.mjs's stop handlers: on SIGINT or SIGTERM the door is closed first (runAll may still be going, and its next setShop
- * must not write an override after the clear), then the override is cleared (awaited) before the process exits 130 or 143,
+ * run.mjs's stop handlers: on SIGINT, SIGHUP (#719) or SIGTERM the door is closed first (runAll may still be going, and its next setShop
+ * must not write an override after the clear), then the override is cleared (awaited) before the process exits 130, 129 or 143,
  * so an interrupted run leaves no override behind. A clear that fails is printed; the exit code stays the signal's.
  */
 export function clearOnSignals(door: Pick<MorningDoor, 'close' | 'clearShop'>, d: SignalDeps = processSignals, release?: () => Promise<void>): void {
   const said = (e: unknown) => (e instanceof Error ? e.message : String(e))
-  for (const [signal, code] of [['SIGINT', 130], ['SIGTERM', 143]] as const) {
+  for (const [signal, code] of CANCEL_SIGNALS) {
     d.on(signal, () => {
+      // The clear and the release run out of reach of a second signal (#716); a hangup stops the run too (#719).
+      shieldWranglerCalls()
       door.close()
       d.error(`run.mjs: ${signal}: clearing the test shop override before exiting`)
       // The graded run's eval lease is given back after the clear, whatever the clear did (`release`).

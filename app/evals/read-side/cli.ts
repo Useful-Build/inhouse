@@ -6,6 +6,8 @@ import { appendFileSync, mkdirSync, renameSync, writeFileSync } from 'node:fs'
 import path from 'node:path'
 import { parseArgs } from 'node:util'
 import { estimateUsd } from '../runner.ts'
+import { CANCEL_SIGNALS } from '../signals.ts'
+import { shieldWranglerCalls } from '../targets/door.ts'
 import { Refused, parseReadSideArgs } from './args.ts'
 import { createFakeReadSideTarget } from './fake-target.ts'
 import { buildReport, toMarkdown } from './report.ts'
@@ -25,7 +27,7 @@ export interface Deps {
   env: Record<string, string | undefined>
   /** Wires the product target to the eval deployment, its preflight and the effort pin included (product/setup.ts). */
   wire: typeof wireEval
-  /** Registers the stop handlers: on SIGINT or SIGTERM `stop` gives everything back, then the process exits 130 or 143. */
+  /** Registers the stop handlers (stopOnSignals): on SIGINT, SIGHUP or SIGTERM `stop` gives everything back, then the exit. */
   onSignals: (stop: () => Promise<void>) => void
 }
 
@@ -42,21 +44,28 @@ const defaults: Deps = {
   },
   env: process.env,
   wire: wireEval,
-  onSignals: (stop) => {
-    // One stop per run: a repeat signal while it gives things back is said and ignored, so a second Ctrl-C can't cut it short.
-    let stopping = false
-    for (const [signal, code] of [['SIGINT', 130], ['SIGTERM', 143]] as const) {
-      process.on(signal, () => {
-        if (stopping) {
-          console.error(`read-side: ${signal} again: still giving back the run's session, routines, effort, shop override and lease`)
-          return
-        }
-        stopping = true
-        console.error(`read-side: ${signal}: stopping the live turn, deleting the run's routines, putting back the effort and the shop override, giving back the eval lease`)
-        void stop().finally(() => process.exit(code))
-      })
-    }
-  },
+  onSignals: (stop) => stopOnSignals(stop),
+}
+
+/**
+ * The read-side stop handlers: on SIGINT, SIGHUP (#719) or SIGTERM, `stop` gives everything back, then the process exits
+ * 130, 129 or 143. One stop per run: a repeat signal while it gives things back is said and ignored, so a second Ctrl-C can't
+ * cut it short, and from the first signal on the wrangler calls run out of its reach (#716).
+ */
+export function stopOnSignals(stop: () => Promise<void>, d: { on: (signal: string, h: () => void) => void; error: (line: string) => void; exit: (code: number) => void } = { on: (s, h) => void process.on(s, h), error: (l) => console.error(l), exit: (c) => process.exit(c) }): void {
+  let stopping = false
+  for (const [signal, code] of CANCEL_SIGNALS) {
+    d.on(signal, () => {
+      if (stopping) {
+        d.error(`read-side: ${signal} again: still giving back the run's session, routines, effort, shop override and lease`)
+        return
+      }
+      stopping = true
+      shieldWranglerCalls()
+      d.error(`read-side: ${signal}: stopping the live turn, deleting the run's routines, putting back the effort and the shop override, giving back the eval lease`)
+      void stop().finally(() => d.exit(code))
+    })
+  }
 }
 
 export async function main(argv: string[], over: Partial<Deps> = {}): Promise<number> {
