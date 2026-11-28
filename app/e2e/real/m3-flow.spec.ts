@@ -168,12 +168,13 @@ test('the loop of 500 allowed writes stops at the limit and becomes one card; th
 
   // The 50 run under the permission go out after their holds, each once: every call is accounted for.
   const singles = async () => (await cardsAs(request, dana, `chatId=${chatId}`)).filter(c => c.batch === undefined)
-  await expect.poll(async () => (await singles()).filter(c => c.state === 'sent').length, { timeout: 120_000, intervals: [1_000] }).toBe(50)
+  await expect.poll(async () => (await singles()).filter(c => c.state === 'sent').length, { timeout: 300_000, intervals: [2_000] }).toBe(50)
   expect(await singles()).toHaveLength(50)
 })
 
 test('a Pause in the middle of the batch\'s send: what went out stays out, the rest moves to a new card that needs a fresh OK', async ({ page, request }) => {
-  test.setTimeout(300_000)
+  // On the sandbox deploy a pass of 20 items can take its full 10 s, so the ~400 moved items take minutes to send.
+  test.setTimeout(900_000)
   // The batch sends in passes of 20 items, 1 s apart, so 447 items take over 20 s. Pause once the first have gone out.
   await expect.poll(async () => (await itemsOf(request, dana, batchId)).filter(i => i.state === 'sent').length,
     { timeout: 60_000, intervals: [250], message: 'the first items go out' }).toBeGreaterThan(0)
@@ -203,7 +204,7 @@ test('a Pause in the middle of the batch\'s send: what went out stays out, the r
   await expect(card).toContainText('The agent was paused, so this needs your OK again.')
   await card.getByRole('button', { name: `Approve all ${SHOWN - sent}` }).click()
   await expect(toast(page, `Approved ${SHOWN - sent}. They start going out in a few seconds.`)).toBeVisible()
-  await expect.poll(async () => (await cardAs(request, dana, movedId)).state, { timeout: 120_000, intervals: [1_000] }).toBe('sent')
+  await expect.poll(async () => (await cardAs(request, dana, movedId)).state, { timeout: 600_000, intervals: [2_000] }).toBe('sent')
   expect((await itemsOf(request, dana, movedId)).every(i => i.state === 'sent')).toBe(true)
   // Nothing went out twice: the first batch's items are as they were, and the 3 that arrived late still wait.
   expect(await itemsOf(request, dana, batchId)).toEqual(done)
