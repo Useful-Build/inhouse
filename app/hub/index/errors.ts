@@ -22,6 +22,14 @@ const TEXT: Record<HubErrorCode, string> = {
   connect_stale: 'connect superseded by a newer change',
   connect_refused: 'connect refused by the provider',
   paused: 'connector paused',
+  // Stage 1 M4 (M4-A)
+  needs_key: 'the connection needs a new key',
+  definition_changed: 'the tool changed since it was confirmed',
+  needs_input: 'the tool asked for input the hub cannot give',
+  leak: "another tool's data can't go to this connection",
+  client_fault: 'the login server refused the client',
+  not_built: 'not built yet',
+  connections_off: 'connections are off in this build',
 }
 
 export const isHubErrorCode = (code: unknown): code is HubErrorCode => typeof code === 'string' && Object.hasOwn(TEXT, code)

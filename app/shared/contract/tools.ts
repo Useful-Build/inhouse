@@ -2,6 +2,22 @@
 import { z } from 'zod'
 import { InstantSchema, StageIndexSchema } from './common.ts'
 import { AttachmentSchema } from './chat.ts'
+import { ConnectionIdSchema, ConnectionPathSchema, ConnectionStateSchema } from './connections.ts'
+
+/**
+ * Stage 1 M4 (N35; M4-R2 merges it into the Tools list, M4-U2a shows it): a tool connected by address, as its page
+ * reads it. `state`: the hub's word ("Sign in again", "Needs a new key"). `changed`: how many of its confirmed tools
+ * are hidden because they changed ("Tools changed"). `adminMaySignIn` with a waiting state: an Admin's step.
+ */
+export const ToolConnectionDetailSchema = z.object({
+  id: ConnectionIdSchema,
+  state: ConnectionStateSchema,
+  path: ConnectionPathSchema,
+  trusted: z.boolean(),
+  adminMaySignIn: z.boolean(),
+  changed: z.number().int().min(0),
+})
+export type ToolConnectionDetail = z.infer<typeof ToolConnectionDetailSchema>
 
 export const ToolDetailSchema = z.object({
   name: z.string(),
@@ -34,6 +50,8 @@ export const ToolDetailSchema = z.object({
    * act on it. Never in a deployable build in M1 and M2 (N2). The product's tool page offers drafting only then.
    */
   acts: z.boolean().optional(),
+  /** Stage 1 M4: a tool connected by address (absent for a built-in tool). */
+  connection: ToolConnectionDetailSchema.optional(),
 })
 export type ToolDetail = z.infer<typeof ToolDetailSchema>
 

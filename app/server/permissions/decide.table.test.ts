@@ -59,7 +59,7 @@ describe('decideCore, every combination', () => {
           const units = 2
           const r: Resolved = {
             operation: 'shopify.order.tag_add', args: {}, accountId: 'shopify:store', accountGen: 1_000, scope: {}, scopeKey: 'shop=store-a',
-            records, units, effects: { money, customer: false, destructive: false, access: false }, memberMay, payloadHash: '0'.repeat(64), policyRev,
+            records, units, effects: { money, customer: false, destructive: false, access: false, unreviewed: false }, memberMay, payloadHash: '0'.repeat(64), policyRev,
           }
           const loweredRev = c === 'enabled_rev2' ? 2 : 1
           const ceiling: CeilingFacts | undefined = c === 'absent' ? undefined

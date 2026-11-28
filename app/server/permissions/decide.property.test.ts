@@ -34,8 +34,8 @@ import type { Asker, DecideFacts, GrantFacts, Resolved, ResolveFacts, WriteOpera
 const ASKER_ID = 'm_asker'
 
 const effectsArb = fc.oneof(
-  { weight: 3, arbitrary: fc.constant({ money: false, customer: false, destructive: false, access: false }) },
-  { weight: 1, arbitrary: fc.record({ money: fc.boolean(), customer: fc.boolean(), destructive: fc.boolean(), access: fc.boolean() }) },
+  { weight: 3, arbitrary: fc.constant({ money: false, customer: false, destructive: false, access: false, unreviewed: false }) },
+  { weight: 1, arbitrary: fc.record({ money: fc.boolean(), customer: fc.boolean(), destructive: fc.boolean(), access: fc.boolean(), unreviewed: fc.boolean() }) },
 )
 /** Made-up resolved entries: every flag drawn, not only the two real operations' values. */
 const resolvedArb: fc.Arbitrary<Resolved> = fc.record({
@@ -97,7 +97,7 @@ describe('decideCore', () => {
     fc.pre(guardrailed(f, r))
     const v = decideCore(f, ctx, r)
     expect(['exact', 'refuse']).toContain(v.verdict)
-    if (v.verdict === 'exact') expect(v.guardrail).toBe(Object.values(r.effects).some(Boolean) ? ['money', 'customer', 'destructive', 'access'].find(k => r.effects[k as keyof typeof r.effects]) : 'bulk')
+    if (v.verdict === 'exact') expect(v.guardrail).toBe(Object.values(r.effects).some(Boolean) ? ['money', 'customer', 'destructive', 'access', 'unreviewed'].find(k => r.effects[k as keyof typeof r.effects]) : 'bulk')
   })
 
   test.prop([caseArb])('I3: outside the ceiling is over_ceiling, whatever else holds', ({ r, ctx, f }) => {
@@ -159,7 +159,7 @@ describe('decideCore', () => {
     const v = decideCore(f, ctx, r)
     const passes = enabled(f, r) && withinCeiling(f, r) && ctx.asker !== null
     const adminOnly = passes && ctx.asker!.role === 'member' && !r.memberMay
-    const effect = (['money', 'customer', 'destructive', 'access'] as const).find(k => r.effects[k])
+    const effect = (['money', 'customer', 'destructive', 'access', 'unreviewed'] as const).find(k => r.effects[k])
     if (adminOnly) {
       const want = effect ?? (r.records > f.ceiling[r.operation]!.bulkThreshold ? 'bulk' : 'access')
       expect(v).toEqual({ verdict: 'exact', guardrail: want, approver: 'admins' })
@@ -189,6 +189,7 @@ const facts = (over: Partial<ResolveFacts> = {}): ResolveFacts => ({
     slack: { accountId: 'slack:workspace', connectedAtMs: 2_000, connected: true, paused: false, label: 'Slack', shop: null, currency: null },
   },
   listedChannels: [{ id: 'C0123ABCD', name: 'ops' }],
+  connections: [],
   ...over,
 })
 const validArgs = {

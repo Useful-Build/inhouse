@@ -84,6 +84,14 @@ const VALID: { [A in AuditAction]: Extract<AuditArgs, { action: A }> } = {
   'question.answered': { action: 'question.answered', questionId: 'q_AAAAAAAAAAAAAAAAAAAAAA' },
   'question.expired': { action: 'question.expired', questionId: 'q_AAAAAAAAAAAAAAAAAAAAAA' },
   'ceiling.changed': { action: 'ceiling.changed', operation: 'shopify.order.tag_add', old: { enabled: false, perDayMax: 50, unitsMax: 1, bulkThreshold: 5, batchMax: 500 }, new: { enabled: true, perDayMax: 200, unitsMax: 100, bulkThreshold: 5, batchMax: 500 } },
+  // Stage 1 M4 (M4-A)
+  'connection.prepared': { action: 'connection.prepared', accountId: 'mcp:helpdesk', transport: 'https', path: 'signin', generation: 1 },
+  'connection.changed': { action: 'connection.changed', accountId: 'mcp:helpdesk', changed: ['admin_may_sign_in'] },
+  'connection.trusted': { action: 'connection.trusted', accountId: 'mcp:helpdesk', trusted: true, policyRev: 4 },
+  'connection.credential': { action: 'connection.credential', accountId: 'mcp:helpdesk', kind: 'key', outcome: 'ok' },
+  'connection.tools_confirmed': { action: 'connection.tools_confirmed', accountId: 'mcp:helpdesk', generation: 1, policyRev: 3, read: 2, write: 1, off: 0 },
+  'connection.tool_changed': { action: 'connection.tool_changed', accountId: 'mcp:helpdesk', tool: 'helpdesk_search', defHash: 'a'.repeat(64), change: 'changed' },
+  'connection.removed': { action: 'connection.removed', accountId: 'mcp:helpdesk', revoked: false },
 }
 const word = fc.stringMatching(/^[A-Z][a-z]{1,11}$/)
 const name = fc.oneof(word, fc.tuple(word, word).map(([a, b]) => `${a} ${b}`))
@@ -542,5 +550,33 @@ describe('Stage 1 M3 (N25, N26): the ceiling line and who could answer', () => {
     expect(ok({ ...answered, approverKind: 'admins' })).toBe(true)
     expect(ok({ ...answered, approverKind: 'person' })).toBe(true)
     expect(ok({ ...answered, approverKind: 'role:admin' })).toBe(false)
+  })
+})
+
+// Stage 1 M4 (M4-A). Ways the connection lines can go wrong, written first: a line takes an address, a typed name, a
+// server's tool name or a key; an account id that isn't a connection's; an edit that lists a part twice or none; a
+// confirm past the tool caps; the new hub codes missing from a connect's outcome.
+describe('Stage 1 M4 (M4-A): connection lines carry an account id, revisions, closed codes and counts only', () => {
+  const acct = 'mcp:helpdesk'
+  it('takes each line as written', () => {
+    expect(ok({ action: 'connection.prepared', accountId: acct, transport: 'connector', path: 'key', generation: 2 })).toBe(true)
+    expect(ok({ action: 'connection.changed', accountId: acct, changed: ['name', 'about', 'admin_may_sign_in', 'settings'] })).toBe(true)
+    expect(ok({ action: 'connection.credential', accountId: acct, kind: 'client', outcome: 'client_fault' })).toBe(true)
+    expect(ok({ action: 'connection.tool_changed', accountId: acct, tool: 'helpdesk_reply', defHash: 'f'.repeat(64), change: 'gone' })).toBe(true)
+    // P5's sign-in, pause and disconnect lines take a connection's account id as they are.
+    expect(ok({ action: 'tools.connect', accountId: acct, outcome: 'needs_key' })).toBe(true)
+    expect(ok({ action: 'tools.disconnect', accountId: acct, revoked: true })).toBe(true)
+  })
+  it('refuses an address, a typed name, a server name, a key or an account that is not a connection', () => {
+    expect(ok({ action: 'connection.prepared', accountId: 'slack:workspace', transport: 'https', path: 'none', generation: 1 })).toBe(false)
+    expect(ok({ action: 'connection.prepared', accountId: acct, transport: 'https', path: 'none', generation: 1, url: 'https://mcp.example.com/mcp' })).toBe(false)
+    expect(ok({ action: 'connection.changed', accountId: acct, changed: ['name'], name: 'Helpdesk' })).toBe(false)
+    expect(ok({ action: 'connection.changed', accountId: acct, changed: ['name', 'name'] })).toBe(false)
+    expect(ok({ action: 'connection.changed', accountId: acct, changed: [] })).toBe(false)
+    expect(ok({ action: 'connection.credential', accountId: acct, kind: 'key', outcome: 'ok', key: 'sk_live_abc' })).toBe(false)
+    expect(ok({ action: 'connection.tool_changed', accountId: acct, tool: 'Search Tickets', defHash: 'f'.repeat(64), change: 'new' })).toBe(false)
+    expect(ok({ action: 'connection.tool_changed', accountId: acct, tool: 'helpdesk_search', defHash: 'F'.repeat(64), change: 'new' })).toBe(false)
+    expect(ok({ action: 'connection.tools_confirmed', accountId: acct, generation: 1, policyRev: 1, read: 201, write: 0, off: 0 })).toBe(false)
+    expect(ok({ action: 'connection.trusted', accountId: acct, trusted: true, policyRev: 0 })).toBe(false)
   })
 })
