@@ -564,6 +564,47 @@ describe('Neon\'s #618 review on the product target', () => {
     expect(calls).toEqual(['seeded', 'undo', 'lease back'])
   })
 
+  it('the Inhouse app\'s calls are progress too: a close waits on a Slack connect whose calls keep ending (#689)', async () => {
+    const calls: string[] = []
+    const { base } = stand({ writes: new FakeWrites() })
+    const slack = { account: async () => null, read: async () => ({ channels: [], messages: [], listed: [] }), seed: async () => {}, list: async () => ({ alertsGrant: null }), reset: async () => {} }
+    const target = createProductInjectionTarget({
+      paid: true, env: {}, setupQuietMs: 20,
+      inhouse: async () => { await new Promise((r) => setTimeout(r, 10)); return { status: 200, json: { connected: [] }, location: null } },
+      // Six Inhouse app calls of 10 ms each: three times the quiet bound, never quiet for 20 ms.
+      slackLink: { connect: async (api) => { for (let i = 0; i < 6; i++) await api('GET', '/api/tools'); calls.push('connected') }, disconnect: async () => {} },
+      base: { ...base, progress: () => 0, slackDoor: () => slack, async close() { calls.push('lease back') } } as unknown as ProductTarget,
+    })
+    const starting = target.start(kase('W15'), { rep: 1, canary: 'C' })
+    await new Promise((r) => setTimeout(r, 0))
+    await target.close!()
+    await expect(starting).rejects.toThrow(/the target is closing/)
+    expect(calls).toEqual(['connected', 'lease back'])
+  })
+
+  it('an R2 retry in the preflight is progress: a close waits on a preflight whose reads keep retrying, and each retry is a note (#714)', async () => {
+    const calls: string[] = []
+    const { base } = stand({ writes: new FakeWrites() })
+    const b = { ...base, async ready() {}, writeDoor: () => ({ ...base.writeDoor(), now: async () => 1 }), progress: () => 0, async close() { calls.push('lease back') } } as unknown as ProductTarget
+    let lists = 0
+    // Three 503s, 30 ms each, 30 ms apart, then the list: about 210 ms in all, twice the 100 ms quiet bound.
+    const sessionsFetch = (async () => {
+      await new Promise((r) => setTimeout(r, 30))
+      return ++lists <= 3 ? new Response('{}', { status: 503 }) : new Response(JSON.stringify({ success: true, result: [] }))
+    }) as unknown as typeof fetch
+    const t = createProductInjectionTarget({
+      paid: true, inhouse: null, base: b, setupQuietMs: 100, sessionsFetch, sessionsRetry: { sleep: (ms) => new Promise((r) => setTimeout(r, ms)), delaysMs: [30, 30, 30] },
+      env: { CF_SANDBOX_ACCOUNT_ID: '0123456789abcdef0123456789abcdef', CLOUDFLARE_API_TOKEN: 'tok' },
+    })
+    const preflight = t.preflight!()
+    await new Promise((r) => setTimeout(r, 0))
+    await t.close!()
+    await expect(preflight).resolves.toBeUndefined()
+    expect(lists).toBe(4)
+    expect(calls).toEqual(['lease back'])
+    expect(t.notes!().filter((n) => n.startsWith('A door read was retried: an R2 preflight'))).toHaveLength(3)
+  })
+
   it('without the Inhouse app a Slack plant is not served, and says which config it needs', () => {
     const t = createProductInjectionTarget({ paid: true, env: {}, base: stand({ writes: new FakeWrites() }).base, inhouse: null })
     expect(t.serves(kase('W29'))).toBe('a Slack plant needs the Inhouse app (INHOUSE_EVAL_INHOUSE_ORIGIN and INHOUSE_EVAL_INHOUSE_AUD), which is not set')
