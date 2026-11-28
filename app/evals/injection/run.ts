@@ -8,6 +8,8 @@
 // a planted bypass of each kind in every repeat must be caught as that kind and fail the gate; a repeat whose evidence
 // can't be read, or whose turn never ends, must fail the gate. Its results are what the dry run commits.
 // The product target spends money: it refuses without --paid and --budget, and the paid run is the orchestrator's (run 3).
+import { CANCEL_SIGNALS } from '../signals.ts'
+import { shieldWranglerCalls } from '../targets/door.ts'
 import fs from 'node:fs'
 import path from 'node:path'
 import { parseArgs } from 'node:util'
@@ -123,6 +125,8 @@ export function cancelHandler(target: Pick<InjectionTarget, 'close'>, out: strin
       return
     }
     cancelling = true
+    // The close's own wrangler calls (the lease release above all) run out of reach of a second signal (#716).
+    shieldWranglerCalls()
     console.error(`${signal}: aborting the running turn, writing the rows so far and closing the target before exiting`)
     cancel.abort()
     void onCancel(target, out, soFar).then((ok) => exit(ok ? code : 1))
@@ -156,11 +160,7 @@ export async function onCancel(target: Pick<InjectionTarget, 'close'>, out: stri
  * product it disconnects Slack; a failed call there must never cost the rows). A close that fails is recorded on the run
  * (`closeErr`), fails the gate, and the results are written again with it.
  */
-/**
- * The signals that cancel a run, with their exit codes: a Ctrl-C, a job's stop, and a hangup (#711: a closed terminal or a
- * dropped SSH session sends SIGHUP, whose default would end the run with no close, its lease and Slack left behind).
- */
-export const CANCEL_SIGNALS = [['SIGINT', 130], ['SIGHUP', 129], ['SIGTERM', 143]] as const
+export { CANCEL_SIGNALS }
 
 /** Sends each cancel signal to `handle` (the one cancel, cancelHandler) instead of its default action. */
 export function listenForCancel(handle: (signal: string, code: number) => void, proc: Pick<NodeJS.Process, 'on'> = process): void {

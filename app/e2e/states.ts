@@ -60,6 +60,11 @@ export const STATES: UiState[] = [
   page_('act-chats-all', 'Normal', '#/chats/all', 'Kestrel delivery times', true),
   // Stage 1 M3-U: a 450-change batch card in its chat, and its full list.
   page_('act-chat-batch', 'Normal', '#/chats/vip-tags', 'and 447 more', true),
+  // Stage 1 PR 2 (demo long jobs, helpers and web steps).
+  page_('act-chat-job-running', 'Normal', '#/chats/catalog-audit', 'Working on a long job', true),
+  page_('act-chat-job-finished', 'Normal', '#/chats/seasonal-restock', 'Ran for 2 h 14 min.', true),
+  page_('act-chat-job-budget', 'Normal', '#/chats/ad-spend-audit', 'It reached the most one job may spend', true),
+  page_('act-chat-web', 'Normal', '#/chats/competitor-prices', 'Cairn Insulated Bottle sits right in the middle', true),
   {
     name: 'pop-batch-sheet', scenario: 'Normal', hash: '#/chats/vip-tags', ready: 'and 447 more', a11y: true,
     act: async page => {

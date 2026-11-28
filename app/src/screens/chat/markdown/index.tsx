@@ -21,7 +21,7 @@ if (typeof window !== 'undefined') {
 
 export function Markdown(props: MarkdownProps) {
   return (
-    <Suspense fallback={<p className="whitespace-pre-wrap">{props.look === 'page' ? stripFrontmatter(props.text) : props.text}</p>}>
+    <Suspense fallback={<p data-markdown-loading="" className="whitespace-pre-wrap">{props.look === 'page' ? stripFrontmatter(props.text) : props.text}</p>}>
       <Renderer {...props} />
     </Suspense>
   )

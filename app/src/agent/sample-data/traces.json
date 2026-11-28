@@ -32,7 +32,10 @@
     "stuck": {
       "title": "Which orders are stuck over 3 days?",
       "durationSeconds": 9.4,
-      "cost": { "minor": 4, "currency": "USD" },
+      "cost": {
+        "minor": 4,
+        "currency": "USD"
+      },
       "tokens": "18.2k",
       "steps": [
         {
@@ -96,7 +99,10 @@
     "routine": {
       "title": "Chase ShipBob on #4821, and check for stuck orders every morning",
       "durationSeconds": 41,
-      "cost": { "minor": 21, "currency": "USD" },
+      "cost": {
+        "minor": 21,
+        "currency": "USD"
+      },
       "tokens": "61.4k",
       "steps": [
         {
@@ -184,7 +190,10 @@
     "morning": {
       "title": "Morning check",
       "durationSeconds": 118,
-      "cost": { "minor": 31, "currency": "USD" },
+      "cost": {
+        "minor": 31,
+        "currency": "USD"
+      },
       "tokens": "92.7k",
       "steps": [
         {
@@ -272,7 +281,10 @@
     "draft": {
       "title": "Drafted a fix for your approval",
       "durationSeconds": 14.2,
-      "cost": { "minor": 6, "currency": "USD" },
+      "cost": {
+        "minor": 6,
+        "currency": "USD"
+      },
       "tokens": "24.9k",
       "steps": [
         {
@@ -336,7 +348,10 @@
     "generic": {
       "title": "Answer",
       "durationSeconds": 6.8,
-      "cost": { "minor": 2, "currency": "USD" },
+      "cost": {
+        "minor": 2,
+        "currency": "USD"
+      },
       "tokens": "7.4k",
       "steps": [
         {
@@ -376,7 +391,10 @@
     "refunds": {
       "title": "Why did refunds jump this week?",
       "durationSeconds": 12.4,
-      "cost": { "minor": 4, "currency": "USD" },
+      "cost": {
+        "minor": 4,
+        "currency": "USD"
+      },
       "tokens": "19.8k",
       "steps": [
         {
@@ -406,7 +424,7 @@
         {
           "label": "Shopify · refunds by product",
           "kind": "tool",
-          "startSeconds": 4.0,
+          "startSeconds": 4,
           "endSeconds": 5.2,
           "depth": 1,
           "detail": "Output: 19 for the Trail Shell Jacket, size M"
@@ -440,7 +458,10 @@
     "refunds-list": {
       "title": "Show me the newest ones.",
       "durationSeconds": 7.9,
-      "cost": { "minor": 3, "currency": "USD" },
+      "cost": {
+        "minor": 3,
+        "currency": "USD"
+      },
       "tokens": "12.1k",
       "steps": [
         {
@@ -496,7 +517,10 @@
     "sizing-note": {
       "title": "Draft a sizing note for the product page.",
       "durationSeconds": 6.2,
-      "cost": { "minor": 2, "currency": "USD" },
+      "cost": {
+        "minor": 2,
+        "currency": "USD"
+      },
       "tokens": "8.3k",
       "steps": [
         {
@@ -518,7 +542,7 @@
         {
           "label": "Memory · your tone",
           "kind": "tool",
-          "startSeconds": 1.0,
+          "startSeconds": 1,
           "endSeconds": 1.1,
           "depth": 1,
           "detail": "Output: friendly and short"
@@ -527,14 +551,14 @@
           "label": "Wrote the note",
           "kind": "model",
           "startSeconds": 1.2,
-          "endSeconds": 6.0,
+          "endSeconds": 6,
           "depth": 1,
           "detail": "Sonnet 5.5"
         },
         {
           "label": "Answer",
           "kind": "answer",
-          "startSeconds": 6.0,
+          "startSeconds": 6,
           "endSeconds": 6.2,
           "depth": 1,
           "detail": "Sent to Chats. Nothing was changed in Shopify"
@@ -544,7 +568,10 @@
     "friday": {
       "title": "What should we feature in Friday's email?",
       "durationSeconds": 10.6,
-      "cost": { "minor": 3, "currency": "USD" },
+      "cost": {
+        "minor": 3,
+        "currency": "USD"
+      },
       "tokens": "13.9k",
       "steps": [
         {
@@ -592,7 +619,10 @@
     "bottle-colors": {
       "title": "Which bottle color sells best?",
       "durationSeconds": 5.4,
-      "cost": { "minor": 2, "currency": "USD" },
+      "cost": {
+        "minor": 2,
+        "currency": "USD"
+      },
       "tokens": "6.9k",
       "steps": [
         {
@@ -622,7 +652,7 @@
         {
           "label": "Wrote the answer",
           "kind": "model",
-          "startSeconds": 2.0,
+          "startSeconds": 2,
           "endSeconds": 5.2,
           "depth": 1,
           "detail": "Sonnet 5.5"
@@ -639,15 +669,18 @@
     },
     "payout": {
       "title": "Why was the last Amazon payout lower than Xero expected?",
-      "durationSeconds": 14.0,
-      "cost": { "minor": 5, "currency": "USD" },
+      "durationSeconds": 14,
+      "cost": {
+        "minor": 5,
+        "currency": "USD"
+      },
       "tokens": "22.6k",
       "steps": [
         {
           "label": "Inhouse agent",
           "kind": "root",
           "startSeconds": 0,
-          "endSeconds": 14.0,
+          "endSeconds": 14,
           "depth": 0,
           "detail": "Question in Chats"
         },
@@ -670,7 +703,7 @@
         {
           "label": "Amazon · fee preview per order",
           "kind": "tool",
-          "startSeconds": 4.0,
+          "startSeconds": 4,
           "endSeconds": 7.6,
           "depth": 1,
           "detail": "Output: 18 orders charged the large-item fee"
@@ -695,7 +728,7 @@
           "label": "Answer",
           "kind": "answer",
           "startSeconds": 13.8,
-          "endSeconds": 14.0,
+          "endSeconds": 14,
           "depth": 1,
           "detail": "Sent to Chats"
         }
@@ -704,7 +737,10 @@
     "payout-check": {
       "title": "Can you check the next one?",
       "durationSeconds": 4.8,
-      "cost": { "minor": 1, "currency": "USD" },
+      "cost": {
+        "minor": 1,
+        "currency": "USD"
+      },
       "tokens": "4.2k",
       "steps": [
         {
@@ -743,15 +779,18 @@
     },
     "weekly-report": {
       "title": "Weekly numbers report · Nov 7 to 13",
-      "durationSeconds": 22.0,
-      "cost": { "minor": 8, "currency": "USD" },
+      "durationSeconds": 22,
+      "cost": {
+        "minor": 8,
+        "currency": "USD"
+      },
       "tokens": "38.4k",
       "steps": [
         {
           "label": "Inhouse agent",
           "kind": "root",
           "startSeconds": 0,
-          "endSeconds": 22.0,
+          "endSeconds": 22,
           "depth": 0,
           "detail": "Weekly numbers report, Friday at 4:00 PM"
         },
@@ -790,7 +829,7 @@
         {
           "label": "Wrote the report",
           "kind": "model",
-          "startSeconds": 6.0,
+          "startSeconds": 6,
           "endSeconds": 19.4,
           "depth": 1,
           "detail": "Sonnet 5.5 · compared with the week before"
@@ -807,7 +846,7 @@
           "label": "Answer",
           "kind": "answer",
           "startSeconds": 21.8,
-          "endSeconds": 22.0,
+          "endSeconds": 22,
           "depth": 1,
           "detail": "Sent to Chats with a table"
         }
@@ -816,7 +855,10 @@
     "ridge": {
       "title": "How many Ridge 30L Packs should we reorder?",
       "durationSeconds": 9.8,
-      "cost": { "minor": 4, "currency": "USD" },
+      "cost": {
+        "minor": 4,
+        "currency": "USD"
+      },
       "tokens": "17.5k",
       "steps": [
         {
@@ -847,7 +889,7 @@
           "label": "Kestrel price list",
           "kind": "tool",
           "startSeconds": 1.7,
-          "endSeconds": 2.0,
+          "endSeconds": 2,
           "depth": 1,
           "detail": "Output: $16.00 a pack"
         },
@@ -880,7 +922,10 @@
     "meta-ads": {
       "title": "Which ads are spending on low-stock products?",
       "durationSeconds": 8.1,
-      "cost": { "minor": 3, "currency": "USD" },
+      "cost": {
+        "minor": 3,
+        "currency": "USD"
+      },
       "tokens": "13.2k",
       "steps": [
         {
@@ -936,7 +981,10 @@
     "kestrel": {
       "title": "How long does Kestrel really take to deliver?",
       "durationSeconds": 7.3,
-      "cost": { "minor": 2, "currency": "USD" },
+      "cost": {
+        "minor": 2,
+        "currency": "USD"
+      },
       "tokens": "9.6k",
       "steps": [
         {
@@ -951,7 +999,7 @@
           "label": "PO sheet · last 6 Kestrel orders",
           "kind": "tool",
           "startSeconds": 0.2,
-          "endSeconds": 1.0,
+          "endSeconds": 1,
           "depth": 1,
           "detail": "Output: 13 to 16 days, 14 on average"
         },
@@ -974,7 +1022,7 @@
         {
           "label": "Wrote the answer",
           "kind": "model",
-          "startSeconds": 3.0,
+          "startSeconds": 3,
           "endSeconds": 7.1,
           "depth": 1,
           "detail": "Sonnet 5.5"
@@ -992,7 +1040,10 @@
     "black-friday": {
       "title": "Which products will run out before Black Friday?",
       "durationSeconds": 9.2,
-      "cost": { "minor": 3, "currency": "USD" },
+      "cost": {
+        "minor": 3,
+        "currency": "USD"
+      },
       "tokens": "14.4k",
       "steps": [
         {
@@ -1023,14 +1074,14 @@
           "label": "Wrote the answer",
           "kind": "model",
           "startSeconds": 3.2,
-          "endSeconds": 9.0,
+          "endSeconds": 9,
           "depth": 1,
           "detail": "Sonnet 5.5"
         },
         {
           "label": "Answer",
           "kind": "answer",
-          "startSeconds": 9.0,
+          "startSeconds": 9,
           "endSeconds": 9.2,
           "depth": 1,
           "detail": "Sent to Chats"
@@ -1040,7 +1091,10 @@
     "query": {
       "title": "Last week by SKU",
       "durationSeconds": 8.4,
-      "cost": { "minor": 3, "currency": "USD" },
+      "cost": {
+        "minor": 3,
+        "currency": "USD"
+      },
       "tokens": "11.8k",
       "steps": [
         {
@@ -1080,7 +1134,10 @@
     "routine-new": {
       "title": "Set up a routine from a request",
       "durationSeconds": 11.6,
-      "cost": { "minor": 6, "currency": "USD" },
+      "cost": {
+        "minor": 6,
+        "currency": "USD"
+      },
       "tokens": "26.3k",
       "steps": [
         {
@@ -1128,7 +1185,10 @@
     "skill-new": {
       "title": "Wrote a skill from a request",
       "durationSeconds": 9.4,
-      "cost": { "minor": 5, "currency": "USD" },
+      "cost": {
+        "minor": 5,
+        "currency": "USD"
+      },
       "tokens": "21.7k",
       "steps": [
         {
@@ -1176,7 +1236,10 @@
     "gorgias-failed": {
       "title": "Couldn't read Gorgias",
       "durationSeconds": 3.1,
-      "cost": { "minor": 1, "currency": "USD" },
+      "cost": {
+        "minor": 1,
+        "currency": "USD"
+      },
       "tokens": "2.1k",
       "steps": [
         {
@@ -1208,7 +1271,10 @@
     "first-day": {
       "title": "No tools connected yet",
       "durationSeconds": 1.2,
-      "cost": { "minor": 0, "currency": "USD" },
+      "cost": {
+        "minor": 0,
+        "currency": "USD"
+      },
       "tokens": "0.9k",
       "steps": [
         {
@@ -1230,7 +1296,7 @@
         {
           "label": "Answer",
           "kind": "answer",
-          "startSeconds": 1.0,
+          "startSeconds": 1,
           "endSeconds": 1.2,
           "depth": 1,
           "detail": "Sent to Chats"
@@ -1240,7 +1306,10 @@
     "loading": {
       "title": "Still reading your tools",
       "durationSeconds": 1.2,
-      "cost": { "minor": 0, "currency": "USD" },
+      "cost": {
+        "minor": 0,
+        "currency": "USD"
+      },
       "tokens": "0.9k",
       "steps": [
         {
@@ -1272,7 +1341,10 @@
     "vip-tags": {
       "title": "Tag everyone who spent over $500 this year as VIP.",
       "durationSeconds": 9.4,
-      "cost": { "minor": 3, "currency": "USD" },
+      "cost": {
+        "minor": 3,
+        "currency": "USD"
+      },
       "tokens": "12.4k",
       "steps": [
         {
@@ -1328,7 +1400,10 @@
     "order-tags-gift": {
       "title": "Tag order 4377 as Gift.",
       "durationSeconds": 5.1,
-      "cost": { "minor": 2, "currency": "USD" },
+      "cost": {
+        "minor": 2,
+        "currency": "USD"
+      },
       "tokens": "6.2k",
       "steps": [
         {
@@ -1350,7 +1425,7 @@
         {
           "label": "Shopify · add the Gift tag to order 4377",
           "kind": "tool",
-          "startSeconds": 1.0,
+          "startSeconds": 1,
           "endSeconds": 1.8,
           "depth": 1,
           "detail": "Asks first"
@@ -1384,7 +1459,10 @@
     "order-tags-wholesale": {
       "title": "Tag order 4512 as Wholesale.",
       "durationSeconds": 5.6,
-      "cost": { "minor": 2, "currency": "USD" },
+      "cost": {
+        "minor": 2,
+        "currency": "USD"
+      },
       "tokens": "6.8k",
       "steps": [
         {
@@ -1399,7 +1477,7 @@
           "label": "Shopify · order 4512",
           "kind": "tool",
           "startSeconds": 0.2,
-          "endSeconds": 1.0,
+          "endSeconds": 1,
           "depth": 1,
           "detail": "Output: 1 order from Harbor & Pine"
         },
@@ -1415,14 +1493,14 @@
           "label": "Waits for your OK",
           "kind": "approval",
           "startSeconds": 1.9,
-          "endSeconds": 2.0,
+          "endSeconds": 2,
           "depth": 1,
           "detail": "Nothing goes out until someone allows it"
         },
         {
           "label": "Wrote the answer",
           "kind": "model",
-          "startSeconds": 2.0,
+          "startSeconds": 2,
           "endSeconds": 5.4,
           "depth": 1,
           "detail": "Sonnet 5.5"
@@ -1440,7 +1518,10 @@
     "order-tags-post": {
       "title": "Post a heads-up in #ops-alerts once it's tagged.",
       "durationSeconds": 4.8,
-      "cost": { "minor": 2, "currency": "USD" },
+      "cost": {
+        "minor": 2,
+        "currency": "USD"
+      },
       "tokens": "5.9k",
       "steps": [
         {
@@ -1455,14 +1536,14 @@
           "label": "Slack · post to #ops-alerts",
           "kind": "tool",
           "startSeconds": 0.2,
-          "endSeconds": 1.0,
+          "endSeconds": 1,
           "depth": 1,
           "detail": "Asks first"
         },
         {
           "label": "Waits for your OK",
           "kind": "approval",
-          "startSeconds": 1.0,
+          "startSeconds": 1,
           "endSeconds": 1.1,
           "depth": 1,
           "detail": "Nothing goes out until someone allows it"
@@ -1480,6 +1561,722 @@
           "kind": "answer",
           "startSeconds": 4.6,
           "endSeconds": 4.8,
+          "depth": 1,
+          "detail": "Sent to Chats"
+        }
+      ]
+    },
+    "catalog-audit-start": {
+      "title": "Audit gross margin across every SKU",
+      "durationSeconds": 8.2,
+      "cost": {
+        "minor": 6,
+        "currency": "USD"
+      },
+      "tokens": "24.6k",
+      "steps": [
+        {
+          "label": "Inhouse agent",
+          "kind": "root",
+          "startSeconds": 0,
+          "endSeconds": 8.2,
+          "depth": 0,
+          "detail": "Question in Chats"
+        },
+        {
+          "label": "Planned catalog margin checks",
+          "kind": "model",
+          "startSeconds": 0,
+          "endSeconds": 1.6,
+          "depth": 1,
+          "detail": "Opus 5.5 · split into apparel, drinkware and packs"
+        },
+        {
+          "label": "Shopify · active SKUs and unit costs",
+          "kind": "tool",
+          "startSeconds": 1.7,
+          "endSeconds": 5.4,
+          "depth": 1,
+          "detail": "Output: 216 variants across 48 products"
+        },
+        {
+          "label": "ShipBob · 60-day fulfillment postage by SKU",
+          "kind": "tool",
+          "startSeconds": 5.5,
+          "endSeconds": 8.2,
+          "depth": 1,
+          "detail": "Output: average pick, pack and zone postage"
+        }
+      ]
+    },
+    "catalog-audit-progress": {
+      "title": "Apparel and outerwear margin pass",
+      "durationSeconds": 312,
+      "cost": {
+        "minor": 42,
+        "currency": "USD"
+      },
+      "tokens": "118.4k",
+      "steps": [
+        {
+          "label": "Inhouse agent",
+          "kind": "root",
+          "startSeconds": 0,
+          "endSeconds": 312,
+          "depth": 0,
+          "detail": "Long job continuation"
+        },
+        {
+          "label": "Asking a helper",
+          "kind": "handoff",
+          "startSeconds": 1,
+          "endSeconds": 2.2,
+          "depth": 1,
+          "detail": "Researcher · pull apparel orders and return tickets"
+        },
+        {
+          "label": "Researcher · apparel orders and return tickets",
+          "kind": "agent",
+          "startSeconds": 2.2,
+          "endSeconds": 168,
+          "depth": 1,
+          "detail": "Checked 642 orders and 49 return exchanges"
+        },
+        {
+          "label": "Shopify · apparel orders and refunds",
+          "kind": "tool",
+          "startSeconds": 4,
+          "endSeconds": 86,
+          "depth": 2,
+          "detail": "Output: 642 orders and 49 return exchanges"
+        },
+        {
+          "label": "Gorgias · exchange postage tickets",
+          "kind": "tool",
+          "startSeconds": 87,
+          "endSeconds": 142,
+          "depth": 2,
+          "detail": "Output: average return label $11.40"
+        },
+        {
+          "label": "Collected apparel margin inputs",
+          "kind": "model",
+          "startSeconds": 143,
+          "endSeconds": 166,
+          "depth": 2,
+          "detail": "Sonnet 5.5 · grouped 84 outerwear and fleece variants"
+        },
+        {
+          "label": "Asking a helper",
+          "kind": "handoff",
+          "startSeconds": 169,
+          "endSeconds": 170.2,
+          "depth": 1,
+          "detail": "Analyst · calculate net margin after returns"
+        },
+        {
+          "label": "Analyst · size-level exchange cost table",
+          "kind": "agent",
+          "startSeconds": 170.2,
+          "endSeconds": 284,
+          "depth": 1,
+          "detail": "Ranked lowest variants after return postage"
+        },
+        {
+          "label": "Bash · calculate net margin by SKU and size",
+          "kind": "tool",
+          "startSeconds": 172,
+          "endSeconds": 236,
+          "depth": 2,
+          "detail": "Output: 2 variants under 35%"
+        },
+        {
+          "label": "Ranked lowest margin variants",
+          "kind": "model",
+          "startSeconds": 237,
+          "endSeconds": 282,
+          "depth": 2,
+          "detail": "Opus 5.5 · Trail Shell Olive M at 33%, Summit Fleece Slate S at 34%"
+        },
+        {
+          "label": "Summarized apparel findings",
+          "kind": "model",
+          "startSeconds": 285,
+          "endSeconds": 310,
+          "depth": 1,
+          "detail": "Opus 5.5 · flagged 2 variants under 35%"
+        },
+        {
+          "label": "Answer",
+          "kind": "answer",
+          "startSeconds": 310,
+          "endSeconds": 312,
+          "depth": 1,
+          "detail": "Sent to Chats"
+        }
+      ]
+    },
+    "restock-plan-part1": {
+      "title": "Pull stock on hand across stores",
+      "durationSeconds": 10,
+      "cost": {
+        "minor": 5,
+        "currency": "USD"
+      },
+      "tokens": "19.8k",
+      "steps": [
+        {
+          "label": "Inhouse agent",
+          "kind": "root",
+          "startSeconds": 0,
+          "endSeconds": 10,
+          "depth": 0,
+          "detail": "Question in Chats"
+        },
+        {
+          "label": "Shopify · sellable inventory across 48 SKUs",
+          "kind": "tool",
+          "startSeconds": 0.4,
+          "endSeconds": 3.8,
+          "depth": 1,
+          "detail": "Output: 9 SKUs below 30 days of cover"
+        },
+        {
+          "label": "ShipBob · warehouse stock and open receipts",
+          "kind": "tool",
+          "startSeconds": 3.9,
+          "endSeconds": 7.1,
+          "depth": 1,
+          "detail": "Output: PO-1187 waiting at receiving"
+        },
+        {
+          "label": "Ranked low-cover SKUs",
+          "kind": "model",
+          "startSeconds": 7.2,
+          "endSeconds": 10,
+          "depth": 1,
+          "detail": "Opus 5.5 · listed 9 SKUs under 30 days of cover"
+        }
+      ]
+    },
+    "restock-plan-part2": {
+      "title": "Check Kestrel transit and peak demand",
+      "durationSeconds": 294,
+      "cost": {
+        "minor": 34,
+        "currency": "USD"
+      },
+      "tokens": "94.2k",
+      "steps": [
+        {
+          "label": "Inhouse agent",
+          "kind": "root",
+          "startSeconds": 0,
+          "endSeconds": 294,
+          "depth": 0,
+          "detail": "Long job continuation"
+        },
+        {
+          "label": "Asking a helper",
+          "kind": "handoff",
+          "startSeconds": 1,
+          "endSeconds": 2,
+          "depth": 1,
+          "detail": "Researcher · review supplier lead-time history"
+        },
+        {
+          "label": "Researcher · Kestrel PO transit windows",
+          "kind": "agent",
+          "startSeconds": 2,
+          "endSeconds": 238,
+          "depth": 1,
+          "detail": "Checked 8 prior purchase orders and customs notes"
+        },
+        {
+          "label": "Memory · Kestrel delivery reliability",
+          "kind": "tool",
+          "startSeconds": 4,
+          "endSeconds": 64,
+          "depth": 2,
+          "detail": "Output: 13 to 16 days transit, Mei Chen confirms ETAs"
+        },
+        {
+          "label": "Shopify · daily run rates by SKU",
+          "kind": "tool",
+          "startSeconds": 65,
+          "endSeconds": 158,
+          "depth": 2,
+          "detail": "Output: Ridge 30L sells 21 a day"
+        },
+        {
+          "label": "Modeled late-November sell-through",
+          "kind": "model",
+          "startSeconds": 159,
+          "endSeconds": 236,
+          "depth": 2,
+          "detail": "Sonnet 5.5 · buffer 4 days for customs"
+        },
+        {
+          "label": "Summarized lead-time checks",
+          "kind": "model",
+          "startSeconds": 239,
+          "endSeconds": 292,
+          "depth": 1,
+          "detail": "Opus 5.5 · preparing final order table"
+        },
+        {
+          "label": "Answer",
+          "kind": "answer",
+          "startSeconds": 292,
+          "endSeconds": 294,
+          "depth": 1,
+          "detail": "Sent to Chats"
+        }
+      ]
+    },
+    "restock-plan-final": {
+      "title": "Finalize Q4 restock quantities",
+      "durationSeconds": 268,
+      "cost": {
+        "minor": 26,
+        "currency": "USD"
+      },
+      "tokens": "76.4k",
+      "steps": [
+        {
+          "label": "Inhouse agent",
+          "kind": "root",
+          "startSeconds": 0,
+          "endSeconds": 268,
+          "depth": 0,
+          "detail": "Long job continuation"
+        },
+        {
+          "label": "Shopify · current stock levels",
+          "kind": "tool",
+          "startSeconds": 2,
+          "endSeconds": 96,
+          "depth": 1,
+          "detail": "Output: confirmed latest balances before cutoff"
+        },
+        {
+          "label": "ShipBob · open orders and safety stock",
+          "kind": "tool",
+          "startSeconds": 97,
+          "endSeconds": 188,
+          "depth": 1,
+          "detail": "Output: matched open warehouse queues"
+        },
+        {
+          "label": "Wrote final reorder schedule",
+          "kind": "model",
+          "startSeconds": 189,
+          "endSeconds": 266,
+          "depth": 1,
+          "detail": "Opus 5.5 · 2 sources cited"
+        },
+        {
+          "label": "Answer",
+          "kind": "answer",
+          "startSeconds": 266,
+          "endSeconds": 268,
+          "depth": 1,
+          "detail": "Sent to Chats with a table and 2 sources"
+        }
+      ]
+    },
+    "ad-audit-part1": {
+      "title": "Audit 90-day Meta Ads contribution margin",
+      "durationSeconds": 11.9,
+      "cost": {
+        "minor": 7,
+        "currency": "USD"
+      },
+      "tokens": "27.0k",
+      "steps": [
+        {
+          "label": "Inhouse agent",
+          "kind": "root",
+          "startSeconds": 0,
+          "endSeconds": 11.9,
+          "depth": 0,
+          "detail": "Question in Chats"
+        },
+        {
+          "label": "Meta Ads · 90-day spend across 14 ad sets",
+          "kind": "tool",
+          "startSeconds": 0.5,
+          "endSeconds": 4.8,
+          "depth": 1,
+          "detail": "Output: campaign spend and attributed revenue"
+        },
+        {
+          "label": "Gorgias · refund and return reasons by SKU",
+          "kind": "tool",
+          "startSeconds": 4.9,
+          "endSeconds": 8.4,
+          "depth": 1,
+          "detail": "Output: matched 90-day return rates"
+        },
+        {
+          "label": "Planned cohort margin tables",
+          "kind": "model",
+          "startSeconds": 8.5,
+          "endSeconds": 11.7,
+          "depth": 1,
+          "detail": "Fable 5.2 · building net return rows"
+        },
+        {
+          "label": "Answer",
+          "kind": "answer",
+          "startSeconds": 11.7,
+          "endSeconds": 11.9,
+          "depth": 1,
+          "detail": "Sent to Chats"
+        }
+      ]
+    },
+    "ad-audit-part2": {
+      "title": "Join ad cohorts with return shipping",
+      "durationSeconds": 342,
+      "cost": {
+        "minor": 58,
+        "currency": "USD"
+      },
+      "tokens": "164.0k",
+      "steps": [
+        {
+          "label": "Inhouse agent",
+          "kind": "root",
+          "startSeconds": 0,
+          "endSeconds": 342,
+          "depth": 0,
+          "detail": "Long job continuation"
+        },
+        {
+          "label": "Meta Ads · prospecting vs retargeting cohorts",
+          "kind": "tool",
+          "startSeconds": 2,
+          "endSeconds": 186,
+          "depth": 1,
+          "detail": "Output: Ridge 30L Autumn at 2.8 net"
+        },
+        {
+          "label": "Compared prospecting and retargeting cohorts",
+          "kind": "model",
+          "startSeconds": 187,
+          "endSeconds": 342,
+          "depth": 1,
+          "detail": "Fable 5.2 · Ridge 30L at 2.8 net, Trail Shell at 1.4 net"
+        }
+      ]
+    },
+    "web-bottles": {
+      "title": "Compare competitor prices for 750ml insulated bottles",
+      "durationSeconds": 15.4,
+      "cost": {
+        "minor": 8,
+        "currency": "USD"
+      },
+      "tokens": "28.1k",
+      "steps": [
+        {
+          "label": "Inhouse agent",
+          "kind": "root",
+          "startSeconds": 0,
+          "endSeconds": 15.4,
+          "depth": 0,
+          "detail": "Question in Chats"
+        },
+        {
+          "label": "Shopify · Cairn Insulated Bottle price and stock",
+          "kind": "tool",
+          "startSeconds": 0.3,
+          "endSeconds": 2.1,
+          "depth": 1,
+          "detail": "Output: $34 retail, 142 units in stock"
+        },
+        {
+          "label": "Asking a helper",
+          "kind": "handoff",
+          "startSeconds": 2.2,
+          "endSeconds": 2.5,
+          "depth": 1,
+          "detail": "Researcher · check competitor drinkware pages"
+        },
+        {
+          "label": "Researcher · web price lookup",
+          "kind": "agent",
+          "startSeconds": 2.5,
+          "endSeconds": 11.3,
+          "depth": 1,
+          "detail": "Searched outdoor drinkware pricing"
+        },
+        {
+          "label": "Searching the web",
+          "kind": "tool",
+          "startSeconds": 2.8,
+          "endSeconds": 5.7,
+          "depth": 2,
+          "detail": "WebSearch · 750ml insulated outdoor bottle price"
+        },
+        {
+          "label": "Reading a web page",
+          "kind": "tool",
+          "startSeconds": 5.8,
+          "endSeconds": 8.6,
+          "depth": 2,
+          "detail": "WebFetch · trailgear.example.test/bottles"
+        },
+        {
+          "label": "Reading a web page",
+          "kind": "tool",
+          "startSeconds": 8.7,
+          "endSeconds": 11.2,
+          "depth": 2,
+          "detail": "WebFetch · peaksupply.example.test/drinkware"
+        },
+        {
+          "label": "Wrote pricing comparison",
+          "kind": "model",
+          "startSeconds": 11.4,
+          "endSeconds": 15.2,
+          "depth": 1,
+          "detail": "Opus 5.5 · compared with Cairn Insulated Bottle ($34)"
+        },
+        {
+          "label": "Answer",
+          "kind": "answer",
+          "startSeconds": 15.2,
+          "endSeconds": 15.4,
+          "depth": 1,
+          "detail": "Sent to Chats"
+        }
+      ]
+    },
+    "web-fetch": {
+      "title": "Read a listed website",
+      "durationSeconds": 8.4,
+      "cost": {
+        "minor": 4,
+        "currency": "USD"
+      },
+      "tokens": "14.2k",
+      "steps": [
+        {
+          "label": "Inhouse agent",
+          "kind": "root",
+          "startSeconds": 0,
+          "endSeconds": 8.4,
+          "depth": 0,
+          "detail": "Question in Chats"
+        },
+        {
+          "label": "Shopify · Cairn Insulated Bottle price",
+          "kind": "tool",
+          "startSeconds": 0.4,
+          "endSeconds": 2.3,
+          "depth": 1,
+          "detail": "Output: $34 retail price"
+        },
+        {
+          "label": "Reading a web page",
+          "kind": "tool",
+          "startSeconds": 2.4,
+          "endSeconds": 5.9,
+          "depth": 1,
+          "detail": "WebFetch · checked listed storefront page"
+        },
+        {
+          "label": "Wrote the answer",
+          "kind": "model",
+          "startSeconds": 6,
+          "endSeconds": 8.2,
+          "depth": 1,
+          "detail": "Opus 5.5"
+        },
+        {
+          "label": "Answer",
+          "kind": "answer",
+          "startSeconds": 8.2,
+          "endSeconds": 8.4,
+          "depth": 1,
+          "detail": "Sent to Chats"
+        }
+      ]
+    },
+    "web-search": {
+      "title": "Web search snippets",
+      "durationSeconds": 8.6,
+      "cost": {
+        "minor": 4,
+        "currency": "USD"
+      },
+      "tokens": "14.8k",
+      "steps": [
+        {
+          "label": "Inhouse agent",
+          "kind": "root",
+          "startSeconds": 0,
+          "endSeconds": 8.6,
+          "depth": 0,
+          "detail": "Question in Chats"
+        },
+        {
+          "label": "Shopify · Cairn Insulated Bottle price",
+          "kind": "tool",
+          "startSeconds": 0.4,
+          "endSeconds": 2.3,
+          "depth": 1,
+          "detail": "Output: $34 retail price"
+        },
+        {
+          "label": "Searching the web",
+          "kind": "tool",
+          "startSeconds": 2.4,
+          "endSeconds": 6.1,
+          "depth": 1,
+          "detail": "WebSearch · competitor retail prices"
+        },
+        {
+          "label": "Wrote the answer",
+          "kind": "model",
+          "startSeconds": 6.2,
+          "endSeconds": 8.4,
+          "depth": 1,
+          "detail": "Opus 5.5"
+        },
+        {
+          "label": "Answer",
+          "kind": "answer",
+          "startSeconds": 8.4,
+          "endSeconds": 8.6,
+          "depth": 1,
+          "detail": "Sent to Chats"
+        }
+      ]
+    },
+    "web-lookup": {
+      "title": "Web pricing check",
+      "durationSeconds": 10.4,
+      "cost": {
+        "minor": 5,
+        "currency": "USD"
+      },
+      "tokens": "16.0k",
+      "steps": [
+        {
+          "label": "Inhouse agent",
+          "kind": "root",
+          "startSeconds": 0,
+          "endSeconds": 10.4,
+          "depth": 0,
+          "detail": "Question in Chats"
+        },
+        {
+          "label": "Shopify · Cairn Insulated Bottle price",
+          "kind": "tool",
+          "startSeconds": 0.4,
+          "endSeconds": 2.4,
+          "depth": 1,
+          "detail": "Output: $34 retail price"
+        },
+        {
+          "label": "Searching the web",
+          "kind": "tool",
+          "startSeconds": 2.5,
+          "endSeconds": 5.1,
+          "depth": 1,
+          "detail": "WebSearch · competitor retail prices"
+        },
+        {
+          "label": "Reading a web page",
+          "kind": "tool",
+          "startSeconds": 5.2,
+          "endSeconds": 7.8,
+          "depth": 1,
+          "detail": "WebFetch · checked listed storefront pages"
+        },
+        {
+          "label": "Wrote the answer",
+          "kind": "model",
+          "startSeconds": 7.9,
+          "endSeconds": 10.2,
+          "depth": 1,
+          "detail": "Opus 5.5"
+        },
+        {
+          "label": "Answer",
+          "kind": "answer",
+          "startSeconds": 10.2,
+          "endSeconds": 10.4,
+          "depth": 1,
+          "detail": "Sent to Chats"
+        }
+      ]
+    },
+    "long-job-run": {
+      "title": "Long job continuation",
+      "durationSeconds": 324,
+      "cost": {
+        "minor": 46,
+        "currency": "USD"
+      },
+      "tokens": "132.0k",
+      "steps": [
+        {
+          "label": "Inhouse agent",
+          "kind": "root",
+          "startSeconds": 0,
+          "endSeconds": 324,
+          "depth": 0,
+          "detail": "Long job continuation"
+        },
+        {
+          "label": "Asking a helper",
+          "kind": "handoff",
+          "startSeconds": 1,
+          "endSeconds": 2.2,
+          "depth": 1,
+          "detail": "Researcher · pull full catalog and fulfillment totals"
+        },
+        {
+          "label": "Researcher · catalog and ShipBob totals",
+          "kind": "agent",
+          "startSeconds": 2.2,
+          "endSeconds": 236,
+          "depth": 1,
+          "detail": "Checked remaining SKUs across channels"
+        },
+        {
+          "label": "Shopify · catalog and sales history",
+          "kind": "tool",
+          "startSeconds": 4,
+          "endSeconds": 122,
+          "depth": 2,
+          "detail": "Output: full variant totals"
+        },
+        {
+          "label": "ShipBob · warehouse counts",
+          "kind": "tool",
+          "startSeconds": 123,
+          "endSeconds": 234,
+          "depth": 2,
+          "detail": "Output: fulfillment cost per SKU"
+        },
+        {
+          "label": "Wrote final answer",
+          "kind": "model",
+          "startSeconds": 237,
+          "endSeconds": 322,
+          "depth": 1,
+          "detail": "Opus 5.5"
+        },
+        {
+          "label": "Answer",
+          "kind": "answer",
+          "startSeconds": 322,
+          "endSeconds": 324,
           "depth": 1,
           "detail": "Sent to Chats"
         }

@@ -79,14 +79,16 @@ const switches = ({ scenario = 'Normal', demo }: Restage) => ({
 })
 
 /**
- * The page's route has resolved. The Approvals, Routines, Activity, Tools and Skills pages (and the Library, Usage and Settings)
- * load their code on first visit, so right after a navigation the page can still be the loading skeleton (`data-page-loading`):
- * a spec that reads or screenshots then sees the skeleton. `main` exists in the same render as either the page or its skeleton,
- * so wait for `main`, then for the skeleton to be gone.
+ * The page's route has resolved. The Approvals, Routines, Activity, Tools and Skills pages (and the Library, Usage, Settings
+ * and Streamdown markdown renderer) load their code lazily, so right after a navigation the page or an answer can still show
+ * its Suspense fallback (`data-page-loading` or `data-markdown-loading`): a spec that reads or screenshots then sees the
+ * fallback instead of the formatted view. `main` exists in the same render as either, so wait for `main` and both fallbacks
+ * to go.
  */
 export async function routeReady(page: Page): Promise<void> {
   await page.locator('main').waitFor()
   await page.locator('[data-page-loading]').waitFor({ state: 'detached' })
+  await page.waitForFunction(() => !document.querySelector('[data-markdown-loading]'))
 }
 
 export function mockClient(page: Page, baseURL?: string): Fx & { demoStartedAt(): Promise<number> } {

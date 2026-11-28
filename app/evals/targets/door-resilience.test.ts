@@ -12,7 +12,7 @@ import { chmodSync, mkdtempSync, readFileSync, readdirSync, writeFileSync } from
 import { tmpdir } from 'node:os'
 import path from 'node:path'
 import { describe, expect, it } from 'vitest'
-import { DoorRefusal, oneAtATime, readOnlySql, spawnWrangler, wranglerRunner, wranglerTransient, type WranglerResult } from './door.ts'
+import { DoorRefusal, ProcessTreeUnlisted, assertProcessTreeListable, killTree, oneAtATime, readOnlySql, spawnWrangler, wranglerRunner, wranglerTransient, type WranglerResult } from './door.ts'
 import { TransientDoorError, withRetries } from './retry.ts'
 import { createSessionReader } from '../read-side/product/r2.ts'
 import { createProductTarget, doorSql } from './product.ts'
@@ -50,13 +50,13 @@ describe('#691 and #710: a transient door error retries, a permanent one stops a
   })
 
   it('wrangler\'s real output for each transient API failure reads as transient (#710)', () => {
-    expect(readdirSync(FIXTURES).filter((f) => f.endsWith('.txt')).length).toBe(13)
+    expect(readdirSync(FIXTURES).filter((f) => f.endsWith('.txt')).length).toBe(16)
     expect(wranglerTransient(sample('d1-overloaded-queued'))).toBe('D1 overloaded')
     expect(wranglerTransient(sample('d1-overloaded-too-long'))).toBe('D1 overloaded')
     expect(wranglerTransient(sample('d1-network-lost'))).toBe('a transient D1 error')
     expect(wranglerTransient(sample('d1-reset-code-updated'))).toBe('a transient D1 error')
     expect(wranglerTransient(sample('d1-transient-remote-node'))).toBe('a transient D1 error')
-    expect(wranglerTransient(sample('rate-limited-429'))).toBe('a 429 from the API')
+    expect(wranglerTransient(sample('rate-limited-429'))).toBe('a rate limit (Retry-After)')
     expect(wranglerTransient(sample('gateway-502-html'))).toBe('a 5xx from the API')
     expect(wranglerTransient(sample('connection-refused'))).toBe('a network error')
     expect(wranglerTransient({ status: null, stdout: '', timedOut: true })).toBe('a timeout')
@@ -72,6 +72,14 @@ describe('#691 and #710: a transient door error retries, a permanent one stops a
     expect(wranglerTransient({ status: 1, stdout: 'Error: 503 Service Unavailable' })).toBeNull()
   })
 
+  it('a Retry-After counts as a rate limit only on the API\'s own answer with no D1 code: a 404, a WAF challenge or a malformed page is not one (#717)', () => {
+    for (const name of ['not-found-7404-retry-after', 'waf-challenge-retry-after', 'malformed-404-retry-after']) {
+      // Each carries wrangler's retryAfterMs, so only the rule tells them from the real 429.
+      expect(sample(name).stdout).toContain('"retryAfterMs": 5000')
+      expect([name, wranglerTransient(sample(name))]).toEqual([name, null])
+    }
+  })
+
   const runner = (results: WranglerResult[], lines: string[], argv: string[][] = []) => wranglerRunner({
     ...D1, spawn: (a) => { argv.push(a); return results.shift() ?? OK }, retry: { ...noWait, onRetry: (l) => lines.push(l) },
   })
@@ -83,7 +91,7 @@ describe('#691 and #710: a transient door error retries, a permanent one stops a
     expect(lines).toEqual([
       'A door read was retried: a D1 read through wrangler (D1 overloaded), try 2 of 4.',
       'A door read was retried: a D1 read through wrangler (a transient D1 error), try 3 of 4.',
-      'A door read was retried: a D1 read through wrangler (a 429 from the API), try 4 of 4.',
+      'A door read was retried: a D1 read through wrangler (a rate limit (Retry-After)), try 4 of 4.',
     ])
     const again: string[] = []
     expect(await runner([sample('connection-refused'), { status: null, stdout: '', timedOut: true }], again)('SELECT 1 AS n')).toEqual([{ n: 1 }])
@@ -121,7 +129,7 @@ describe('#691 and #710: a transient door error retries, a permanent one stops a
     let calls = 0
     const reader = (more: (() => Response)[]) => createSessionReader({ env, bucket: 'inhouse-sbx-eval-files', retry: { ...noWait, onRetry: (l) => lines.push(l) }, fetch: (async () => { calls++; return (more.shift() ?? (() => json(200, { success: true, result: [] })))() }) as unknown as typeof fetch })
     await reader(answers).preflight()
-    expect(calls).toBe(4)
+    expect(calls).toBe(6) // the 4 tries of the first list, the eval-chat list (empty), then the probe object's GET (this fetch answers every request 200)
     expect(lines).toEqual([
       'A door read was retried: an R2 preflight (a 5xx from R2), try 2 of 4.',
       'A door read was retried: an R2 preflight (a network error), try 3 of 4.',
@@ -135,6 +143,75 @@ describe('#691 and #710: a transient door error retries, a permanent one stops a
     await expect(reader([() => json(502, {}), () => json(502, {}), () => json(502, {}), () => json(502, {})]).preflight()).rejects.toThrow('R2 preflight answered 502')
     expect(calls).toBe(4)
     expect(lines.join('\n')).not.toContain('tok-secret-1')
+  })
+})
+
+describe('the preflight reads one real object, not only a list (the live smoke after #670)', () => {
+  const ACCOUNT = '0123456789abcdef0123456789abcdef'
+  const env = { CF_SANDBOX_ACCOUNT_ID: ACCOUNT, CLOUDFLARE_API_TOKEN: 'tok-secret-1' }
+  const CHAT = 'eval-0123456789abcdef01234567'
+  const KEY = `sessions/${CHAT}/0f8fad5b-d9cb-469f-a165-70867728950e/${'a'.repeat(64)}/m/000001763800000-000001.json`
+  const json = (status: number, body: unknown) => new Response(JSON.stringify(body), { status })
+  /** A bucket that lists `listed` under sessions/eval- and answers an object GET with `get`. */
+  const reader = (listed: { key: string; size: number }[], get: () => Response, calls: string[]) => createSessionReader({
+    env, bucket: 'inhouse-sbx-eval-files', retry: { ...noWait, onRetry: () => {} },
+    fetch: (async (u: string | URL) => {
+      const url = new URL(String(u))
+      calls.push(url.search ? `list ${url.searchParams.get('prefix')}` : `get ${decodeURIComponent(url.pathname.split('/objects/')[1]!)}`)
+      if (!url.search) return get()
+      return json(200, { success: true, result: url.searchParams.get('prefix') === 'sessions/eval-' ? listed : [{ key: 'sessions/x', size: 1 }] })
+    }) as unknown as typeof fetch,
+  })
+
+  it('lists, then GETs an earlier eval chat\'s first object', async () => {
+    const calls: string[] = []
+    await reader([{ key: KEY, size: 4 }], () => new Response('[{}]'), calls).preflight()
+    expect(calls).toEqual(['list sessions/', 'list sessions/eval-', `get ${KEY}`])
+  })
+
+  it('a token that can list but not read objects stops the preflight, named', async () => {
+    await expect(reader([{ key: KEY, size: 4 }], () => json(403, {}), []).preflight()).rejects.toThrow('R2 preflight get answered 403: CLOUDFLARE_API_TOKEN can list the bucket but not read its objects')
+  })
+
+  const PROBE = 'sessions/_eval-preflight.json'
+
+  it('no eval chat in the bucket yet: the probe object is read, so an empty bucket never passes without a read (#741)', async () => {
+    const calls: string[] = []
+    await reader([], () => new Response('{"eval":"preflight-probe"}'), calls).preflight()
+    expect(calls).toEqual(['list sessions/', 'list sessions/eval-', `get ${PROBE}`])
+  })
+
+  it.each([401, 403])('an empty bucket and a token that can list but not read: the probe GET answers %i and stops the run, named (#741)', async (status) => {
+    const calls: string[] = []
+    await expect(reader([], () => json(status, {}), calls).preflight()).rejects.toThrow(`R2 preflight get answered ${status}: CLOUDFLARE_API_TOKEN can list the bucket but not read its objects`)
+    expect(calls).toEqual(['list sessions/', 'list sessions/eval-', `get ${PROBE}`])
+  })
+
+  it('an empty bucket with no probe object stops the run and says how to seed it; with an eval chat listed, the chat is read instead and the probe is not needed (#741)', async () => {
+    await expect(reader([], () => json(404, {}), []).preflight()).rejects.toThrow(`R2 preflight get answered 404: no eval chat and no probe object ${PROBE} in inhouse-sbx-eval-files`)
+    const calls: string[] = []
+    await reader([{ key: KEY, size: 4 }], () => new Response('[{}]'), calls).preflight()
+    expect(calls).toEqual(['list sessions/', 'list sessions/eval-', `get ${KEY}`])
+  })
+
+  it('a foreign key is never read, a list answering no result array or a negative size is refused, and nothing is read (#741)', async () => {
+    const foreign: string[] = []
+    await expect(reader([{ key: `sessions/${CHAT}/x.json`, size: 1 }], () => new Response('[{}]'), foreign).preflight()).rejects.toThrow(/not a transcript key/)
+    expect(foreign.some((c) => c.startsWith('get'))).toBe(false)
+    const negative: string[] = []
+    await expect(reader([{ key: KEY, size: -1 }], () => new Response('[{}]'), negative).preflight()).rejects.toThrow(/has no size or is over the cap/)
+    expect(negative.some((c) => c.startsWith('get'))).toBe(false)
+    const malformed: string[] = []
+    const notAnArray = createSessionReader({
+      env, bucket: 'inhouse-sbx-eval-files', retry: { ...noWait, onRetry: () => {} },
+      fetch: (async (u: string | URL) => {
+        const url = new URL(String(u))
+        malformed.push(url.search ? `list ${url.searchParams.get('prefix')}` : 'get')
+        return json(200, { success: true, result: url.searchParams.get('prefix') === 'sessions/eval-' ? { not: 'an array' } : [] })
+      }) as unknown as typeof fetch,
+    })
+    await expect(notAnArray.preflight()).rejects.toThrow('R2 preflight list answered no result array')
+    expect(malformed).toEqual(['list sessions/', 'list sessions/eval-'])
   })
 })
 
@@ -175,60 +252,61 @@ describe('#712: one call at a time, and a retry is progress', () => {
   })
 })
 
-describe('#690 and #711: the deadline kills npx and everything under it; nothing outlives the run', () => {
-  // A stand-in for `npx wrangler`: a shell that starts a long-lived child (as npx starts wrangler), writes its pid, waits.
-  const stub = (body = 'sleep 30 &\necho $! > "$PIDFILE"\nwait') => {
-    const dir = mkdtempSync(path.join(tmpdir(), 'wrangler-stub-'))
-    const bin = path.join(dir, 'wrangler')
-    writeFileSync(bin, `#!/bin/sh\n${body}\n`)
-    chmodSync(bin, 0o755)
-    return { bin, pidFile: path.join(dir, 'child.pid') }
+// A stand-in for `npx wrangler`: a shell that starts a long-lived child (as npx starts wrangler), writes its pid, waits.
+const stub = (body = 'sleep 30 &\necho $! > "$PIDFILE"\nwait') => {
+  const dir = mkdtempSync(path.join(tmpdir(), 'wrangler-stub-'))
+  const bin = path.join(dir, 'wrangler')
+  writeFileSync(bin, `#!/bin/sh\n${body}\n`)
+  chmodSync(bin, 0o755)
+  return { bin, pidFile: path.join(dir, 'child.pid') }
+}
+const alive = (pid: number) => {
+  try {
+    process.kill(pid, 0)
+    return true
+  } catch {
+    return false
   }
-  const alive = (pid: number) => {
-    try {
-      process.kill(pid, 0)
-      return true
-    } catch {
-      return false
-    }
+}
+/**
+ * The process's state letter (R running, S sleeping, T stopped, Z zombie), or null when there is no such process:
+ * Linux's /proc first, else `ps` (macOS).
+ */
+const stateOf = (pid: number): string | null => {
+  try {
+    return /^State:\s+(\S)/m.exec(readFileSync(`/proc/${pid}/status`, 'utf8'))?.[1] ?? null
+  } catch {
+    // No /proc (macOS), or no such process.
   }
-  /**
-   * The process's state letter (R running, S sleeping, T stopped, Z zombie), or null when there is no such process:
-   * Linux's /proc first, else `ps` (macOS).
-   */
-  const stateOf = (pid: number): string | null => {
-    try {
-      return /^State:\s+(\S)/m.exec(readFileSync(`/proc/${pid}/status`, 'utf8'))?.[1] ?? null
-    } catch {
-      // No /proc (macOS), or no such process.
-    }
-    try {
-      return execFileSync('ps', ['-o', 'stat=', '-p', String(pid)], { encoding: 'utf8' }).trim().charAt(0) || null
-    } catch {
-      return null
-    }
+  try {
+    return execFileSync('ps', ['-o', 'stat=', '-p', String(pid)], { encoding: 'utf8' }).trim().charAt(0) || null
+  } catch {
+    return null
   }
-  /**
-   * Gone: no such process, or a zombie, which is dead and no longer running, only not yet reaped. On a container whose
-   * PID 1 never reaps (GitHub's job containers run `tail -f /dev/null`), a killed orphan stays a zombie for good, and
-   * kill(pid, 0) still answers for it. Anything else (running, sleeping, stopped) is still there.
-   */
-  const gone = async (pid: number) => {
-    const isGone = () => !alive(pid) || stateOf(pid) === 'Z'
-    const deadline = Date.now() + 5_000
-    while (!isGone() && Date.now() < deadline) await new Promise((r) => setTimeout(r, 20))
-    if (!isGone()) console.error(`pid ${pid} is still there, state ${stateOf(pid)}`)
-    return isGone()
-  }
-  const childOf = (pidFile: string) => Number(readFileSync(pidFile, 'utf8'))
-  /** The run in miniature (fixtures/wrangler-holder.ts), in its own process group, as a job runner starts one. */
-  const holder = (bin: string, pidFile: string, mode: 'wait' | 'exit') => {
-    const p = spawn(process.execPath, [path.join(import.meta.dirname, 'fixtures/wrangler-holder.ts'), bin, pidFile, mode], { stdio: ['ignore', 'pipe', 'inherit'], detached: true })
-    const ready = new Promise<void>((resolve) => { p.stdout!.on('data', (d: Buffer) => { if (d.toString().includes('ready')) resolve() }) })
-    const exited = new Promise<void>((resolve) => p.on('exit', () => resolve()))
-    return { p, ready, exited }
-  }
+}
+/**
+ * Gone: no such process, or a zombie, which is dead and no longer running, only not yet reaped. On a container whose
+ * PID 1 never reaps (GitHub's job containers run `tail -f /dev/null`), a killed orphan stays a zombie for good, and
+ * kill(pid, 0) still answers for it. Anything else (running, sleeping, stopped) is still there.
+ */
+const gone = async (pid: number) => {
+  const isGone = () => !alive(pid) || stateOf(pid) === 'Z'
+  const deadline = Date.now() + 5_000
+  while (!isGone() && Date.now() < deadline) await new Promise((r) => setTimeout(r, 20))
+  if (!isGone()) console.error(`pid ${pid} is still there, state ${stateOf(pid)}`)
+  return isGone()
+}
+const childOf = (pidFile: string) => Number(readFileSync(pidFile, 'utf8'))
+/** The run in miniature (fixtures/wrangler-holder.ts), in its own process group, as a job runner starts one. */
+const holder = (bin: string, pidFile: string, mode: 'wait' | 'exit' | 'shield') => {
+  const p = spawn(process.execPath, [path.join(import.meta.dirname, 'fixtures/wrangler-holder.ts'), bin, pidFile, mode], { stdio: ['ignore', 'pipe', 'inherit'], detached: true })
+  const ready = new Promise<void>((resolve) => { p.stdout!.on('data', (d: Buffer) => { if (d.toString().includes('ready')) resolve() }) })
+  const sigint = new Promise<void>((resolve) => { p.stdout!.on('data', (d: Buffer) => { if (d.toString().includes('sigint')) resolve() }) })
+  const exited = new Promise<void>((resolve) => p.on('exit', () => resolve()))
+  return { p, ready, sigint, exited }
+}
 
+describe('#690 and #711: the deadline kills npx and everything under it; nothing outlives the run', () => {
   it('a call past its deadline: npx and the child under it are both killed, and its status is null', async () => {
     const { bin, pidFile } = stub()
     const r = await spawnWrangler(['d1', 'execute'], { PATH: process.env.PATH, PIDFILE: pidFile }, { bin: [bin], timeoutMs: 2_000 })
@@ -294,5 +372,93 @@ describe('#689: the product target counts every call it ends', () => {
     fail = true
     await expect(t.call('lena', 'GET', '/api/me')).rejects.toThrow('fetch failed')
     expect(t.progress!()).toBe(2)
+  })
+})
+
+/** A stand-in `ps`: `body` runs as a shell script (it can fail, print a made-up listing or record what it saw). */
+const fakePs = (body: string) => {
+  const dir = mkdtempSync(path.join(tmpdir(), 'fake-ps-'))
+  const bin = path.join(dir, 'ps')
+  writeFileSync(bin, `#!/bin/sh\n${body}\n`)
+  chmodSync(bin, 0o755)
+  return { bin, dir }
+}
+/** A real process to kill: `sleep 30`, run directly. */
+const sleeper = () => {
+  const p = spawn('sleep', ['30'], { stdio: 'ignore' })
+  return p.pid!
+}
+
+describe('#715: a ps that fails stops the run, never a silent npx-only kill', () => {
+  it('a call past its deadline with a failing ps: npx is killed, and the call is refused with the named reason', async () => {
+    const { bin, pidFile } = stub()
+    const ps = fakePs('exit 1')
+    const r = spawnWrangler(['d1', 'execute'], { PATH: process.env.PATH, PIDFILE: pidFile }, { bin: [bin], timeoutMs: 2_000, ps: ps.bin })
+    await expect(r).rejects.toThrow(ProcessTreeUnlisted)
+    await expect(r).rejects.toThrow(/the process tree could not be listed \(ps -A -o pid=,ppid= failed: exit 1\).*the run stops/)
+    // What ran under npx may still run: that is why the run stops. Cleaned up here.
+    process.kill(childOf(pidFile), 'SIGKILL')
+  })
+
+  it('the preflight check refuses a missing or failing ps, and passes the real one', () => {
+    expect(() => assertProcessTreeListable(path.join(tmpdir(), 'no-such-ps'))).toThrow(/ps -A -o pid=,ppid= failed: ENOENT/)
+    expect(() => assertProcessTreeListable(fakePs('exit 2').bin)).toThrow(ProcessTreeUnlisted)
+    expect(() => assertProcessTreeListable()).not.toThrow()
+  })
+})
+
+describe('#718: the tree walk survives a cycle, freezes the root first, and never kills after the exit', () => {
+  it('a listing with a cycle under the root ends, and the root is killed', async () => {
+    const root = sleeper()
+    // 99999999 is past every pid_max, so the made-up child is never a real process.
+    const ps = fakePs(`echo "99999999 ${root}"\necho "${root} 99999999"`)
+    killTree(root, ps.bin)
+    expect(await gone(root)).toBe(true)
+  })
+
+  it('the root is already stopped when the first listing runs', async () => {
+    const root = sleeper()
+    const ps = fakePs(`ps -o stat= -p ${root} > "$(dirname "$0")/stat"`)
+    killTree(root, ps.bin)
+    expect(readFileSync(path.join(ps.dir, 'stat'), 'utf8').trim()).toMatch(/^T/)
+    expect(await gone(root)).toBe(true)
+  })
+
+  it('output over the cap after the call exited never walks the tree (the pid may be someone else\'s), and the call ends', async () => {
+    const { bin } = stub('(sleep 0.3; head -c 4000 /dev/zero) &\nexit 0')
+    const ps = fakePs('touch "$(dirname "$0")/ran"\nexit 0')
+    await expect(spawnWrangler(['d1', 'execute'], { PATH: process.env.PATH }, { bin: [bin], timeoutMs: 10_000, ps: ps.bin, maxOutput: 1_000 })).rejects.toThrow('answered more than 1000 bytes')
+    expect(readdirSync(ps.dir)).not.toContain('ran')
+  })
+})
+
+describe('#716: once a cancel begins, a second signal can\'t kill the close\'s wrangler calls', () => {
+  // The stub becomes `sleep` itself (exec), a foreground process a SIGINT to its group would end.
+  const foreground = () => stub('echo $$ > "$PIDFILE"\nexec sleep 30')
+
+  it('shielded: a SIGINT to the run\'s whole group leaves the call running', async () => {
+    const { bin, pidFile } = foreground()
+    const h = holder(bin, pidFile, 'shield')
+    await h.ready
+    const call = childOf(pidFile)
+    process.kill(-h.p.pid!, 'SIGINT')
+    // The holder takes the SIGINT as the runners do (and says so); the call, in its own group, never saw it: still running,
+    // not a zombie waiting to be reaped.
+    await h.sigint
+    expect(alive(call)).toBe(true)
+    expect(execFileSync('ps', ['-o', 'stat=', '-p', String(call)], { encoding: 'utf8' }).trim()).not.toMatch(/^Z/)
+    process.kill(h.p.pid!, 'SIGKILL')
+    await h.exited
+    process.kill(call, 'SIGKILL')
+  })
+
+  it('not shielded: the same SIGINT ends the call (the #711 group), which is why the cancel shields', async () => {
+    const { bin, pidFile } = foreground()
+    const h = holder(bin, pidFile, 'wait')
+    await h.ready
+    const call = childOf(pidFile)
+    process.kill(-h.p.pid!, 'SIGINT')
+    await h.exited
+    expect(await gone(call)).toBe(true)
   })
 })

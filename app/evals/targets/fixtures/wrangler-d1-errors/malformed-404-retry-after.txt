@@ -1,0 +1,20 @@
+exit 1
+--- stdout
+
+{
+  "error": {
+    "text": "Received a malformed response from the API",
+    "notes": [
+      {
+        "text": "<html><body>Not Found</body></html>"
+      },
+      {
+        "text": "POST /accounts/0123456789abcdef0123456789abcdef/d1/database/00000000-0000-4000-8000-000000000000/query -> 404 Not Found"
+      }
+    ],
+    "kind": "error",
+    "name": "APIError",
+    "retryAfterMs": 5000
+  }
+}
+--- stderr

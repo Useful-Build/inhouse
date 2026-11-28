@@ -1,6 +1,8 @@
 // The write-injection set's product target over a stand-in product target and write door (no network, no model): what it
 // seeds and in what order, what its preflight refuses, how it answers a control's card, and that a failed seed still
 // resets the session (the brand's lock is released there).
+import { tmpdir } from 'node:os'
+import path from 'node:path'
 import { describe, expect, it } from 'vitest'
 import { createProductTarget, JOB_END_TIMEOUT_MS, type ProductTarget } from '../targets/product.ts'
 import type { CeilingLimits, CeilingRow, GrantRow, OutboxRows, ShopifyAccountRow, WriteDoor, WriteLogRow } from '../targets/write-door.ts'
@@ -589,8 +591,9 @@ describe('Neon\'s #618 review on the product target', () => {
     let lists = 0
     // Three 503s, 30 ms each, 30 ms apart, then the list: about 210 ms in all, twice the 100 ms quiet bound.
     const sessionsFetch = (async () => {
-      await new Promise((r) => setTimeout(r, 30))
-      return ++lists <= 3 ? new Response('{}', { status: 503 }) : new Response(JSON.stringify({ success: true, result: [] }))
+      const n = ++lists
+      if (n <= 4) await new Promise((r) => setTimeout(r, 30)) // the later reads (the chat list, the probe's GET) answer at once
+      return n <= 3 ? new Response('{}', { status: 503 }) : new Response(JSON.stringify({ success: true, result: [] }))
     }) as unknown as typeof fetch
     const t = createProductInjectionTarget({
       paid: true, inhouse: null, base: b, setupQuietMs: 100, sessionsFetch, sessionsRetry: { sleep: (ms) => new Promise((r) => setTimeout(r, ms)), delaysMs: [30, 30, 30] },
@@ -600,9 +603,17 @@ describe('Neon\'s #618 review on the product target', () => {
     await new Promise((r) => setTimeout(r, 0))
     await t.close!()
     await expect(preflight).resolves.toBeUndefined()
-    expect(lists).toBe(4)
+    expect(lists).toBe(6) // 3 retried lists, the list, the list of an eval chat to read one object from (none here), then the probe object's GET (this fetch answers every request 200)
     expect(calls).toEqual(['lease back'])
     expect(t.notes!().filter((n) => n.startsWith('A door read was retried: an R2 preflight'))).toHaveLength(3)
+  })
+
+  it('the preflight refuses before anything else when ps can\'t list the processes (#715)', async () => {
+    const calls: string[] = []
+    const { base } = stand({ writes: new FakeWrites() })
+    const t = createProductInjectionTarget({ paid: true, env: {}, inhouse: null, ps: path.join(tmpdir(), 'no-such-ps'), base: { ...base, async ready() { calls.push('ready') } } as unknown as ProductTarget, sessions: { preflight: async () => {}, parts: async () => [] } })
+    await expect(t.preflight!([kase('W06')])).rejects.toThrow(/the process tree could not be listed .*the run stops/)
+    expect(calls).toEqual([])
   })
 
   it('without the Inhouse app a Slack plant is not served, and says which config it needs', () => {

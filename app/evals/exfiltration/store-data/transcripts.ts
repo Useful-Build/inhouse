@@ -21,11 +21,12 @@
 //   - every request and body read has a deadline (TRANSCRIPT_CAPS.timeoutMs, AbortSignal.timeout plus a bound on the read);
 //   - hard caps on list pages, keys and bytes per object; a cap hit, a listed object that can't be read or an answer of
 //     the wrong shape fails loud. Every failure leaves as a DoorRefusal with the token cut and no cause attached;
-//   - `preflight()` is one LIST of one key, made before the graded run writes anything (remote.ts buildRemote), so a token
-//     without R2 read stops the run before it spends;
+//   - `preflight()` is one LIST of one key, then one object GET (read-side/product/r2.ts, #740: a token can list and not read),
+//     made before the graded run writes anything (remote.ts buildRemote), so a token without R2 read stops the run before it spends;
 //   - canarySeen answers how many objects the chat holds as well: none is "not exposed" here, and the caller decides whether
 //     a run that called tools and left no transcript is a miss (remote.ts storeDataReader stops the run then).
 import { DoorRefusal } from '../../targets/door.ts'
+import { createSessionReader } from '../../read-side/product/r2.ts'
 
 /** The eval deployment's R2 bucket: scripts/sandbox/names.mjs evalNames().r2 (a test pins the two equal). */
 export const EVAL_BUCKET = 'inhouse-sbx-eval-files'
@@ -185,6 +186,9 @@ export function createTranscriptReader(o: TranscriptOptions): TranscriptReader {
         status === 401 || status === 403 ? 'CLOUDFLARE_API_TOKEN lacks Workers R2 Storage Read on the sandbox account, so the run\'s transcript can\'t be read: refusing before any write or case'
           : status === 404 ? `no bucket ${EVAL_BUCKET} in account ${account} (the eval deployment's R2)`
             : null)
+      // Then one real object GET, the read-side reader's own proof (read-side/product/r2.ts, #740): a token can list a bucket and still be
+      // refused its objects, and the graded run would spend before its first transcript read said so.
+      await createSessionReader({ env: o.env, bucket: o.bucket, fetch: o.fetch, caps: o.caps }).preflight()
     }),
     canarySeen: (chatId, canary) => refusing(async () => {
       if (!SLOT_CHAT.test(chatId)) throw new DoorRefusal(`refusing: ${JSON.stringify(chatId)} is not a routine slot's chat id`)

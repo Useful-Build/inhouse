@@ -32,6 +32,7 @@ import { STORE_DATA_CASES, hostOf } from './cases.ts'
 import { buildRemote, gradedSession, STORE_DATA_CAP, STORE_DATA_SHOPS, storeDataReader } from './remote.ts'
 import { runStoreData } from './runner.ts'
 import type { StoreDataEnv, StoreDataReader } from './runner.ts'
+import { R2_PROBE_KEY } from '../../r2-probe.ts'
 import { createTranscriptReader, EVAL_BUCKET, holdsCanary, R2_API_BASE } from './transcripts.ts'
 import { GRADED_PROMPT_VERSION } from '../../prompt-version.ts'
 
@@ -206,13 +207,21 @@ describe('the transcript reader: refusals (failures 2, 3, 4)', () => {
 
 describe('the transcript reader: the preflight (Opus M1)', () => {
   const reader = (a: ReturnType<typeof api>) => createTranscriptReader({ env: ENV, bucket: EVAL_BUCKET, fetch: a.doFetch })
-  it('is one LIST of one key under sessions/ in the eval bucket', async () => {
-    const a = api({ [key('000000000000001-000001')]: '[]' })
+  it('is one LIST of one key under sessions/ in the eval bucket, then one object GET (#740)', async () => {
+    const a = api({ [key('000000000000001-000001')]: '[]', [R2_PROBE_KEY]: '{}' })
     await reader(a).preflight()
-    expect(a.calls).toHaveLength(1)
+    expect(a.calls.map(c => [c.method, new URL(c.url).searchParams.get('prefix')])).toEqual([['GET', 'sessions/'], ['GET', 'sessions/'], ['GET', 'sessions/eval-'], ['GET', null]]) // its own list, then the read-side reader's lists and GET
     const u = new URL(a.calls[0]!.url)
     expect(u.pathname).toBe(`/client/v4/accounts/${ACCOUNT}/r2/buckets/${EVAL_BUCKET}/objects`)
     expect([u.searchParams.get('prefix'), u.searchParams.get('per_page')]).toEqual(['sessions/', '1'])
+    expect(decodeURIComponent(new URL(a.calls[3]!.url).pathname)).toBe(`/client/v4/accounts/${ACCOUNT}/r2/buckets/${EVAL_BUCKET}/objects/${R2_PROBE_KEY}`)
+  })
+  it.each([401, 403])('a token that lists but is refused the object (%i) stops the run before any case (#740)', async status => {
+    const a = api({ [R2_PROBE_KEY]: '{}' }, { getStatus: () => status })
+    const err = await errorOf(reader(a).preflight())
+    expect(err).toBeInstanceOf(DoorRefusal)
+    expect(err.message).toMatch(new RegExp(`preflight get answered ${status}: CLOUDFLARE_API_TOKEN can list the bucket but not read its objects`))
+    expect(err.message).not.toContain(TOKEN)
   })
   it.each([401, 403])('a %i names the permission the token lacks', async status => {
     const err = await errorOf(reader(api({}, { listStatus: status })).preflight())
@@ -461,7 +470,8 @@ describe('the remote wiring run.mjs uses (Sonnet M2), on a faked eval deployment
       return { status: 0, stdout: JSON.stringify([{ results: rows }]) }
     }
     const readConfig = () => JSON.stringify({ account_id: ACCOUNT, d1_databases: [{ database_name: EVAL_DB }] })
-    const objects: Record<string, string> = {}
+    // The probe object the eval seed puts: the preflight's object read on a bucket with no eval chat (#740, #741).
+    const objects: Record<string, string> = { [R2_PROBE_KEY]: '{}' }
     const r2 = api(objects, o.preflightStatus ? { listStatus: o.preflightStatus } : {})
     const log: string[] = []
     const admin: ApiCall = async (method, path, body) => {

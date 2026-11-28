@@ -184,10 +184,10 @@ test('Chats: there is no Chats item in the nav; New chat and Recent chats stay',
 test('Chats: each recent chat opens its own conversation', async ({ page, fx }) => {
   await start(fx)
   const chats: [string, string][] = [
+    ['Full catalog margin review', 'Finished apparel and outerwear'],
     ['Stuck orders over 3 days', '3 orders · $556'],
     ['Why did refunds jump?', 'Refund requests rose from 14 last week to 31 this week.'],
     ["What to feature in Friday's email", 'The Cairn Insulated Bottle is the safe pick'],
-    ['Amazon payout gap', 'paid $18,420'],
   ]
   for (const [name, text] of chats) {
     await side(page).getByRole('button', { name, exact: true }).click()
@@ -203,7 +203,7 @@ test('Chats: each recent chat opens its own conversation', async ({ page, fx }) 
   await page.getByRole('textbox', { name: 'Message Inhouse' }).fill('And last week?')
   await page.keyboard.press('Enter')
   await expect(page.locator('main').getByText('And last week?')).toBeVisible()
-  await side(page).getByRole('button', { name: 'Amazon payout gap', exact: true }).click()
+  await side(page).getByRole('button', { name: "What to feature in Friday's email", exact: true }).click()
   await expect(page.locator('main').getByText('And last week?')).toHaveCount(0)
   await side(page).getByRole('button', { name: 'Why did refunds jump?', exact: true }).click()
   await expect(page.locator('main').getByText('And last week?')).toBeVisible()
@@ -216,7 +216,9 @@ test('Chats: every seeded answer has its steps line and, opened, its model and s
   const modes = json('models.json').modes as { id: string; label: string; model: string }[]
   const secs = (x: number) => (x < 60 ? `${Math.round(x * 10) / 10}s` : `${Math.floor(x / 60)}m ${Math.round(x % 60)}s`)
   type Turn = { user?: string; trace?: string; model?: string }
+  type LazyMsg = { role: string; trace?: string; model?: string }
   const seed = json('chat-script.json').seedThread.turns as Turn[]
+  const jobsChats = json('jobs.json').chats as Record<string, { messages: LazyMsg[] }>
   const chats = json('chats.json').chats as { id: string; turns: 'seedThread' | Turn[] }[]
   await start(fx)
   for (const c of chats) {
@@ -224,7 +226,12 @@ test('Chats: every seeded answer has its steps line and, opened, its model and s
     const expected: string[] = []
     const expectedMeta: string[] = []
     let inAnswer = false
-    for (const t of typeof c.turns === 'string' ? seed : c.turns) {
+    const turnsList: Turn[] = typeof c.turns === 'string'
+      ? seed
+      : c.turns.length > 0
+        ? c.turns
+        : (jobsChats[c.id]?.messages ?? []).map(m => (m.role === 'agent' ? { trace: m.trace, model: m.model } : { user: m.role }))
+    for (const t of turnsList) {
       if (t.user) { inAnswer = false; continue }
       const tr = traces[t.trace!.split(' ')[0]]
       // Its model is the mode (models.json) whose model its trace's last model step names, so the line and the steps agree.
@@ -254,7 +261,7 @@ test('Chats: See all lists every chat, search filters by title, picking one open
   await side(page).getByRole('button', { name: 'See all' }).click()
   await expect(page.getByRole('heading', { level: 1, name: 'All chats' })).toBeVisible()
   const main = page.locator('main')
-  for (const t of ['Stuck orders over 3 days', 'Why did refunds jump?', "What to feature in Friday's email", 'Amazon payout gap', 'Weekly numbers, Nov 7 to 13', 'Ridge 30L reorder quantity', 'Meta Ads on low-stock products', 'Kestrel delivery times']) {
+  for (const t of ['Full catalog margin review', 'Stuck orders over 3 days', 'Why did refunds jump?', "What to feature in Friday's email", 'Amazon payout gap', 'Weekly numbers, Nov 7 to 13', 'Ridge 30L reorder quantity', 'Meta Ads on low-stock products', 'Kestrel delivery times', 'Wholesale and gift tags', 'Winter restock plan across stores', 'Multi-channel ad spend audit', 'Competitor bottle pricing']) {
     await expect(main.getByRole('button', { name: new RegExp(t.replace(/[?']/g, '.')) })).toBeVisible()
   }
   await expect(main.getByRole('region', { name: 'Today' })).toBeVisible()
@@ -275,7 +282,7 @@ test('Chats: See all lists every chat, search filters by title, picking one open
 
   // The old #/chats link still works.
   await page.goto('/?demo&again=1#/chats')
-  await expect(page.getByRole('banner')).toContainText('Stuck orders over 3 days')
+  await expect(page.getByRole('banner')).toContainText('Full catalog margin review')
 })
 
 test('Tools and Skills: search filters the lists; the tool page links to the vendor', async ({ page, fx }) => {
@@ -430,7 +437,15 @@ test("Data: every seeded answer names its own trace, and its steps and seconds a
   type Turn = { trace?: string; agent?: { type: string }[] }
   const chats = json('chats.json').chats as { id: string; at: string; turns: 'seedThread' | Turn[] }[]
   const seed = json('chat-script.json').seedThread.turns as Turn[]
-  const answers = chats.flatMap(c => (typeof c.turns === 'string' ? seed : c.turns).map(t => ({ chat: c.id, ...t }))).filter(t => t.agent)
+  const jobsChats = json('jobs.json').chats as Record<string, { messages: { role: string; trace?: string; part?: { type: string } }[] }>
+  const answers = chats.flatMap(c => {
+    if (typeof c.turns === 'string' || c.turns.length > 0) {
+      return (typeof c.turns === 'string' ? seed : c.turns).filter(t => t.agent).map(t => ({ chat: c.id, trace: t.trace, types: t.agent!.map(p => p.type) }))
+    }
+    return (jobsChats[c.id]?.messages ?? [])
+      .filter(m => m.role === 'agent')
+      .map(m => ({ chat: c.id, trace: m.trace, types: m.part ? [m.part.type] : [] }))
+  })
   const used = new Map<string, string>()
   for (const a of answers) {
     const key = (a.trace ?? '').split(' ')[0]
@@ -441,7 +456,7 @@ test("Data: every seeded answer names its own trace, and its steps and seconds a
     expect(owner === undefined || owner === a.chat, `trace "${key}" is used by ${owner} and ${a.chat}`).toBe(true)
     used.set(key, a.chat)
     // The answer's footer is its one link to the steps: no work row repeats it with its own time.
-    expect(a.agent!.filter(p => p.type === 'workRow'), `${a.chat}: a work row`).toEqual([])
+    expect(a.types.filter(t => t === 'workRow'), `${a.chat}: a work row`).toEqual([])
     const t = traces[key]
     expect(t.steps[0].kind).toBe('root')
     expect(t.steps[0].endSeconds).toBe(t.durationSeconds)
@@ -507,7 +522,12 @@ test('Data: the bell is newest first, no denied text anywhere a person reads, no
   // (The stuck chat's turns are the seed thread in chat-script.json, named here by a string, and it's dated today, after every tool was connected.)
   for (const c of json('chats.json').chats as { id: string; at: string; turns: { trace?: string }[] | string }[]) {
     const day = dayOf(c.at)
-    for (const key of (Array.isArray(c.turns) ? c.turns : []).flatMap(t => (t.trace ? [t.trace.split(' ')[0]] : []))) {
+    const turnTraces = Array.isArray(c.turns) && c.turns.length > 0
+      ? c.turns.flatMap(t => (t.trace ? [t.trace.split(' ')[0]] : []))
+      : Array.isArray(c.turns)
+        ? (json('jobs.json').chats[c.id]?.messages ?? []).flatMap((m: { trace?: string }) => (m.trace ? [m.trace.split(' ')[0]] : []))
+        : []
+    for (const key of turnTraces) {
       for (const s of traces[key]?.steps ?? []) {
         const on = s.kind === 'tool' ? since.get(s.label.split(' · ')[0]) : undefined
         if (on !== undefined && on > day) late.push(`${c.id} (${c.at}) reads ${s.label} before it was connected`)

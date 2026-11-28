@@ -18,7 +18,7 @@ import { READ_SIDE_CASES } from '../cases.ts'
 import { READ_SIDE_CAP_USD } from '../args.ts'
 import { readSideShopOf } from '../shops.ts'
 import { createMorningDoor, type MorningDoor } from '../../morning-check/door.ts'
-import { createDoor, D1_NOW_MS, DoorRefusal, PER_PR_DB, wranglerQueries, wranglerRunner, type MemoryDoor, type RunSql } from '../../targets/door.ts'
+import { assertProcessTreeListable, createDoor, D1_NOW_MS, DoorRefusal, PER_PR_DB, wranglerQueries, wranglerRunner, type MemoryDoor, type RunSql } from '../../targets/door.ts'
 import {
   accessHeaders, casePerson, createProductTarget, EVAL_ACCESS_CLIENT_ID_VAR, EVAL_ACCESS_CLIENT_SECRET_VAR, EVAL_AUD_VAR, EVAL_BRAND_FLAG,
   EVAL_CAP, EVAL_D1_NAME, EVAL_JOB_CAP, EVAL_ISSUER_JWK_FILE, EVAL_ORIGIN_VAR, EVAL_PEOPLE, EVAL_WRANGLER_CONFIG, productSession, testIssuerSignIn, type Api,
@@ -147,6 +147,8 @@ export interface EvalOptions {
   signIn?: SignIn
   signInhouse?: SignIn
   sessions?: SessionReader
+  /** The `ps` the wrangler calls' kill needs (assertProcessTreeListable, #740). */
+  ps?: string
 }
 
 /** The paid run's wiring on the eval deployment, with its preflight run and the effort pinned. Throws (exit 2) before any spend. */
@@ -158,6 +160,8 @@ export async function wireEval(o: EvalOptions): Promise<Wired> {
   const inhouseOrigin = env[EVAL_INHOUSE_ORIGIN_VAR]
   const inhouseAud = env[EVAL_INHOUSE_AUD_VAR]
   if (!origin || !inhouseOrigin || !inhouseAud) throw new Error(`read-side: refusing: ${EVAL_ORIGIN_VAR}, ${EVAL_INHOUSE_ORIGIN_VAR} and ${EVAL_INHOUSE_AUD_VAR} must all be set`)
+  // A wrangler call's deadline kills its whole process tree, which needs `ps` (#715, #740): without it, refuse before any call.
+  assertProcessTreeListable(o.ps)
   const doFetch = o.fetch ?? fetch
   const wrangler = { database: env[EVAL_D1_NAME] ?? '', config: env[EVAL_WRANGLER_CONFIG] ?? '', env }
   const run = o.run ?? wranglerRunner(wrangler)
@@ -166,7 +170,7 @@ export async function wireEval(o: EvalOptions): Promise<Wired> {
   const signIn = o.signIn ?? testIssuerSignIn(env)
   const signInhouse = o.signInhouse ?? testIssuerSignIn({ ...env, [EVAL_AUD_VAR]: inhouseAud })
   // targets/product.ts refuses without the brand flag, the run tag, the origin and the Access token: before anything below.
-  const product = createProductTarget({ paid: true, budgetUsd: o.budgetUsd, env, model: o.model, door, fetch: doFetch, signIn })
+  const product = createProductTarget({ paid: true, budgetUsd: o.budgetUsd, env, model: o.model, door, fetch: doFetch, signIn, ...(o.ps === undefined ? {} : { ps: o.ps }) })
   const sessions = o.sessions ?? createSessionReader({ env, bucket: EVAL_BUCKET, fetch: doFetch })
   const edge = accessHeaders(env)
   const admin = rawHttp(origin, edge, () => signIn('lena', EVAL_PEOPLE.lena), doFetch)
@@ -277,10 +281,14 @@ export interface ProofOptions {
   /** Seams for the unit tests. */
   sessions?: SessionReader
   run?: RunSql
+  /** The `ps` the wrangler calls' kill needs (assertProcessTreeListable, #740). */
+  ps?: string
 }
 
 /** The scripted proof's wiring on a PR's test deployment. Refuses the eval deployment and any build that isn't the test build. */
 export async function wireProof(o: ProofOptions): Promise<Wired> {
+  // A wrangler call's deadline kills its whole process tree, which needs `ps` (#715, #740): without it, refuse before any call.
+  assertProcessTreeListable(o.ps)
   const database = o.env[EVAL_D1_NAME] ?? ''
   if (database !== `inhouse-sbx-pr${o.pr}-db` || !PER_PR_DB.test(database)) throw new DoorRefusal(`refusing: the proof runs on PR ${o.pr}'s test database (inhouse-sbx-pr${o.pr}-db) only, not ${JSON.stringify(database)}`)
   const wrangler = { database, config: o.env[EVAL_WRANGLER_CONFIG] ?? '', env: o.env, rule: 'morning-check' } as const

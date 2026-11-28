@@ -354,12 +354,13 @@ export const WRANGLER_DRAIN_MS = 5_000
  * Every process under `root` (its children, theirs, and so on), from one `ps` listing (macOS and Linux both take
  * `-A -o pid=,ppid=`).
  */
-function descendants(root: number): number[] {
+function descendants(root: number, ps: string): number[] {
   let listing: string
   try {
-    listing = execFileSync('ps', ['-A', '-o', 'pid=,ppid='], { encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'] })
-  } catch {
-    return []
+    listing = execFileSync(ps, ['-A', '-o', 'pid=,ppid='], { encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'] })
+  } catch (e) {
+    // Never a silent "no children" (#715): that would kill npx alone and leave wrangler running, the #690 orphan.
+    throw new ProcessTreeUnlisted((e as NodeJS.ErrnoException).code ?? `exit ${(e as { status?: unknown }).status ?? '?'}`)
   }
   const kids = new Map<number, number[]>()
   for (const line of listing.split('\n')) {
@@ -367,15 +368,31 @@ function descendants(root: number): number[] {
     if (!pid || ppid === undefined || Number.isNaN(ppid)) continue
     kids.set(ppid, [...(kids.get(ppid) ?? []), pid])
   }
+  // Visited once each (#718): a snapshot taken mid-change (pid reuse) can hold a cycle, which must not loop forever.
+  const seen = new Set<number>([root])
   const out: number[] = []
   const queue = [root]
   while (queue.length) {
     for (const k of kids.get(queue.shift()!) ?? []) {
+      if (seen.has(k)) continue
+      seen.add(k)
       out.push(k)
       queue.push(k)
     }
   }
   return out
+}
+
+/** `ps` could not list the processes (missing, or a busybox one without `-A`): a wrangler tree can't be killed whole. */
+export class ProcessTreeUnlisted extends DoorRefusal {
+  constructor(why: string) {
+    super(`the process tree could not be listed (ps -A -o pid=,ppid= failed: ${why}), so a wrangler call can't be stopped whole: the run stops (install procps)`)
+  }
+}
+
+/** Refuses (ProcessTreeUnlisted) unless `ps` can list the processes: checked before any paid turn (#715). */
+export function assertProcessTreeListable(ps = 'ps'): void {
+  descendants(process.pid, ps)
 }
 
 const sendSignal = (pid: number, sig: NodeJS.Signals) => {
@@ -389,21 +406,27 @@ const sendSignal = (pid: number, sig: NodeJS.Signals) => {
 }
 
 /**
- * Kills `root` and every process under it (#690, #711): each is stopped first (so none forks or exits and hands its
- * children to init mid-walk), the tree walked again for anything started meanwhile, then all are killed.
+ * Kills `root` and every process under it (#690, #711): the root is stopped before the first listing (#718: it can't fork,
+ * or exit and hand its children to init, while `ps` runs), each found process is stopped, the tree walked again for
+ * anything started meanwhile, then all are killed. If `ps` fails the root is still killed, and ProcessTreeUnlisted is
+ * thrown (#715): what was under it may still run, and the caller must say so.
  */
-export function killTree(root: number): void {
+export function killTree(root: number, ps = 'ps'): void {
   if (!Number.isInteger(root) || root <= 1) return
+  sendSignal(root, 'SIGSTOP')
   const seen = new Set<number>([root])
-  for (let pass = 0; pass < 3; pass++) {
-    const found = [root, ...descendants(root)].filter((p) => pass === 0 || !seen.has(p))
-    if (pass > 0 && found.length === 0) break
-    for (const p of found) {
-      seen.add(p)
-      sendSignal(p, 'SIGSTOP')
+  try {
+    for (let pass = 0; pass < 3; pass++) {
+      const found = descendants(root, ps).filter((p) => !seen.has(p))
+      if (found.length === 0) break
+      for (const p of found) {
+        seen.add(p)
+        sendSignal(p, 'SIGSTOP')
+      }
     }
+  } finally {
+    for (const p of seen) sendSignal(p, 'SIGKILL')
   }
-  for (const p of seen) sendSignal(p, 'SIGKILL')
 }
 
 /** Wrangler calls still running: killed, with everything under them, when this process exits (#690). */
@@ -411,39 +434,78 @@ const live = new Set<number>()
 let exitHooked = false
 
 /**
+ * After a cancel (#716): wrangler calls run in a process group of their own, so a second Ctrl-C (or a SIGINT then a
+ * SIGTERM to the run's group) can't kill the close's own calls, the lease release above all. Their deadline still kills
+ * their whole tree, and the run's exit too; only a SIGKILL to the run's group no longer reaches them, and what the close
+ * runs is cleanup (the Slack reset, the lease release), which may finish on its own.
+ */
+let shielded = false
+export function shieldWranglerCalls(): void {
+  shielded = true
+}
+export const wranglerCallsShielded = (): boolean => shielded
+/** Tests only: the shield is per process, so a test that sets it puts it back. */
+export function unshieldWranglerCallsForTests(): void {
+  shielded = false
+}
+
+/**
  * One wrangler call, asynchronous (a cancel's close is never stuck behind it), in this process's own process group
  * (#711): a SIGHUP, SIGINT or a SIGKILL sent to the run's group reaches npx and wrangler too, so none is left running
- * with no deadline (#690's `detached` took them out of the group, which a group kill then missed). Its deadline kills
- * npx and every process under it (killTree), not npx alone, which once left wrangler free to land its SQL after the lease
- * went back; so does this process's exit. `bin` replaces `npx --no-install wrangler` (tests).
+ * with no deadline (#690's `detached` took them out of the group, which a group kill then missed). Once a cancel has begun
+ * (#716), in a group of their own instead (shieldWranglerCalls). Its deadline kills npx and every process under it
+ * (killTree), not npx alone, which once left wrangler free to land its SQL after the lease went back; so does this
+ * process's exit. `bin` replaces `npx --no-install wrangler`, `ps` the process lister (tests).
  */
-export function spawnWrangler(args: string[], env: Record<string, string | undefined>, o: { bin?: readonly string[]; timeoutMs?: number } = {}): Promise<WranglerResult & { timedOut: boolean }> {
+export function spawnWrangler(args: string[], env: Record<string, string | undefined>, o: { bin?: readonly string[]; timeoutMs?: number; ps?: string; maxOutput?: number } = {}): Promise<WranglerResult & { timedOut: boolean }> {
   const [cmd, ...pre] = o.bin ?? ['npx', '--no-install', 'wrangler']
   const timeoutMs = o.timeoutMs ?? WRANGLER_TIMEOUT_MS
+  const ps = o.ps ?? 'ps'
+  const maxOutput = o.maxOutput ?? WRANGLER_MAX_OUTPUT
   if (!exitHooked) {
     exitHooked = true
-    process.on('exit', () => { for (const pid of live) killTree(pid) })
+    process.on('exit', () => {
+      for (const pid of live) {
+        try {
+          killTree(pid)
+        } catch (e) {
+          process.stderr.write(`${(e as Error).message}\n`)
+        }
+      }
+    })
   }
   return new Promise((resolve, reject) => {
-    const child = spawnChild(cmd!, [...pre, ...args], { cwd: path.resolve(import.meta.dirname, '../..'), env: env as NodeJS.ProcessEnv, stdio: ['ignore', 'pipe', 'pipe'] })
+    const child = spawnChild(cmd!, [...pre, ...args], { cwd: path.resolve(import.meta.dirname, '../..'), env: env as NodeJS.ProcessEnv, stdio: ['ignore', 'pipe', 'pipe'], detached: shielded })
     const pid = child.pid
     let stdout = ''
     let stderr = ''
     let timedOut = false
     let tooBig = false
+    let treeErr: unknown
     let exitCode: number | null = null
     let drain: ReturnType<typeof setTimeout> | undefined
+    // The tree's kill, only while the call is still running (#718: after its exit the pid may already be someone else's).
+    const stop = () => {
+      if (pid === undefined || !live.has(pid)) return
+      try {
+        killTree(pid, ps)
+      } catch (e) {
+        treeErr = e
+      }
+    }
     const timer = setTimeout(() => {
       timedOut = true
-      if (pid !== undefined) killTree(pid)
+      stop()
     }, timeoutMs)
     if (pid !== undefined) live.add(pid)
     const take = (into: 'out' | 'err') => (d: string) => {
       if (into === 'out') stdout += d
       else stderr += d
-      if (stdout.length + stderr.length > WRANGLER_MAX_OUTPUT && !tooBig) {
+      if (stdout.length + stderr.length > maxOutput && !tooBig) {
         tooBig = true
-        if (pid !== undefined) killTree(pid)
+        stop()
+        // Output still coming after the exit (a leftover holding the pipe): the streams close, so the call ends.
+        if (pid === undefined || !live.has(pid)) { child.stdout.destroy(); child.stderr.destroy() }
       }
     }
     child.stdout.setEncoding('utf8').on('data', take('out'))
@@ -467,7 +529,9 @@ export function spawnWrangler(args: string[], env: Record<string, string | undef
       clearTimeout(timer)
       clearTimeout(drain)
       if (pid !== undefined) live.delete(pid)
-      if (tooBig) reject(new DoorRefusal(`wrangler d1 execute answered more than ${WRANGLER_MAX_OUTPUT} bytes`))
+      // The tree couldn't be listed (#715): npx is dead, but what ran under it may not be. The run stops on this.
+      if (treeErr) reject(treeErr)
+      else if (tooBig) reject(new DoorRefusal(`wrangler d1 execute answered more than ${maxOutput} bytes`))
       else resolve({ status: timedOut ? null : (exitCode ?? code), stdout, output: `${stdout}\n${stderr}`, timedOut })
     })
   })
@@ -508,13 +572,24 @@ export const D1_TRANSIENT_MESSAGES: readonly string[] = [
 const D1_OVERLOADED = 7429
 /** API codes that refuse the token or the account: never retried, whatever else the answer says. */
 const AUTH_CODES = new Set([10000, 7403])
+/**
+ * D1's documented API codes (the same docs, "API error codes"), none of them a rate limit: a Retry-After beside one of these
+ * is not a 429 (#717). 7429 is handled before; a 7500 that is one of D1_TRANSIENT_MESSAGES too. 7500 stays here: D1's docs call it
+ * "conditional" (a platform failure or a SQLite error such as SQLITE_AUTH, "fix SQL or permission errors before retrying"), never
+ * transient as a code, so a bare 7500 with a Retry-After stops the run (https://developers.cloudflare.com/d1/observability/debug-d1/, read 2026-11-28).
+ */
+const NOT_A_RATE_LIMIT = new Set([7403, 7404, 7406, 7500, 10000])
+/** The text wrangler gives the API's own JSON answer (throwFetchError), as against its WAF and malformed-page errors. */
+const API_ANSWER = /^A request to the Cloudflare API \(.*\) failed\.$/
 
 /**
  * Why a failed wrangler call is clearly transient, as a fixed label, or null (#691, #710). Read from what wrangler 4.162
  * prints with --json (its d1 execute: `{"error": <the APIError>}` on stdout; samples in fixtures/wrangler-d1-errors, made
  * by its capture.mjs against a fake API). Wrangler never prints the HTTP status there, so the signs are its own:
  *   - D1's overloaded code 7429, or one of D1_TRANSIENT_MESSAGES in a note (each note is the API's message and code);
- *   - a 429: wrangler adds `retryAfterMs` (and a note) from the Retry-After header, which the API sends on a rate limit;
+ *   - a rate limit (#717): wrangler prints no status, so a 429 is read as `retryAfterMs` (which it takes from a Retry-After
+ *     header on any status) on the API's own JSON answer only, never its WAF-challenge or malformed-page errors, and never
+ *     beside one of D1's documented codes (NOT_A_RATE_LIMIT: a 404 7404 with a Retry-After is still a missing database);
  *   - a gateway's non-JSON page: "Received a malformed response from the API" with a `-> 5xx` note;
  *   - a network failure or wrangler's own timeout, which it prints as the error's text alone ("fetch failed").
  * Never transient: an auth code (10000, 7403), our deadline's kill only when it was ours (a signal from outside is a
@@ -535,7 +610,7 @@ export function wranglerTransient(r: WranglerResult): string | null {
   if (e.name === 'APIError') {
     if (codes.includes(D1_OVERLOADED)) return 'D1 overloaded'
     if (notes.some((n) => D1_TRANSIENT_MESSAGES.some((m) => n.startsWith(m)))) return 'a transient D1 error'
-    if (typeof e.retryAfterMs === 'number') return 'a 429 from the API'
+    if (typeof e.retryAfterMs === 'number' && typeof e.text === 'string' && API_ANSWER.test(e.text) && !codes.some((c) => typeof c === 'number' && NOT_A_RATE_LIMIT.has(c))) return 'a rate limit (Retry-After)'
     if (e.text === 'Received a malformed response from the API' && notes.some((n) => / -> 5\d\d\b/.test(n))) return 'a 5xx from the API'
     return null
   }
