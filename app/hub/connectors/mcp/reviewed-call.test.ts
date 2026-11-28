@@ -43,4 +43,14 @@ describe("Slack's pinned era", () => {
     expect(codeOf(await notesRead(w))).toBe('ok')
     expect(w.notes.requests.slice(before).map(r => r.rpc)).toEqual(['server/discover', 'initialize', 'notifications/initialized', 'tools/call'])
   })
+
+  it("the notes fixture's era is cached: after the server drops its session, the new session needs no second probe", async () => {
+    const w = world()
+    await connect(w, NOTES)
+    expect(codeOf(await notesRead(w))).toBe('ok')
+    w.notes.sessions.clear()
+    const before = w.notes.requests.length
+    expect(codeOf(await notesRead(w))).toBe('ok')
+    expect(w.notes.requests.slice(before).map(r => r.rpc)).toEqual(['tools/call', 'initialize', 'notifications/initialized', 'tools/call'])
+  })
 })
