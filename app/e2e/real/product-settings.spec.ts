@@ -182,8 +182,11 @@ test('The Inhouse team picks any public website or only the websites listed, and
       await choice('Any public website').click()
       await Promise.all([saved(), page.getByRole('option', { name: 'Only the websites listed', exact: true }).click()])
     }
-    await list.fill('example.com')
-    await Promise.all([saved(), list.blur()])
+    // An unchanged list sends no PUT to wait for (the field skips it), so type and wait only when it differs.
+    if ((await list.inputValue()) !== 'example.com') {
+      await list.fill('example.com')
+      await Promise.all([saved(), list.blur()])
+    }
     await expect(list).toHaveValue('example.com')
   }
 })

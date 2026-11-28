@@ -14,6 +14,7 @@ import { display, nowOf } from '../../state/display'
 import { AUDIT_CSV_HEADER, csvCell } from '../../../shared/csv'
 import { grantStatus } from './grant-status'
 import { DEFAULT_JOB_BUDGET_USD, HOSTLIST_MAX_HOSTS, MAX_JOB_BUDGET_USD, MAX_TURNS, MIN_JOB_BUDGET_USD, parseHostlist, webFetchMode } from '../../../shared/contract/settings-table'
+import type { WebFetchMode } from '../../../shared/contract/settings-table'
 import { dataExportFileName, nextCleanupMs } from '../../../shared/contract/data-access'
 import { demoExport } from './demo-export'
 
@@ -52,8 +53,9 @@ export interface Row {
   avatar?: { who: string; at: 'row' | 'control' }
   /** A `text` row's kind of value: checked when the field loses focus, and not saved while it is wrong. */
   type?: FieldType
-  /** A `hosts` row: nothing was ever saved (no row), which is not the same as a list saved empty. */
-  unset?: boolean
+  /** A `hosts` row: what the server decides from the saved mode and list (`webFetchMode`), and whether the mode is saved (the choice then can't be changed here). */
+  reach?: WebFetchMode
+  pinned?: boolean
   /** A `select` row saved some way other than a setting (a member's role is its own call): runs instead of `setSetting(key, value)`. */
   save?: (value: string) => void
   /** A `toggle` row that isn't a switch setting (the support grant): whether it is on, and what flipping it does. */
@@ -321,20 +323,27 @@ export function exportRefused(e: unknown): string {
 
 /**
  * What the web rows say (M3-F, N29; the default flipped by M3-J), from the Inhouse team's `t:webfetch_mode` and
- * `t:webfetch` as saved (undefined for no row). It decides with the server's own `webFetchMode`, so the words never
- * disagree with what the agent can open: `open` set, or no mode and no list ever saved, is any public website (the list
- * unused when `open` is set); everything else is the list, and an empty saved list blocks every website, an invalid
- * mode included (#744, #745). `readOnly` is the host row's text when read-only and its list isn't what decides (else
- * the hosts, or "No websites"). The Inhouse team picks between the two states of the list on the row itself (any public
- * website until it chooses to list some, then only the listed ones, none if it lists none).
+ * `t:webfetch` as saved (undefined for no row). It decides with the server's own `webFetchMode`, so the words and the
+ * choice never disagree with what the agent can open: `open` set, or no mode and no list ever saved, is any public
+ * website (the list unused when `open` is set); everything else is the list, and an empty saved list blocks every
+ * website, an invalid mode included (#744, #745). `reach` is that decision. `pinned` is a mode saved through the API
+ * (any value): the choice on the row then shows what it decides and can't be changed from the screen (#762). `readOnly`
+ * is the host row's text when read-only and its list isn't what decides (else the hosts, or "No websites"). With no mode
+ * the Inhouse team picks on the row itself: any public website until it chooses to list some, then only the listed ones,
+ * none if it lists none.
  */
-export function webFetchWords(mode: unknown, hosts: unknown): { read: string; list: string; readOnly?: string } {
-  if (mode === 'open') return { read: 'Let your Inhouse agent open any public website. Off blocks them all.', list: 'Your Inhouse team lets it open any public website, so this list isn’t used.', readOnly: 'Any public website' }
-  if (webFetchMode(mode, hosts) === 'list') return { read: 'Let your Inhouse agent open the websites listed below. Off blocks them all.', list: 'Enter one website name per line. Leave empty to block all websites.' }
+export function webFetchWords(mode: unknown, hosts: unknown): { read: string; list: string; readOnly?: string; reach: WebFetchMode; pinned: boolean } {
+  const reach = webFetchMode(mode, hosts)
+  const pinned = mode !== undefined && mode !== null
+  if (mode === 'open') return { read: 'Let your Inhouse agent open any public website. Off blocks them all.', list: 'Set by the Inhouse team: any public website, so this list isn’t used.', readOnly: 'Any public website', reach, pinned }
+  if (reach === 'list') {
+    const list = 'Enter one website name per line. Leave empty to block all websites.'
+    return { read: 'Let your Inhouse agent open the websites listed below. Off blocks them all.', list: pinned ? `Set by the Inhouse team: only the websites listed. ${list}` : list, reach, pinned }
+  }
   return {
     read: 'Let your Inhouse agent open web pages. Off blocks them all.',
-    list: 'Any public website is allowed. Choose Only the websites listed to allow just some, or none.',
-    readOnly: 'Any public website',
+    list: 'Any public website is allowed. Choose "Only the websites listed" to allow just some, or none.',
+    readOnly: 'Any public website', reach, pinned,
   }
 }
 
@@ -438,7 +447,7 @@ export function settingsPage(tab: string, env: Env): Page {
         // The two web switches are an Admin's (brand settings, M1-F); which websites it may open stays the Inhouse team's.
         { ...R('Search the web', 'Let your Inhouse agent search the web. Off by default.', 'toggle', '', 0, 't:websearch', false), keywords: 'websearch internet' },
         { ...R('Read web pages', fetchWords.read, 'toggle', '', 0, 't:webfetch_on', true), keywords: 'webfetch internet websites' },
-        { ...txt('Websites it may open', fetchWords.list, 't:webfetch', ''), type: 'hosts', unset: saved['t:webfetch'] == null, keywords: 'webfetch hosts domains allowlist', ...(fetchWords.readOnly ? { display: fetchWords.readOnly } : {}) },
+        { ...txt('Websites it may open', fetchWords.list, 't:webfetch', ''), type: 'hosts', reach: fetchWords.reach, pinned: fetchWords.pinned, keywords: 'webfetch hosts domains allowlist', ...(fetchWords.readOnly ? { display: fetchWords.readOnly } : {}) },
       ] },
       { label: 'What your Inhouse agent knows', rows: [R('Team memory', `Supplier, customer and stock rules the whole team shares. ${memCount} things remembered.`, 'button', 'Open memory', 0, undefined, undefined, () => env.openSettings('team-memory')), R('Skills', `The jobs it knows how to do. ${skills.length} skills, added by your Inhouse team.`, 'button', 'View skills', 0, undefined, undefined, env.goSkills)] },
     ] },

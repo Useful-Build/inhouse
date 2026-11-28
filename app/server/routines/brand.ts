@@ -63,15 +63,15 @@ export async function submitSettings(db: D1Database): Promise<SubmitSettings | {
   // The brand and technical rows (the web switches are brand settings, M1-F), each listed under its own scope as the
   // settings store lists them. A web row whose value doesn't parse fails closed, as the egress does (it refuses on the
   // same row): `undefined` would read as never set, which is on for `t:webfetch_on` and any public website for the host
-  // list and mode (#755). A switch reads as off; a corrupt mode reads as `false`, which `webFetchMode` takes as `list`;
-  // and when either of the two is corrupt the host list reads as `false` too, which `resolveTurnSettings` takes as no
-  // host, so neither leaves a website.
+  // list and mode (#755). A switch reads as off. When the mode or the host list is corrupt, both read as `false`: the
+  // mode becomes `list` for `webFetchMode` (even a valid `open` beside a corrupt list, #763: the egress reads both rows
+  // and refuses), and the list becomes no host for `resolveTurnSettings`, so neither leaves a website.
   const all = await rows(db)
   const reachBroken = all.some(r => WEB_REACH.has(r.key) && parse(r.value_json) === undefined)
   const valueOf = (key: string, json: string): SettingRecord['value'] => {
     const v = parse(json)
-    if (v === undefined && (WEB_SWITCHES.has(key) || key === 't:webfetch_mode')) return false
-    return (key === 't:webfetch' && reachBroken ? false : v) as SettingRecord['value']
+    if (WEB_REACH.has(key) && reachBroken) return false
+    return (v === undefined && WEB_SWITCHES.has(key) ? false : v) as SettingRecord['value']
   }
   const stored = all.map(r => ({ scope: settingSpec(r.key)?.scope, record: { key: r.key, value: valueOf(r.key, r.value_json), rev: r.rev, updatedAt: null, updatedBy: null } }))
   const ofScope = (scope: SettingScope): SettingRecord[] => stored.filter(r => r.scope === scope).map(r => r.record)

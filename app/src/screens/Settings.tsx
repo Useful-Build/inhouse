@@ -98,12 +98,12 @@ function HostsField({ row, disabled, onAsk }: { row: Row; disabled: boolean; onA
   const save = (value: string | null) => tell(agent.setSetting(row.key!, value), row)
   return (
     <div className="flex max-w-full flex-col items-end gap-2.5">
-      <Select label={row.title} value={row.unset ? ANY_SITE : LISTED_SITES} options={[ANY_SITE, LISTED_SITES]} disabled={disabled} minWidth={200} onChange={v => {
+      <Select label={row.title} value={row.reach === 'open' ? ANY_SITE : LISTED_SITES} options={[ANY_SITE, LISTED_SITES]} disabled={disabled || row.pinned} minWidth={200} onChange={v => {
         if (v === LISTED_SITES) save('')
         else if (row.value.trim()) onAsk({ title: 'Allow any public website?', text: 'This clears the list of websites.', action: 'Allow any website', gives: true, go: () => save(null) })
         else save(null)
       }} />
-      {!row.unset && <TypedField key={row.key} row={row} type="hosts" disabled={disabled} />}
+      {row.reach !== 'open' && <TypedField key={row.key} row={row} type="hosts" disabled={disabled} />}
     </div>
   )
 }
