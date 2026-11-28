@@ -200,9 +200,9 @@ test('competitor prices shows web steps and sources, and web switches change liv
 })
 
 test('Pause and Delete+Undo both end the seeded catalog-audit job (H1)', async ({ page }) => {
-  await start(page, '#/today')
-  await page.getByRole('status', { name: 'Inhouse agent is running' }).getByRole('button', { name: 'Pause' }).click()
-  await expect(page.getByRole('status', { name: 'Inhouse agent is paused' })).toBeVisible()
+  await start(page, '#/settings/team-spend')
+  await page.locator('main').getByRole('button', { name: 'Pause Inhouse agent', exact: true }).click()
+  await expect(page.locator('main').getByRole('button', { name: 'Resume Inhouse agent', exact: true })).toBeVisible()
   await page.evaluate(() => { location.hash = '#/chats' })
   await expect(page.getByRole('banner')).toContainText('Full catalog margin review')
   await expect(page.locator('main')).not.toContainText('Working on a long job')
