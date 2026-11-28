@@ -510,7 +510,7 @@ Test build and release smoke (P2)
 Demo upgrade: a stored demo
   Path:     a browser holding the demo as the build before the agent seam saved it -> open Today
   Selector: sidebar chat, model button, chat composer, Today card "going out"
-  Expected: the started chat with its answer, the draft, the model pick and the approval mid-hold are all intact, and the hold still ends on the clock
+  Expected: the started chat with its answer, the draft and the model pick are intact; the fixture's approval of the Ridge reorder (a finding now) is dropped without a warning, so nothing is going out
   Covered:  e2e/demo-upgrade.spec.ts
 
 Navigation: palette and shortcuts

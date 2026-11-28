@@ -94,7 +94,7 @@ test('Search filters by name across the current tab and place, and has an empty 
   await expect(cards(page).first()).toContainText('kestrel-delivery-times.png')
   await tab(page, 'All').click()
   await places(page).getByRole('button', { name: /^Uploaded by the team/ }).click()
-  await expect(cards(page)).toHaveCount(2)
+  await expect(cards(page)).toHaveCount(3)
   await box.fill('zzzz')
   await expect(page.getByText('No files match "zzzz".')).toBeVisible()
   await expect(cards(page)).toHaveCount(0)
