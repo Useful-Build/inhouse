@@ -60,6 +60,8 @@ export interface MockActionsHost {
   now(): number
   /** Whether the scenario shows the demo's actions. */
   shown(): boolean
+  /** Whether the brand has this tool: a brand with no Slack (the demo's brand override) has no Slack card or permission. */
+  hasTool(tool: ToolKey): boolean
   /** The signed-in person's member id, and a member id for a sample person. */
   meId: string
   memberId(sampleId: string): string
@@ -205,16 +207,20 @@ export class MockActions {
     const { card } = this.settled(row)
     return { ...card, serverNow: instant(this.h.now()), ...(row.sendAtMs !== null ? { sendAt: instant(row.sendAtMs) } : {}) }
   }
+  /** The rows the brand has: none where the scenario hides them, none on a tool it lacks. */
+  private present(): Row[] {
+    if (!this.h.shown()) return []
+    return this.rows.filter(r => !r.operation || this.h.hasTool(operationOf(r.operation).tool))
+  }
   private find(id: string): Row {
-    const row = this.h.shown() ? this.rows.find(r => r.card.id === id) : undefined
+    const row = this.present().find(r => r.card.id === id)
     if (!row) throw new AgentError(NOT_FOUND, "That isn't there any more.")
     return row
   }
   private conflict(row: Row): never { throw new AgentError('conflict', 'This changed before your answer arrived.', { current: this.view(row) as unknown as Record<string, unknown> }) }
 
   list(filter: ActionFilter = {}): ActionCard[] {
-    if (!this.h.shown()) return []
-    return this.rows.map(r => this.view(r))
+    return this.present().map(r => this.view(r))
       .filter(c => (!filter.states || filter.states.includes(c.state)) && (!filter.chatId || c.chatId === filter.chatId))
       .sort((a, b) => b.askedAt.ms - a.askedAt.ms)
   }
@@ -303,12 +309,12 @@ export class MockActions {
 
   /** This admin's view: everyone's permissions, newest first. */
   permissions(): Permission[] {
-    if (!this.h.shown()) return []
-    return [...this.grants].sort((a, b) => b.grantedAt - a.grantedAt).map(permissionOf)
+    return this.presentGrants().sort((a, b) => b.grantedAt - a.grantedAt).map(permissionOf)
   }
+  private presentGrants(): Grant[] { return this.h.shown() ? this.grants.filter(g => this.h.hasTool(operationOf(g.operation).tool)) : [] }
   /** Stops one permission at the rev it was read at; a stale rev is a conflict with the permission as it is now. */
   removePermission(id: string, ifRev: number): Permission[] {
-    const g = this.h.shown() ? this.grants.find(x => x.id === id) : undefined
+    const g = this.presentGrants().find(x => x.id === id)
     if (!g) throw new AgentError(NOT_FOUND, 'This permission was already removed.')
     if (g.rev !== ifRev) throw new AgentError('conflict', 'This permission changed first.', { current: permissionOf(g) as unknown as Record<string, unknown> })
     this.grants = this.grants.filter(x => x !== g)

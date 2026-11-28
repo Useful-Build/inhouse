@@ -5,10 +5,8 @@ import { readFileSync } from 'node:fs'
 import { expect, test, type Fx } from './support/fx.js'
 import type { Page } from '@playwright/test'
 
-type Stage = 'Watch' | 'Act' | 'Run'
-
-async function start(page: Page, fx: Fx, stage: Stage, hash: string) {
-  await fx.seed({ stage })
+async function start(page: Page, fx: Fx, hash: string) {
+  await fx.seed({})
   await page.goto('/?demo' + hash)
   await expect(page.getByRole('heading', { level: 1 }).first()).toBeVisible()
 }
@@ -31,7 +29,7 @@ async function resetDemo(page: Page) {
 }
 
 test('Inhouse agent: brand name, tone and sign-off are saved, survive a reload and Reset demo clears them; its links open Team memory and Skills', async ({ fx, page }) => {
-  await start(page, fx, 'Act', '#/settings/team-agent')
+  await start(page, fx, '#/settings/team-agent')
   await expect(h1(page, 'Inhouse agent')).toBeVisible()
   const signs = main(page).getByRole('textbox', { name: 'Signs emails as', exact: true })
   const brand = main(page).getByRole('textbox', { name: 'Brand name', exact: true })
@@ -69,7 +67,7 @@ test('Inhouse agent: brand name, tone and sign-off are saved, survive a reload a
 })
 
 test('Data and access: retention and access switches are saved, survive a reload and Reset demo clears them; Next cleanup shows; Export downloads a sample and delete answers', async ({ fx, page }) => {
-  await start(page, fx, 'Act', '#/settings/team-data')
+  await start(page, fx, '#/settings/team-data')
   await expect(h1(page, 'Data and access')).toBeVisible()
   await expect(combo(page, 'Chats: 12 months')).toBeVisible()
   await expect(combo(page, 'Activity and steps: 12 months')).toBeVisible()
@@ -132,7 +130,7 @@ test('Data and access: retention and access switches are saved, survive a reload
 })
 
 test('Audit log: pausing the agent adds a row at the top that survives a reload, and Resume takes it away', async ({ fx, page }) => {
-  await start(page, fx, 'Act', '#/settings/team-audit')
+  await start(page, fx, '#/settings/team-audit')
   await expect(h1(page, 'Audit log')).toBeVisible()
   const paused = main(page).getByText('Sam Mercer paused your Inhouse agent', { exact: true })
   const seeded = main(page).getByText('Sam Mercer changed an approval rule', { exact: true })

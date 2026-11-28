@@ -47,7 +47,7 @@ test('A demo stored by the build before the seam opens with its chat, draft, mod
   await page.clock.install({ time: approval.ms })
   // The seed carries no demo switches: the restore below writes the fixture's own switches entry, whose ambient is Off.
   // Passing `demo: { ambient: 'Always' }` here would be silently overridden by it, so it isn't passed.
-  await fx.seedSaved({ stage: 'Act' }, demoState)
+  await fx.seedSaved({}, demoState)
   // After the seed (which clears storage first), so the fixture's other entries stay.
   await page.addInitScript(restore, rest.map(e => [e.key, e.value] as [string, string]))
   await fx.open('#/today')

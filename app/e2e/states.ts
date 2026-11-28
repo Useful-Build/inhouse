@@ -12,7 +12,6 @@ export type Theme = (typeof THEMES)[number]
 
 export type UiState = {
   name: string
-  stage: 'Watch' | 'Act' | 'Run'
   scenario: string
   hash: string
   /** Text that shows once the state is ready. */
@@ -30,44 +29,39 @@ async function sidebar(page: Page) {
   return page.getByRole('complementary', { name: 'Sidebar' })
 }
 
-const page_ = (name: string, stage: UiState['stage'], scenario: string, hash: string, ready: string, a11y = false): UiState =>
-  ({ name, stage, scenario, hash, ready, a11y })
+// The demo has no stages since decision A13 (option B), as the product: the `act-` names are the baselines' from before.
+const page_ = (name: string, scenario: string, hash: string, ready: string, a11y = false): UiState =>
+  ({ name, scenario, hash, ready, a11y })
 
 export const STATES: UiState[] = [
-  page_('watch-today', 'Watch', 'Normal', '#/today', '6 things need you today.'),
-  page_('watch-approvals', 'Watch', 'Normal', '#/approvals', "In Act, today's 6 fixes would be waiting here"),
-  page_('watch-chats', 'Watch', 'Normal', '#/chats', 'Approvals and routines start in Act'),
-  page_('act-activity', 'Act', 'Normal', '#/activity', 'Activity', true),
-  page_('run-activity', 'Run', 'Normal', '#/activity', 'Activity'),
-  page_('act-routines', 'Act', 'Normal', '#/routines', 'Routines', true),
-  page_('act-tools', 'Act', 'Normal', '#/tools', 'Being connected', true),
-  page_('act-tool-shopify', 'Act', 'Normal', '#/tools/shopify', 'What your Inhouse agent can do with Shopify', true),
-  page_('act-tool-disconnected', 'Act', 'Tool disconnected', '#/tools/gorgias', 'Disconnected'),
-  page_('act-skills', 'Act', 'Normal', '#/skills', 'Suggested for Shopify brands', true),
-  page_('act-usage', 'Act', 'Normal', '#/usage', 'Breakdown', true),
-  page_('act-usage-cap', 'Act', 'Cap reached', '#/usage', '$250.00'),
-  page_('act-settings-general', 'Act', 'Normal', '#/settings/you-general', 'Profile', true),
-  page_('act-settings-notif', 'Act', 'Normal', '#/settings/you-notif', 'Alerts'),
-  page_('act-settings-memory', 'Act', 'Normal', '#/settings/team-memory', 'Suppliers'),
-  page_('run-settings-limits', 'Run', 'Normal', '#/settings/team-limits', 'Jobs your Inhouse agent may finish by itself'),
-  page_('act-settings-audit', 'Act', 'Normal', '#/settings/team-audit', 'Audit log'),
-  page_('act-settings-data', 'Act', 'Normal', '#/settings/team-data', 'Where your data stays'),
-  page_('act-first-day', 'Act', 'First day', '#/today', 'Getting your Inhouse agent ready'),
-  page_('act-loading', 'Act', 'Loading', '#/today', 'Reading your tools'),
-  page_('act-cap-today', 'Act', 'Cap reached', '#/today', 'Spending cap reached.'),
-  page_('act-today', 'Act', 'Normal', '#/today', '6 things need you. Drafts are ready.', true),
+  page_('act-activity', 'Normal', '#/activity', 'Activity', true),
+  page_('act-routines', 'Normal', '#/routines', 'Routines', true),
+  page_('act-tools', 'Normal', '#/tools', 'Being connected', true),
+  page_('act-tool-shopify', 'Normal', '#/tools/shopify', 'What your Inhouse agent can do with Shopify', true),
+  page_('act-tool-disconnected', 'Tool disconnected', '#/tools/gorgias', 'Disconnected'),
+  page_('act-skills', 'Normal', '#/skills', 'Suggested for Shopify brands', true),
+  page_('act-usage', 'Normal', '#/usage', 'Breakdown', true),
+  page_('act-usage-cap', 'Cap reached', '#/usage', '$250.00'),
+  page_('act-settings-general', 'Normal', '#/settings/you-general', 'Profile', true),
+  page_('act-settings-memory', 'Normal', '#/settings/team-memory', 'Suppliers'),
+  page_('act-settings-audit', 'Normal', '#/settings/team-audit', 'Audit log'),
+  page_('act-settings-data', 'Normal', '#/settings/team-data', 'Where your data stays'),
+  page_('act-first-day', 'First day', '#/today', 'Getting your Inhouse agent ready'),
+  page_('act-loading', 'Loading', '#/today', 'Reading your tools'),
+  page_('act-cap-today', 'Cap reached', '#/today', 'Spending cap reached.'),
+  page_('act-today', 'Normal', '#/today', '6 things need you. Drafts are ready.', true),
   // Stage 1 M3-U: the agent's action cards (the demo's batch and a teammate's refund) sit above the drafts.
-  page_('act-approvals', 'Act', 'Normal', '#/approvals', 'Actions for you', true),
-  page_('act-library', 'Act', 'Normal', '#/library', 'All files', true),
+  page_('act-approvals', 'Normal', '#/approvals', 'Actions for you', true),
+  page_('act-library', 'Normal', '#/library', 'All files', true),
   // PR 6: the Library with nothing in it yet, and while it loads.
-  page_('act-library-first-day', 'Act', 'First day', '#/library', 'No files yet', true),
-  page_('act-library-loading', 'Act', 'Loading', '#/library', 'All files', true),
-  page_('act-chat-stuck', 'Act', 'Normal', '#/chats/stuck', '3 orders · $556', true),
-  page_('act-chats-all', 'Act', 'Normal', '#/chats/all', 'Kestrel delivery times', true),
+  page_('act-library-first-day', 'First day', '#/library', 'No files yet', true),
+  page_('act-library-loading', 'Loading', '#/library', 'All files', true),
+  page_('act-chat-stuck', 'Normal', '#/chats/stuck', '3 orders · $556', true),
+  page_('act-chats-all', 'Normal', '#/chats/all', 'Kestrel delivery times', true),
   // Stage 1 M3-U: a 450-change batch card in its chat, and its full list.
-  page_('act-chat-batch', 'Act', 'Normal', '#/chats/vip-tags', 'and 447 more', true),
+  page_('act-chat-batch', 'Normal', '#/chats/vip-tags', 'and 447 more', true),
   {
-    name: 'pop-batch-sheet', stage: 'Act', scenario: 'Normal', hash: '#/chats/vip-tags', ready: 'and 447 more', a11y: true,
+    name: 'pop-batch-sheet', scenario: 'Normal', hash: '#/chats/vip-tags', ready: 'and 447 more', a11y: true,
     act: async page => {
       // The chat behind the sheet has settled first (no scroller moved for 3 frames), so the shot's background is the same
       // every run; then the sheet opens from the keyboard with a focus that doesn't scroll (a click would scroll the chat
@@ -98,14 +92,14 @@ export const STATES: UiState[] = [
     },
   },
   {
-    name: 'pop-notifications', stage: 'Act', scenario: 'Normal', hash: '#/today', ready: '6 things need you', a11y: true,
+    name: 'pop-notifications', scenario: 'Normal', hash: '#/today', ready: '6 things need you', a11y: true,
     act: async page => {
       await page.getByRole('button', { name: 'Notifications' }).click()
       await expect(page.getByText('Mark all as read')).toBeVisible()
     },
   },
   {
-    name: 'pop-account', stage: 'Act', scenario: 'Normal', hash: '#/today', ready: '6 things need you', a11y: true,
+    name: 'pop-account', scenario: 'Normal', hash: '#/today', ready: '6 things need you', a11y: true,
     act: async page => {
       await (await sidebar(page)).getByRole('button', { name: 'Settings' }).click()
       await expect(page.getByRole('menu').getByText('sam@northline.example', { exact: true })).toBeVisible()
@@ -113,7 +107,7 @@ export const STATES: UiState[] = [
     },
   },
   {
-    name: 'pop-team-bug', stage: 'Act', scenario: 'Normal', hash: '#/today', ready: '6 things need you', a11y: true,
+    name: 'pop-team-bug', scenario: 'Normal', hash: '#/today', ready: '6 things need you', a11y: true,
     act: async page => {
       // Report a bug left the account menu; the palette keeps it, and the window opens on that type.
       await page.keyboard.press('ControlOrMeta+k')
@@ -122,33 +116,31 @@ export const STATES: UiState[] = [
     },
   },
   {
-    name: 'chat-empty', stage: 'Act', scenario: 'Normal', hash: '#/today', ready: '6 things need you',
+    name: 'chat-empty', scenario: 'Normal', hash: '#/today', ready: '6 things need you',
     act: async page => {
       await (await sidebar(page)).getByRole('button', { name: 'New chat' }).click()
       await expect(page.getByText('What should we look into?')).toBeVisible()
     },
   },
   {
-    name: 'pop-problem-panel', stage: 'Act', scenario: 'Normal', hash: '#/today', ready: '6 things need you', a11y: true,
+    name: 'pop-problem-panel', scenario: 'Normal', hash: '#/today', ready: '6 things need you', a11y: true,
     act: async page => {
       await page.getByRole('article').filter({ hasText: 'Ridge 30L Pack runs out in 9 days' }).getByRole('button', { name: 'Review' }).click()
       await expect(page.getByRole('dialog').getByRole('button', { name: /^Approve and send to Kestrel/ })).toContainText('$9,600')
     },
   },
   {
-    name: 'pop-trace', stage: 'Act', scenario: 'Normal', hash: '#/chats/stuck', ready: '3 orders · $556', a11y: true,
+    name: 'pop-trace', scenario: 'Normal', hash: '#/chats/stuck', ready: '3 orders · $556', a11y: true,
     act: async page => {
       await openTraceFrom(page.locator('main').getByRole('button', { name: /6 steps/ }).last())
       await expect(page.getByRole('dialog', { name: /What your Inhouse agent did/ })).toContainText('9.4s')
     },
   },
-  // Today in Run: the cards the agent handled, muted with the done token.
-  page_('run-today', 'Run', 'Normal', '#/today', 'handled today', true),
   {
     // Today once every draft is approved and sent: every card muted (text-done). The approvals are made on the
     // Approvals page under a paused clock, which then runs past the 10-second send hold and its notices, so no toast
     // or "going out" line is left to race the screenshot.
-    name: 'act-today-approved', stage: 'Act', scenario: 'Normal', hash: '#/approvals', ready: 'Waiting for you', a11y: true,
+    name: 'act-today-approved', scenario: 'Normal', hash: '#/approvals', ready: 'Waiting for you', a11y: true,
     act: async page => {
       // A fixed, believable stamp on every run: the demo clock reads 8:00 AM plus the time since the demo started
       // (saved at the first load). The page clock is set back to that moment and held, so every approval says
@@ -191,7 +183,7 @@ export const STATES: UiState[] = [
   {
     // Models: one model turned off (an off switch in both themes), and Smart's locked switch with its reason in a
     // tooltip, reached by keyboard and fully shown.
-    name: 'act-settings-models', stage: 'Act', scenario: 'Normal', hash: '#/settings/team-modes', ready: 'Models', a11y: true,
+    name: 'act-settings-models', scenario: 'Normal', hash: '#/settings/team-modes', ready: 'Models', a11y: true,
     act: async page => {
       // On a phone team settings are read-only text (D4): the shot is the page as it opens.
       if (await page.getByRole('button', { name: 'Menu' }).isVisible()) return
@@ -207,7 +199,7 @@ export const STATES: UiState[] = [
   },
   {
     // A delete question: the destructive button, from a routine's "···" menu.
-    name: 'act-routine-delete', stage: 'Act', scenario: 'Normal', hash: '#/routines', ready: 'Routines', a11y: true,
+    name: 'act-routine-delete', scenario: 'Normal', hash: '#/routines', ready: 'Routines', a11y: true,
     act: async page => {
       await page.locator('main').getByRole('button', { name: /^Actions for / }).first().click()
       await page.getByRole('menuitem', { name: 'Delete' }).click()
@@ -218,7 +210,7 @@ export const STATES: UiState[] = [
   },
   {
     // Select mode in the Library: two files picked, the selection bar with its red Delete.
-    name: 'act-library-select', stage: 'Act', scenario: 'Normal', hash: '#/library', ready: 'All files', a11y: true,
+    name: 'act-library-select', scenario: 'Normal', hash: '#/library', ready: 'All files', a11y: true,
     act: async page => {
       await page.locator('main').getByRole('button', { name: 'Select', exact: true }).click()
       const files = page.locator('main [data-file]')
@@ -229,7 +221,7 @@ export const STATES: UiState[] = [
   },
   {
     // The Library's file viewer (the lg window, 960px less 40px on a narrow screen), on the first file, with Close on screen.
-    name: 'act-library-viewer', stage: 'Act', scenario: 'Normal', hash: '#/library', ready: 'All files', a11y: true,
+    name: 'act-library-viewer', scenario: 'Normal', hash: '#/library', ready: 'All files', a11y: true,
     act: async page => {
       await page.locator('main [data-file]').first().click()
       const viewer = page.getByRole('dialog', { name: /^File: / })
@@ -239,7 +231,7 @@ export const STATES: UiState[] = [
   },
   {
     // Select mode in All chats: two chats picked (the selected row fill), the selection bar.
-    name: 'act-chats-select', stage: 'Act', scenario: 'Normal', hash: '#/chats/all', ready: 'Kestrel delivery times', a11y: true,
+    name: 'act-chats-select', scenario: 'Normal', hash: '#/chats/all', ready: 'Kestrel delivery times', a11y: true,
     act: async page => {
       await page.locator('main').getByRole('button', { name: 'Select', exact: true }).click()
       const rows = page.locator('main [data-chat-open]')
@@ -250,7 +242,7 @@ export const STATES: UiState[] = [
   },
   {
     // Help and guides with the first guide open in the accordion.
-    name: 'pop-help-guide', stage: 'Act', scenario: 'Normal', hash: '#/today', ready: '6 things need you', a11y: true,
+    name: 'pop-help-guide', scenario: 'Normal', hash: '#/today', ready: '6 things need you', a11y: true,
     act: async page => {
       await (await sidebar(page)).getByRole('button', { name: 'Settings' }).click()
       await page.getByRole('menuitem', { name: 'Help and guides' }).click()
@@ -266,16 +258,19 @@ export const STATES: UiState[] = [
     },
   },
   {
-    name: 'pop-settings-dropdown', stage: 'Act', scenario: 'Normal', hash: '#/settings/you-general', ready: 'Profile', a11y: true,
+    name: 'pop-settings-dropdown', scenario: 'Normal', hash: '#/settings/you-general', ready: 'Profile', a11y: true,
     act: async page => {
       await page.locator('main [role="combobox"]:not([disabled])').first().click()
       await expect(page.getByRole('listbox')).toBeVisible()
     },
   },
-  page_('act-approvals-first-day', 'Act', 'First day', '#/approvals', 'Nothing to approve yet.', true),
-  page_('act-approvals-loading', 'Act', 'Loading', '#/approvals', 'Waiting for you', true),
-  page_('act-channel-slack', 'Act', 'Normal', '#/tools/slack', 'Connected · Nov 2', true),
-  page_('watch-channel-slack', 'Watch', 'Normal', '#/tools/slack', 'Included from Act'),
+  page_('act-approvals-first-day', 'First day', '#/approvals', 'Nothing to approve yet.', true),
+  page_('act-approvals-loading', 'Loading', '#/approvals', 'Waiting for you', true),
+  page_('act-channel-slack', 'Normal', '#/tools/slack', 'Connected · Nov 2', true),
+  // The demo catch-up's PR 1: the ask cards in their chat (a Needs a check, Allow once and Always allow, Always allow
+  // first), and Settings > Always allowed with the seeded permissions.
+  page_('act-chat-order-tags', 'Normal', '#/chats/order-tags', 'Post to #ops-alerts in Slack', true),
+  page_('act-settings-permissions', 'Normal', '#/settings/you-permissions', 'Done without asking', true),
 ]
 
 /** Opens a state from a clean demo: a fixed theme, no agent-mark animation, no dot sweep. */
@@ -291,7 +286,7 @@ export async function pointerAway(page: Page) {
 export async function openState(page: Page, s: UiState, theme: Theme) {
   await page.emulateMedia({ colorScheme: theme })
   const client = mockClient(page)
-  await client.seed({ stage: s.stage, scenario: s.scenario, theme, once: false })
+  await client.seed({ scenario: s.scenario, theme, once: false })
   await client.open(s.hash)
   await expect(page.getByText(s.ready, { exact: false }).first()).toBeVisible()
   await pointerAway(page)

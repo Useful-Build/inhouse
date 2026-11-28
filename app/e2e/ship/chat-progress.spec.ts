@@ -14,7 +14,7 @@ const REFUNDS_Q = 'Why did refunds jump?'
 const REFUNDS_A = 'Refund requests rose from 14 last week to 31 this week'
 
 async function start(page: Page, fx: Fx) {
-  await fx.seed({ stage: 'Act', demo: { ambient: 'Always' } })
+  await fx.seed({ demo: { ambient: 'Always' } })
   await page.goto('/?demo#/today')
   await expect(page.getByRole('heading', { level: 1 }).first()).toBeVisible()
 }

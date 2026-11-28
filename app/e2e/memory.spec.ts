@@ -1,14 +1,14 @@
 // PR 3, phase 1 memory (decision D7, M14) and Reset demo: drafts, a started chat (by its link), what
 // was added to it, the model pick and the Library view survive a reload; a chat answering at the reload says so; Reset
-// demo clears every one of them and puts the stage and scenario back to Act and Normal, also after a reload. What was added
+// demo clears every one of them and puts the scenario back to Normal, also after a reload. What was added
 // to a sample chat survives a reload on First day (no chats there), and the demo clock never runs backwards on a reload.
-import { expect, fxFor, test, type Stage } from './support/fx.js'
+import { expect, fxFor, test } from './support/fx.js'
 import type { Page } from '@playwright/test'
 
-async function start(page: Page, hash = '#/today', stage: Stage = 'Act', scenario = 'Normal') {
+async function start(page: Page, hash = '#/today', scenario = 'Normal') {
   // Time keeps flowing; runFor adds app time on top (the session save, answers), so no real sleep.
   await page.clock.install()
-  await fxFor(page, undefined).seed({ stage, scenario })
+  await fxFor(page, undefined).seed({ scenario })
   await page.goto('/?demo' + hash)
 }
 
@@ -107,7 +107,7 @@ test('Memory: a chat answering when the page reloads keeps its question and says
 })
 
 test('Cap reached: a chat is refused with the cap notice, and a waiting draft can still be approved (decision L-A8)', async ({ page }) => {
-  await start(page, '#/today', 'Act', 'Cap reached')
+  await start(page, '#/today', 'Cap reached')
   // Chats stop at the cap: the question gets the cap notice and no answer.
   await todayBox(page).fill(Q)
   await page.keyboard.press('Enter')
@@ -121,9 +121,9 @@ test('Cap reached: a chat is refused with the cap notice, and a waiting draft ca
   await expect(page.getByRole('status').filter({ hasText: 'Approved. It goes out in 10 seconds.' })).toBeVisible()
 })
 
-test('Reset demo puts the stage and scenario back to Act and Normal, clears the change, and stays so after a reload', async ({ page }) => {
-  await start(page, '#/today', 'Run', 'Cap reached')
-  await expect(page.getByRole('button', { name: 'Demo switches: Run, Cap reached' })).toBeVisible()
+test('Reset demo puts the scenario back to Normal, clears the change, and stays so after a reload', async ({ page }) => {
+  await start(page, '#/today', 'Cap reached')
+  await expect(page.getByRole('button', { name: 'Demo switches: Cap reached' })).toBeVisible()
   await expect(page.getByText('Spending cap reached.')).toBeVisible()
   // A change: pin a chat from its sidebar menu.
   const row = side(page).locator('[data-chat-row]').filter({ has: page.getByRole('button', { name: 'Amazon payout gap', exact: true }) })
@@ -133,14 +133,14 @@ test('Reset demo puts the stage and scenario back to Act and Normal, clears the 
   await expect(side(page).getByRole('group', { name: 'Pinned' })).toBeVisible()
 
   await resetDemo(page)
-  await expect(page.getByRole('button', { name: 'Demo switches: Act, Normal' })).toBeVisible()
+  await expect(page.getByRole('button', { name: 'Demo switches: Normal' })).toBeVisible()
   await expect(page.getByText('Spending cap reached.')).toHaveCount(0)
   await expect(page.getByRole('heading', { level: 1 })).toContainText('6 things need you.')
   await expect(side(page).getByRole('group', { name: 'Pinned' })).toHaveCount(0)
-  await shot(page, 'reset-demo-act-normal')
+  await shot(page, 'reset-demo-normal')
 
   await page.reload()
-  await expect(page.getByRole('button', { name: 'Demo switches: Act, Normal' })).toBeVisible()
+  await expect(page.getByRole('button', { name: 'Demo switches: Normal' })).toBeVisible()
   await expect(page.getByRole('heading', { level: 1 })).toContainText('6 things need you.')
   await expect(side(page).getByRole('group', { name: 'Pinned' })).toHaveCount(0)
 })

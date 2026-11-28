@@ -7,7 +7,7 @@ import { atRest } from './states.js'
 
 async function start(page: Page, hash = '#/library', width = 1440, scenario = 'Normal', theme: Theme = 'light') {
   await page.setViewportSize({ width, height: width < 800 ? 844 : 900 })
-  await fxFor(page, undefined).seed({ stage: 'Act', scenario, theme })
+  await fxFor(page, undefined).seed({ scenario, theme })
   await page.goto('/?demo' + hash)
   await expect(page.getByRole('heading', { level: 1 })).toHaveText('All files')
 }

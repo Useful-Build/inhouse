@@ -69,7 +69,7 @@ try {
   await page.addInitScript(() => {
     if (sessionStorage.getItem('capture-seeded')) return
     localStorage.clear()
-    localStorage.setItem('inhouse.demo.switches.v1', JSON.stringify({ stage: 'Act', scenario: 'Normal', ambient: 'Off', animateMark: false }))
+    localStorage.setItem('inhouse.demo.switches.v1', JSON.stringify({ scenario: 'Normal', ambient: 'Off', animateMark: false }))
     sessionStorage.setItem('capture-seeded', '1')
   })
   await step('open Today', () => page.goto('/?demo#/today'))

@@ -1,18 +1,21 @@
-// State that has to survive or reverse: the 10 s send hold across a reload, Undo, Reset, and the Run Undo and Pause paths.
+// State that has to survive or reverse: the 10 s send hold across a reload, Undo, Reset, and Pause with its Undo.
 import { expect, fxFor, test, type Fx } from './support/fx.js'
 import type { Page } from '@playwright/test'
 import { everything } from './page-text.js'
 
-async function start(page: Page, fx: Fx, stage: 'Watch' | 'Act' | 'Run', scenario = 'Normal', hash = '#/today', fakeClock = false) {
+async function start(page: Page, fx: Fx, scenario = 'Normal', hash = '#/today', fakeClock = false) {
   // The 10 s hold and the toasts run on app timers: a test that waits for them installs the clock first (time keeps flowing) and adds app time with runFor.
   if (fakeClock) await page.clock.install()
-  await fx.seed({ stage, scenario, demo: { ambient: 'Always', animateMark: true } })
+  await fx.seed({ scenario, demo: { ambient: 'Always', animateMark: true } })
   await page.goto('/?demo' + hash)
 }
 
 const badge = (page: Page) => page.getByRole('navigation', { name: 'Main' }).getByRole('button', { name: /Approvals/ })
-/** Stage 1 M3-U: the demo's three agent cards (two batches and a teammate's refund) wait on Sam too, beside the drafts. */
-const ASKS = 3
+/**
+ * The demo's agent cards wait on Sam too, beside the drafts: two batches and a teammate's refund (Stage 1 M3-U), two ask
+ * cards and one that needs a check (the demo catch-up's PR 1). A teammate's own ask isn't Sam's to answer.
+ */
+const ASKS = 6
 const card = (page: Page, title: string) => page.getByRole('article').filter({ hasText: title })
 const KESTREL = 'Ridge 30L Pack runs out in 9 days'
 const sentToast = (page: Page) => page.getByRole('status').filter({ hasText: 'Reorder of 600 sent to Kestrel Supply' })
@@ -28,7 +31,7 @@ async function approveKestrel(page: Page) {
 }
 
 test('Act: a reload during the 10 s hold still sends the Kestrel reorder, and Undo is gone', async ({ fx, page }) => {
-  await start(page, fx, 'Act', 'Normal', '#/today', true)
+  await start(page, fx, 'Normal', '#/today', true)
   await approveKestrel(page)
   await page.clock.runFor(3000)
   await page.reload()
@@ -48,7 +51,7 @@ test('Act: a reload during the 10 s hold still sends the Kestrel reorder, and Un
 })
 
 test('Act: Undo in the toast during the hold cancels the send', async ({ fx, page }) => {
-  await start(page, fx, 'Act', 'Normal', '#/today', true)
+  await start(page, fx, 'Normal', '#/today', true)
   const toast = await approveKestrel(page)
   await expect(badge(page)).toContainText(String(5 + ASKS))
   await toast.getByRole('button', { name: 'Undo', exact: true }).click()
@@ -62,38 +65,21 @@ test('Act: Undo in the toast during the hold cancels the send', async ({ fx, pag
   await expect(card(page, KESTREL)).not.toContainText('Approved by Sam')
 })
 
-test('Run: Undo on a handled card sends it back to you, and the toast Undo restores it', async ({ fx, page }) => {
-  await start(page, fx, 'Run')
-  const heading = page.getByRole('heading', { level: 1 })
-  await expect(heading).toContainText('4 handled today. 3 need you.')
-
-  await card(page, '11 returns are not restocked').getByRole('button', { name: 'Undo', exact: true }).click()
-  await expect(heading).toContainText('3 handled today. 4 need you.')
-  await expect(card(page, '11 returns are not restocked')).toContainText('Undone · back to you')
-  await page.screenshot({ path: test.info().outputPath('state-run-undone.png') })
-
-  const toast = page.getByRole('status').filter({ hasText: 'Undone:' })
-  await expect(toast).toBeVisible()
-  await toast.getByRole('button', { name: 'Undo', exact: true }).click()
-  await expect(heading).toContainText('4 handled today. 3 need you.')
-  await expect(card(page, '11 returns are not restocked')).toContainText('Handled by Inhouse agent')
-})
-
-test('Run: Pause, then Undo in the toast, puts Inhouse agent back to running', async ({ fx, page }) => {
-  await start(page, fx, 'Run')
-  await expect(page.getByRole('status', { name: 'Inhouse agent is running', exact: true })).toBeVisible()
-  await page.getByRole('button', { name: 'Pause', exact: true }).click()
+// Pause lives on the Spending cap page (the demo has no Run stage, whose top bar had it, since decision A13).
+test('Pause, then Undo in the toast, puts Inhouse agent back to running', async ({ fx, page }) => {
+  await start(page, fx, 'Normal', '#/settings/team-spend')
+  await page.locator('main').getByRole('button', { name: 'Pause Inhouse agent', exact: true }).click()
   await expect(page.getByRole('status', { name: 'Inhouse agent is paused', exact: true })).toBeVisible()
 
   const toast = page.getByRole('status').filter({ hasText: 'Inhouse agent is paused. Chats, routines and jobs are stopped.' })
   await expect(toast).toBeVisible()
   await toast.getByRole('button', { name: 'Undo', exact: true }).click()
-  await expect(page.getByRole('status', { name: 'Inhouse agent is running', exact: true })).toBeVisible()
   await expect(page.getByRole('status', { name: 'Inhouse agent is paused', exact: true })).toHaveCount(0)
+  await expect(page.locator('main').getByRole('button', { name: 'Pause Inhouse agent', exact: true })).toBeVisible()
 })
 
 test('Act: Reset demo during the hold clears the approval and nothing is sent', async ({ fx, page }) => {
-  await start(page, fx, 'Act', 'Normal', '#/today', true)
+  await start(page, fx, 'Normal', '#/today', true)
   await approveKestrel(page)
   await expect(badge(page)).toContainText(String(5 + ASKS))
 
@@ -110,7 +96,7 @@ test('Act: Reset demo during the hold clears the approval and nothing is sent', 
 test('Act: two tabs, closing the one that started the hold still sends the reorder, and the other tab says so', async ({ fx, page, context }) => {
   // Only page A seeds storage. Page B joins the same browser context and must not clear it.
   // The clock belongs to the context, so tab B shares it with tab A.
-  await start(page, fx, 'Act', 'Normal', '#/today', true)
+  await start(page, fx, 'Normal', '#/today', true)
   await approveKestrel(page)
 
   const other = await context.newPage()
@@ -133,21 +119,21 @@ test('Deep links: an unknown page lands on Today and an unknown tool on the Tool
   const hash = (p: Page) => p.evaluate(() => location.hash)
 
   // Cold loads of a stale link end with the same history as a clean link.
-  await start(page, fx, 'Act', 'Normal', '#/today')
+  await start(page, fx, 'Normal', '#/today')
   await expect(page.getByRole('heading', { level: 1 })).toContainText('6 things need you.')
   const reference = await context.newPage()
-  await start(reference, fxFor(reference, baseURL), 'Act', 'Normal', '#/today')
+  await start(reference, fxFor(reference, baseURL), 'Normal', '#/today')
   await expect(reference.getByRole('heading', { level: 1 })).toContainText('6 things need you.')
   const clean = await historyLength(reference)
 
   const nope = await context.newPage()
-  await start(nope, fxFor(nope, baseURL), 'Act', 'Normal', '#/nope')
+  await start(nope, fxFor(nope, baseURL), 'Normal', '#/nope')
   await expect(nope.getByRole('heading', { level: 1 })).toContainText('6 things need you.')
   await expect.poll(() => hash(nope)).toBe('#/today')
   expect(await historyLength(nope)).toBe(clean)
 
   const bogus = await context.newPage()
-  await start(bogus, fxFor(bogus, baseURL), 'Act', 'Normal', '#/tools/bogus')
+  await start(bogus, fxFor(bogus, baseURL), 'Normal', '#/tools/bogus')
   await expect(bogus.getByRole('heading', { level: 1 })).toHaveText('Tools')
   await expect.poll(() => hash(bogus)).toBe('#/tools')
   expect(await historyLength(bogus)).toBe(clean)
@@ -166,7 +152,7 @@ test('Deep links: an unknown page lands on Today and an unknown tool on the Tool
 })
 
 test('Chats: New chat right after asking leaves the new chat empty, and the old answer never shows up', async ({ fx, page }) => {
-  await start(page, fx, 'Act', 'Normal', '#/today', true)
+  await start(page, fx, 'Normal', '#/today', true)
   await page.getByRole('textbox', { name: 'Ask Inhouse' }).fill('Why did refunds jump this week?')
   await page.keyboard.press('Enter')
   await page.getByRole('button', { name: 'New chat' }).click()
@@ -187,7 +173,7 @@ test('Saved storage holding old values (persona name, morning email settings, re
   page.on('console', m => { if (m.type() === 'error' || (m.type() === 'warning' && m.text().startsWith('Inhouse demo'))) problems.push(`${m.type()}: ${m.text()}`) })
   page.on('pageerror', e => problems.push(`pageerror: ${e.message}`))
   // The saved state the app reads now, holding values earlier versions saved.
-  await fx.seedSaved({ stage: 'Run', demo: { ambient: 'When Ava works', animateMark: true } }, {
+  await fx.seedSaved({ demo: { ambient: 'When Ava works', animateMark: true } }, {
     approved: {}, sent: {}, undone: {}, edits: {}, paused: null, requestedTools: {}, requestedSkills: {}, toolPaused: {}, forgot: {},
     toggles: { 'n:email': true, 'n:weekend': false, 'n:slack': true },
     settings: { 'n:email': 'Email and Slack', 'n:at': '07:00', 'n:weekend': 'Off', 't:name': 'Ava', 't:signs': 'The Northline team' },
@@ -196,7 +182,7 @@ test('Saved storage holding old values (persona name, morning email settings, re
     setAside: {}, routinesDeleted: {}, routineRuns: [], chatTitles: {}, chatPinned: {}, chatDeleted: {},
   })
   await page.goto('/?demo#/today')
-  await expect(page.getByRole('heading', { level: 1 })).toContainText('handled today')
+  await expect(page.getByRole('heading', { level: 1 })).toContainText('6 things need you')
 
   // The old dot sweep value maps to the renamed option instead of falling back to Always.
   await page.getByRole('button', { name: /^Demo switches:/ }).click()
@@ -208,8 +194,8 @@ test('Saved storage holding old values (persona name, morning email settings, re
   await expect(page.getByRole('radio', { name: /^All 38/ })).toBeVisible()
 
   for (const [hash, heading] of [
-    ['#/settings/you-general', 'General'], ['#/settings/you-notif', 'Notifications'], ['#/settings/team-agent', 'Inhouse agent'],
-    ['#/settings/team-limits', 'Run limits'], ['#/activity', 'Activity'], ['#/routines', 'Routines'],
+    ['#/settings/you-general', 'General'], ['#/settings/you-permissions', 'Always allowed'], ['#/settings/team-agent', 'Inhouse agent'],
+    ['#/settings/team-spend', 'Spending cap'], ['#/activity', 'Activity'], ['#/routines', 'Routines'],
   ]) {
     await page.evaluate(h => { location.hash = h }, hash)
     await expect(page.getByRole('heading', { level: 1, name: heading, exact: true }), `${hash} did not render`).toBeVisible()

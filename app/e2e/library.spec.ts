@@ -4,7 +4,7 @@ import type { Page } from '@playwright/test'
 import { atRest } from './states.js'
 
 async function start(page: Page, hash = '#/library') {
-  await fxFor(page, undefined).seed({ stage: 'Act', demo: { ambient: 'Always' } })
+  await fxFor(page, undefined).seed({ demo: { ambient: 'Always' } })
   await page.goto('/?demo' + hash)
   await expect(page.getByRole('heading', { level: 1 })).toHaveText(hash === '#/library' ? 'All files' : /things need you/)
 }

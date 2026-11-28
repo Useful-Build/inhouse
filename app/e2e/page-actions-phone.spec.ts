@@ -3,7 +3,7 @@ import { expect, test, type Fx } from './support/fx.js'
 import type { Locator, Page } from '@playwright/test'
 
 async function start(page: Page, fx: Fx, hash: string) {
-  await fx.seed({ stage: 'Act', demo: { ambient: 'Always', animateMark: true } })
+  await fx.seed({ demo: { ambient: 'Always', animateMark: true } })
   await page.goto('/?demo' + hash)
 }
 

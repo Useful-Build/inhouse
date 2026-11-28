@@ -7,7 +7,7 @@ import { routeReady } from './support/clients/mock.js'
 import type { Page } from '@playwright/test'
 
 async function start(page: Page, hash = '#/today') {
-  await fxFor(page, undefined).seed({ stage: 'Act' })
+  await fxFor(page, undefined).seed({})
   await fxFor(page, undefined).open(hash)
 }
 
@@ -32,15 +32,13 @@ async function routineNames(page: Page) {
   await routeReady(page)
   return page.locator('main').getByRole('button', { name: /^Actions for / }).count()
 }
-/** Picks a stage or a scenario in the demo switches. */
-async function demoTo(page: Page, pick: { stage: string } | { scenario: string }) {
+/** Picks a scenario in the demo switches (the demo has no stages since decision A13). */
+async function demoTo(page: Page, pick: { scenario: string }) {
   await page.getByRole('button', { name: /^Demo switches:/ }).click()
   const demo = page.getByRole('dialog', { name: 'Demo switches' })
-  if ('stage' in pick) await demo.getByRole('radiogroup', { name: 'Stage' }).getByRole('radio', { name: pick.stage }).click()
-  else await demo.getByRole('button', { name: pick.scenario, exact: true }).click()
+  await demo.getByRole('button', { name: pick.scenario, exact: true }).click()
   await page.getByRole('button', { name: 'Close demo switches' }).click()
-  const label = 'stage' in pick ? `^Demo switches: ${pick.stage}, ` : `, ${pick.scenario}$`
-  await expect(page.getByRole('button', { name: /^Demo switches:/ })).toHaveAttribute('aria-label', new RegExp(label))
+  await expect(page.getByRole('button', { name: /^Demo switches:/ })).toHaveAttribute('aria-label', `Demo switches: ${pick.scenario}`)
 }
 /** Regenerates the newest answer that holds `text`, and waits for the new answer to finish. */
 async function regenerate(page: Page, text: string) {
@@ -188,13 +186,13 @@ test("Mock: Regenerate takes back a routine the new answer doesn't make and its 
   await side(page).getByRole('button', { name: 'Today' }).click()
   await askFromToday(page, 'Every morning at 6 check stock')
   await expect(routineCards(page)).toHaveCount(1)
-  // Watch makes no routine, so Regenerate there takes back the one this answer made, as a delete.
-  await demoTo(page, { stage: 'Watch' })
+  // Loading reads nothing yet, so it makes no routine: Regenerate there takes back the one this answer made, as a delete.
+  await demoTo(page, { scenario: 'Loading' })
   await regenerate(page, 'Created routine')
   await expect(routineCards(page)).toHaveCount(0)
   // Held from here, so "Asking again" keeps its Undo while Routines is checked.
   await page.clock.pauseAt(await page.evaluate(() => Date.now() + 500))
-  await demoTo(page, { stage: 'Act' })
+  await demoTo(page, { scenario: 'Normal' })
   expect(await routineNames(page)).toBe(before)
   await expect(routine).toHaveCount(0)
   await page.locator('[data-toast]').filter({ hasText: 'Asking again' }).getByRole('button', { name: 'Undo', exact: true }).click()

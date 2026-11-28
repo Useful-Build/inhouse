@@ -5,7 +5,7 @@ import type { Page } from '@playwright/test'
 import { atRest } from './states.js'
 
 async function start(page: Page, fx: Fx, hash: string) {
-  await fx.seed({ stage: 'Act', demo: { ambient: 'Always' } })
+  await fx.seed({ demo: { ambient: 'Always' } })
   await page.goto('/?demo' + hash)
 }
 const shot = async (page: Page, name: string) => { await atRest(page); await page.screenshot({ path: test.info().outputPath(`${name}.png`) }) }

@@ -13,7 +13,7 @@ async function open(page: Page, fx: Fx, hash: string, ready: string) {
   // A test opens several pages; one seed covers them all (a page takes one seed).
   if (!seeded.has(page)) {
     seeded.add(page)
-    await fx.seed({ stage: 'Act', theme: 'dark', once: false })
+    await fx.seed({ theme: 'dark', once: false })
   }
   await page.goto('/?demo' + hash)
   await expect(page.getByText(ready, { exact: false }).first()).toBeVisible()

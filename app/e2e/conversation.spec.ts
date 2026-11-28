@@ -6,7 +6,7 @@ import { expect, fxFor, test } from './support/fx.js'
 import type { Locator, Page } from '@playwright/test'
 
 async function start(page: Page, scenario: string, hash: string) {
-  await fxFor(page, undefined).seed({ stage: 'Act', scenario, demo: { ambient: 'Always' } })
+  await fxFor(page, undefined).seed({ scenario, demo: { ambient: 'Always' } })
   await page.goto('/?demo' + hash)
 }
 

@@ -93,6 +93,7 @@
       "read": "Orders, settlements, fees and inventory",
       "draft": "Reimbursement cases and listing fixes",
       "run": "Daily payout check. Cases still wait for you",
+      "acts": true,
       "conn": "Amazon Selling Partner, connected with your seller login",
       "site": "sellercentral.amazon.com",
       "since": "-7d 09:00"
@@ -108,6 +109,7 @@
       "read": "Inventory, shipments and returns",
       "draft": "Support tickets and restock requests",
       "run": "Nudge ShipBob on stuck orders",
+      "acts": true,
       "conn": "ShipBob official connection",
       "site": "shipbob.com",
       "since": "-14d 09:00"
@@ -138,6 +140,7 @@
       "read": "Tickets, tags and customers",
       "draft": "Replies in your tone",
       "run": "Tag and sort new tickets. Replies always wait for you",
+      "acts": true,
       "conn": "Gorgias official connection",
       "site": "gorgias.com",
       "since": "-4d 09:00"
@@ -181,6 +184,7 @@
     "run": "what your Inhouse agent does by itself (Run)",
     "conn": "how it is connected",
     "catalog.need": "lowest stage index that includes it (0 Watch, 1 Act, 2 Run)",
-    "channels": "where the team hears from the agent (decision D6): not a tool it reads. need is the stage it starts at; since is when it was connected"
+    "channels": "where the team hears from the agent (decision D6): not a tool it reads. need is the stage it starts at; since is when it was connected",
+    "details.acts": "a write operation on this tool is on, so the agent may draft changes for approval (the product's `acts`); the demo marks the tools its sample drafts write to"
   }
 }

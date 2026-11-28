@@ -42,8 +42,8 @@ function personText(): [string, string, string][] {
   return out
 }
 
-async function start(fx: Fx, stage: 'Watch' | 'Act' | 'Run' = 'Act', hash = '#/today') {
-  await fx.seed({ stage, demo: { ambient: 'Always' } })
+async function start(fx: Fx, hash = '#/today') {
+  await fx.seed({ demo: { ambient: 'Always' } })
   await fx.open(hash)
 }
 
@@ -63,7 +63,7 @@ const settingsPage = async (page: Page, label: string) => {
 }
 
 test('Settings: a dropdown opens a real list, the pick survives a reload and Reset demo clears it', async ({ page, fx }) => {
-  await start(fx, 'Act', '#/settings/you-general')
+  await start(fx, '#/settings/you-general')
   // New York is the default zone, shown by its name (the saved value stays the zone's id).
   const zone = page.getByRole('combobox', { name: 'Time zone: Eastern Time (New York)' })
   await zone.click()
@@ -89,13 +89,14 @@ test('Settings: a dropdown opens a real list, the pick survives a reload and Res
 })
 
 test('Settings: a dropdown works from the keyboard and Escape closes it without a change', async ({ page, fx }) => {
-  await start(fx, 'Act', '#/settings/you-notif')
-  const send = page.getByRole('combobox', { name: 'Send alerts to: Slack' })
+  // The demo's Notifications page (its "Send alerts to" was this check's dropdown) left with decision A13.
+  await start(fx, '#/settings/team-spend')
+  const send = page.getByRole('combobox', { name: 'Show amounts in: USD ($)' })
   await send.focus()
   await page.keyboard.press('ArrowDown')
-  const list = page.getByRole('listbox', { name: 'Send alerts to' })
+  const list = page.getByRole('listbox', { name: 'Show amounts in' })
   // Focus moves into the list, onto the current value.
-  await expect(list.getByRole('option', { name: 'Slack', exact: true })).toBeFocused()
+  await expect(list.getByRole('option', { name: 'USD ($)', exact: true })).toBeFocused()
   await page.keyboard.press('ArrowDown')
   await page.keyboard.press('Escape')
   await expect(list).toHaveCount(0)
@@ -103,23 +104,16 @@ test('Settings: a dropdown works from the keyboard and Escape closes it without 
   await expect(send).toHaveAttribute('aria-expanded', 'false')
 
   await page.keyboard.press('ArrowDown')
-  await expect(list.getByRole('option', { name: 'Slack', exact: true })).toBeFocused()
+  await expect(list.getByRole('option', { name: 'USD ($)', exact: true })).toBeFocused()
   await page.keyboard.press('ArrowDown')
-  await expect(list.getByRole('option', { name: 'Email and Slack' })).toBeFocused()
+  await expect(list.getByRole('option', { name: 'GBP (£)' })).toBeFocused()
   await page.keyboard.press('Enter')
-  await expect(page.getByRole('combobox', { name: 'Send alerts to: Email and Slack' })).toBeFocused()
+  await expect(page.getByRole('combobox', { name: 'Show amounts in: GBP (£)' })).toBeFocused()
 })
 
-test('Settings: Who approves what and the spending cap dropdowns change their values', async ({ page, fx }) => {
-  await start(fx, 'Run', '#/settings/team-approvals')
-  const rule = page.getByRole('combobox', { name: /^Orders over \$5,000: Dana Kim/ })
-  await rule.click()
-  // Call 3 (P2): approving is a job per rule, not a role, so every member is offered (Sam, Dana, Leo, Priya) and Anyone who approves.
-  await expect(page.getByRole('option')).toHaveCount(5)
-  await expect(page.getByRole('option', { name: 'Priya Shah' })).toBeVisible()
-  await page.getByRole('option', { name: 'Sam Mercer' }).click()
-  await expect(page.getByRole('combobox', { name: 'Orders over $5,000: Sam Mercer' })).toBeVisible()
-  await page.goto('/?demo#/settings/team-spend')
+// Who approves what left the demo with its stages (decision A13), as it left the product.
+test('Settings: the spending cap dropdowns change their values', async ({ page, fx }) => {
+  await start(fx, '#/settings/team-spend')
   await page.getByRole('combobox', { name: 'Show amounts in: USD ($)' }).click()
   await page.getByRole('option', { name: 'GBP (£)' }).click()
   await expect(page.getByRole('combobox', { name: 'Show amounts in: GBP (£)' })).toBeVisible()
@@ -127,7 +121,7 @@ test('Settings: Who approves what and the spending cap dropdowns change their va
 })
 
 test('Settings: a text field is editable, saved, shown in the account menu and cleared by Reset demo', async ({ page, fx }) => {
-  await start(fx, 'Act', '#/settings/you-general')
+  await start(fx, '#/settings/you-general')
   const name = page.getByRole('textbox', { name: 'Name', exact: true })
   await expect(name).toHaveValue('Sam Mercer')
   await name.fill('Samuel Mercer')
@@ -148,7 +142,7 @@ test('Settings: a text field is editable, saved, shown in the account menu and c
 })
 
 test('Settings: search filters the menu to matching pages and rows', async ({ page, fx }) => {
-  await start(fx, 'Act', '#/settings/you-general')
+  await start(fx, '#/settings/you-general')
   const nav = page.getByRole('navigation', { name: 'Settings' })
   const menu = nav.locator('button[data-nav-row]')
   const search = page.getByRole('searchbox', { name: 'Search settings' })
@@ -220,12 +214,12 @@ test('Chats: every seeded answer has its steps line and, opened, its model and s
   const names = Object.values(toolNames).map(d => d.name)
   const modes = json('models.json').modes as { id: string; label: string; model: string }[]
   const secs = (x: number) => (x < 60 ? `${Math.round(x * 10) / 10}s` : `${Math.floor(x / 60)}m ${Math.round(x % 60)}s`)
-  type Turn = { user?: string; stage?: string; trace?: string; model?: string }
+  type Turn = { user?: string; trace?: string; model?: string }
   const seed = json('chat-script.json').seedThread.turns as Turn[]
   const chats = json('chats.json').chats as { id: string; turns: 'seedThread' | Turn[] }[]
   await start(fx)
   for (const c of chats) {
-    // In Act, the answers that show: each turn's footer is its last answer's trace.
+    // The answers that show: each turn's footer is its last answer's trace.
     const expected: string[] = []
     const expectedMeta: string[] = []
     let inAnswer = false
@@ -233,11 +227,9 @@ test('Chats: every seeded answer has its steps line and, opened, its model and s
       if (t.user) { inAnswer = false; continue }
       const tr = traces[t.trace!.split(' ')[0]]
       // Its model is the mode (models.json) whose model its trace's last model step names, so the line and the steps agree.
-      // Checked for every stage's answer, not only the ones Act shows.
       const last = tr.steps.filter(x => x.kind === 'model').at(-1)?.detail?.split(' · ')[0]
       const mode = modes.find(m => m.id === t.model)
       expect(mode?.model, `${c.id}: ${t.trace}`).toBe(last)
-      if (t.stage && t.stage !== 'Act') continue
       // The steps line names the connected tools the run read (not wrote to), in order, with a check, and counts the steps; the model and seconds are in the opened list.
       const read = [...new Set(tr.steps.filter(x => x.kind === 'tool' && !/^(saved|sent|created|posted|updated|wrote|drafted|deleted|changed|added|scheduled|replied|approved)\b/i.test(x.label.split(' · ').slice(1).join(' · '))).map(x => x.label.split(' · ')[0]).filter(n => names.includes(n)))]
       const named = read.length > 1 ? `${read.slice(0, -1).join(', ')} and ${read.at(-1)}` : read.join('')
@@ -286,7 +278,7 @@ test('Chats: See all lists every chat, search filters by title, picking one open
 })
 
 test('Tools and Skills: search filters the lists; the tool page links to the vendor', async ({ page, fx }) => {
-  await start(fx, 'Act', '#/tools')
+  await start(fx, '#/tools')
   const search = page.getByRole('searchbox', { name: 'Search tools' })
   await search.fill('ship')
   await expect(page.getByRole('button', { name: /ShipBob/ })).toBeVisible()
@@ -308,7 +300,7 @@ test('Tools and Skills: search filters the lists; the tool page links to the ven
 })
 
 test('Usage: the month picker lists this month, the chart ends today; Today sorts by amount; Help and Sign out answer', async ({ page, fx }) => {
-  await start(fx, 'Act', '#/usage')
+  await start(fx, '#/usage')
   await expect(page.getByText('$78.40').first()).toBeVisible()
   // One bar a day up to today, Mon, Nov 16, and the projection follows them: $78.40 over 16 days is about $147.
   await expect(page.locator('[data-usage-bar]')).toHaveCount(16)
@@ -535,8 +527,9 @@ test('Facts agree across screens: PO-1187, the waiting count and the stuck-order
   await start(fx)
   // The waiting count: Today, the nav badge, the bell and Approvals.
   await expect(page.getByRole('heading', { level: 1 })).toContainText('6 things need you')
-  // The badge adds the demo's three agent cards waiting on Sam (Stage 1 M3-U: two batches and a teammate's refund).
-  await expect(page.getByRole('navigation', { name: 'Main' }).getByRole('button', { name: /Approvals/ })).toContainText('9')
+  // The badge adds the demo's six agent cards waiting on Sam: two batches and a teammate's refund (Stage 1 M3-U), two
+  // ask cards and one that needs a check (the demo catch-up's PR 1).
+  await expect(page.getByRole('navigation', { name: 'Main' }).getByRole('button', { name: /Approvals/ })).toContainText('12')
   await page.getByRole('button', { name: /^Notifications/ }).click()
   await expect(page.getByRole('dialog', { name: 'Notifications' })).toContainText('6 drafts are waiting for your approval.')
   await page.keyboard.press('Escape')
@@ -558,14 +551,14 @@ test('Facts agree across screens: PO-1187, the waiting count and the stuck-order
   const log = page.getByRole('log', { name: 'Conversation' })
   await expect(log).toContainText('stuck over 3 days')
   await expect(log).not.toContainText(/over 2 days/)
-  // In Act no chat says what it can't do "in Watch".
+  // No chat says what it can't do "in Watch": the demo has no stages (decision A13).
   await page.goto('/?demo#/chats/refunds')
   await expect(log).not.toContainText('in Watch')
 })
 
 test('Activity: every time sits on one line', async ({ page, fx }) => {
-  await start(fx, 'Run', '#/activity')
-  // Run shows the most lines, "10:12 AM" the widest time.
+  await start(fx, '#/activity')
+  // "10:12 AM" is the widest time.
   const times = page.locator('[data-activity-time]')
   await expect(times.first()).toBeVisible()
   await expect(page.locator('main')).toContainText('10:12 AM')
@@ -575,7 +568,7 @@ test('Activity: every time sits on one line', async ({ page, fx }) => {
 })
 
 test('The Klaviyo request shows its status, never a date, and hides on First day; Ask Leo says it isn\'t connected; the audit CSV has plain spaces', async ({ page, fx }) => {
-  await start(fx, 'Act')
+  await start(fx)
   const team = page.getByRole('dialog', { name: 'Your Inhouse team' })
   /** The team window, from the account menu's "Your Inhouse team", once the item counts `open` requests. */
   const openTeam = async (open: number) => {

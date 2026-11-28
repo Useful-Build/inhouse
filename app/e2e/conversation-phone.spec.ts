@@ -2,7 +2,7 @@
 import { expect, test } from './support/fx.js'
 
 test('Phone conversation: every answer and question shows its actions', async ({ page, fx }) => {
-  await fx.seed({ stage: 'Act', demo: { ambient: 'Always' } })
+  await fx.seed({ demo: { ambient: 'Always' } })
   await page.goto('/?demo#/chats/refunds')
   const log = page.getByRole('log', { name: 'Conversation' })
   await expect(log.getByText('Refund requests rose').first()).toBeVisible()

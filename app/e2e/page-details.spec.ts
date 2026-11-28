@@ -1,11 +1,11 @@
 // Page actions: a routine's details and actions, a skill's page and its on switch, Library sort, row menu and
 // viewer stepping, and Settings' Admin confirm and field checks. Each flow reloads to prove what was saved.
-import { expect, test, type Fx, type Stage } from './support/fx.js'
+import { expect, test, type Fx } from './support/fx.js'
 import type { Page } from '@playwright/test'
 import { atRest } from './states.js'
 
-async function start(page: Page, fx: Fx, hash: string, stage: Stage = 'Act') {
-  await fx.seed({ stage, demo: { ambient: 'Always' } })
+async function start(page: Page, fx: Fx, hash: string) {
+  await fx.seed({ demo: { ambient: 'Always' } })
   await page.goto('/?demo' + hash)
 }
 const shot = async (page: Page, name: string) => { await atRest(page); await page.screenshot({ path: test.info().outputPath(`${name}.png`) }) }
@@ -88,14 +88,15 @@ test('Routines: details, Pause, Run now, Delete with confirm and Undo, and all o
   await shot(page, 'routine-after-reload')
 })
 
-test('Routines in Watch: a locked routine shows its stage and no actions', async ({ fx, page }) => {
-  await start(page, fx, '#/routines', 'Watch')
+// The demo has no stages since decision A13: no routine is locked by one, as in the product.
+test('Routines: no routine is locked by a stage; each has its actions and Run now', async ({ fx, page }) => {
+  await start(page, fx, '#/routines')
   await expect(page.getByRole('button', { name: 'Actions for Morning check' })).toBeVisible()
-  await expect(page.getByRole('button', { name: 'Actions for Amazon payout check' })).toHaveCount(0)
+  await expect(page.getByRole('button', { name: 'Actions for Amazon payout check' })).toBeVisible()
   await page.getByRole('button', { name: 'Amazon payout check', exact: true }).click()
   const sheet = page.getByRole('dialog', { name: 'Amazon payout check' })
-  await expect(sheet).toContainText('Starts in Act')
-  await expect(sheet.getByRole('button', { name: 'Run now' })).toHaveCount(0)
+  await expect(sheet).not.toContainText('Starts in')
+  await expect(sheet.getByRole('button', { name: 'Run now' })).toBeVisible()
 })
 
 test("Skills: a skill's page, turning it off from its More menu and back on", async ({ fx, page }) => {

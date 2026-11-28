@@ -8,7 +8,7 @@ async function start(page: Page, fx: Fx, hash: string) {
   // A test opens several pages; one seed covers them all (a page takes one seed).
   if (!seeded.has(page)) {
     seeded.add(page)
-    await fx.seed({ stage: 'Act', demo: { ambient: 'Always', animateMark: true } })
+    await fx.seed({ demo: { ambient: 'Always', animateMark: true } })
   }
   await page.goto('/?demo' + hash)
 }

@@ -1,22 +1,25 @@
 // End-to-end checks for the app as a whole.
-// Each test starts from a clean demo state at a given stage and scenario.
+// Each test starts from a clean demo state in a given scenario. The demo has no stages (decision A13), as the product.
 import { expect, fxFor, test } from './support/fx.js'
 import type { Page } from '@playwright/test'
 import { atRest } from './states.js'
 import { openTraceFrom } from './support/steps.js'
 
-async function start(page: Page, stage: 'Watch' | 'Act' | 'Run', scenario = 'Normal', hash = '#/today') {
-  await fxFor(page, undefined).seed({ stage, scenario, demo: { ambient: 'Always', animateMark: true } })
+async function start(page: Page, scenario = 'Normal', hash = '#/today') {
+  await fxFor(page, undefined).seed({ scenario, demo: { ambient: 'Always', animateMark: true } })
   await page.goto('/?demo' + hash)
 }
 
 const badge = (page: Page) => page.getByRole('navigation', { name: 'Main' }).getByRole('button', { name: /Approvals/ })
-/** Stage 1 M3-U: the demo's three agent cards (two batches and a teammate's refund) wait on Sam too, beside the drafts. */
-const ASKS = 3
+/**
+ * The demo's agent cards wait on Sam too, beside the drafts: two batches and a teammate's refund (Stage 1 M3-U), two ask
+ * cards and one that needs a check (the demo catch-up's PR 1). A teammate's own ask isn't Sam's to answer.
+ */
+const ASKS = 6
 const card = (page: Page, title: string) => page.getByRole('article').filter({ hasText: title })
 
 test('Act: money drafts need a review, the Kestrel reorder holds 10 s then is final, the restock keeps Undo, counts agree', async ({ page }) => {
-  await start(page, 'Act')
+  await start(page)
   await expect(page.getByRole('heading', { level: 1 })).toContainText('6 things need you. Drafts are ready.')
   await expect(badge(page)).toContainText(String(6 + ASKS))
 
@@ -76,7 +79,7 @@ test('Act: money drafts need a review, the Kestrel reorder holds 10 s then is fi
 })
 
 test('Chat: the stuck-orders question always gives the same table and a 6-step, 9.4 s trace', async ({ page }) => {
-  await start(page, 'Act')
+  await start(page)
   await page.getByRole('textbox', { name: 'Ask Inhouse' }).fill('Which orders are stuck over 3 days?')
   await page.keyboard.press('Enter')
   await expect(page.locator('[data-composer]').getByRole('button', { name: 'Stop' })).toBeVisible()
@@ -103,7 +106,7 @@ test('Chat: the stuck-orders question always gives the same table and a 6-step, 
 
 test('Chat: Stop ends a run and says nothing was changed', async ({ page }) => {
   await page.clock.install() // time keeps flowing; runFor adds app time on top, so no real sleep
-  await start(page, 'Act', 'Normal', '#/chats')
+  await start(page, 'Normal', '#/chats')
   await page.getByRole('textbox', { name: 'Message Inhouse' }).fill('Why did refunds jump this week?')
   await page.keyboard.press('Enter')
   await page.locator('[data-composer]').getByRole('button', { name: 'Stop' }).click()
@@ -112,28 +115,21 @@ test('Chat: Stop ends a run and says nothing was changed', async ({ page }) => {
   await expect(page.getByText(/Refund requests rose from 14/)).toHaveCount(0)
 })
 
-test('Run: 4 handled, 3 need you; the jacket is paused by Inhouse agent with 5 emails waiting; Pause stops routines', async ({ page }) => {
-  await start(page, 'Run')
-  await expect(page.getByRole('heading', { level: 1 })).toContainText('4 handled today. 3 need you.')
-  await expect(card(page, 'Trail Shell Jacket (M, Olive) is oversold by 5')).toContainText('Paused · emails wait for you')
-  await card(page, 'Trail Shell Jacket (M, Olive) is oversold by 5').click()
-  const panel = page.getByRole('dialog')
-  await expect(panel).toContainText('Email 5 customers about the delay')
-  await expect(panel).toContainText('Your Inhouse agent already paused the variant at 6:04 AM')
-  await page.keyboard.press('Escape')
-  await page.screenshot({ path: test.info().outputPath('run-today.png'), fullPage: true })
-
-  await page.getByRole('button', { name: 'Pause', exact: true }).click()
+// The demo has no Run stage since decision A13: what the agent handled by itself in Run is gone from it, and Pause is
+// checked from the one view there is, where it lives on the Spending cap page (the top bar shows Resume once paused).
+test('Pause stops routines', async ({ page }) => {
+  await start(page, 'Normal', '#/settings/team-spend')
+  await page.locator('main').getByRole('button', { name: 'Pause Inhouse agent', exact: true }).click()
   await expect(page.getByRole('status', { name: 'Inhouse agent is paused', exact: true })).toBeVisible()
   await expect(page.getByRole('button', { name: 'Resume', exact: true })).toBeVisible()
   await page.getByRole('navigation', { name: 'Main' }).getByRole('button', { name: 'Routines' }).click()
   // On the Routines page itself: the top bar's status also reads "Paused" now.
   await expect(page.getByRole('main').getByText('Paused', { exact: true }).first()).toBeVisible()
-  await page.screenshot({ path: test.info().outputPath('run-paused-routines.png'), fullPage: true })
+  await page.screenshot({ path: test.info().outputPath('paused-routines.png'), fullPage: true })
 })
 
 test('Tool disconnected: banner, Gorgias question fails with Try again', async ({ page }) => {
-  await start(page, 'Act', 'Tool disconnected')
+  await start(page, 'Tool disconnected')
   await expect(page.getByRole('alert')).toContainText('Gorgias is disconnected.')
   await page.getByRole('textbox', { name: 'Ask Inhouse' }).fill('What are customers saying in Gorgias tickets?')
   await page.keyboard.press('Enter')
@@ -143,7 +139,7 @@ test('Tool disconnected: banner, Gorgias question fails with Try again', async (
 })
 
 test('Usage totals agree in every breakdown', async ({ page }) => {
-  await start(page, 'Act', 'Normal', '#/usage')
+  await start(page, 'Normal', '#/usage')
   await expect(page.getByText('$78.40').first()).toBeVisible()
   for (const tab of ['Person', 'Job', 'Model', 'Tool']) {
     await page.getByRole('radiogroup', { name: 'Break down by' }).getByRole('radio', { name: tab, exact: true }).click()

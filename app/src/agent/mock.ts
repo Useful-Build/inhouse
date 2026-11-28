@@ -1017,6 +1017,7 @@ export class MockAgent implements AgentClient {
     return this.demoActionsLoad ??= import('./mock-actions').then(m => new m.MockActions({
       now: () => demoNow(this.startedAt).getTime(),
       shown: () => this.demo.scenario === 'Normal',
+      hasTool: tool => { const t = this.read().tools; return tool !== 'slack' || t.connected.includes('slack') || t.channels.some(c => c.key === 'slack') },
       meId: ME_ID,
       memberId: memberIdOf,
       paused: () => this.state.paused !== null,

@@ -4,7 +4,7 @@ import { expect, test, type Fx } from './support/fx.js'
 import type { Locator, Page } from '@playwright/test'
 
 async function start(page: Page, fx: Fx, hash: string) {
-  await fx.seed({ stage: 'Act', demo: { ambient: 'Always' } })
+  await fx.seed({ demo: { ambient: 'Always' } })
   await page.goto('/?demo' + hash)
   await expect(page.getByRole('heading', { level: 1 }).first()).toBeVisible()
 }
@@ -91,7 +91,7 @@ test("Phone: the toast's Undo and a Switch take 44px taps", async ({ fx, page })
   await atLeast44(undo)
   await shot(page, 'phone-toast-undo')
 
-  await page.evaluate(() => { location.hash = '#/settings/you-notif' })
+  await page.evaluate(() => { location.hash = '#/settings/you-memory' })
   const sw = page.getByRole('switch').first()
   await expect(sw).toBeVisible()
   await atLeast44(sw)
@@ -112,9 +112,9 @@ test('Phone: Skip to content is the first Tab stop and moves focus into main', a
 })
 
 test('Phone: every Activity time sits on one line', async ({ page, fx }) => {
-  await fx.seed({ stage: 'Run', demo: { ambient: 'Always' } })
+  await fx.seed({ demo: { ambient: 'Always' } })
   await page.goto('/?demo#/activity')
-  // Run shows the most lines, "10:12 AM" the widest time.
+  // "10:12 AM" is the widest time.
   const times = page.locator('[data-activity-time]')
   await expect(times.first()).toBeVisible()
   await expect(page.locator('main')).toContainText('10:12 AM')

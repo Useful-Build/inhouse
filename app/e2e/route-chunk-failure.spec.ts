@@ -13,7 +13,7 @@ async function start(page: Page, fx: Fx, hash: string) {
       if ([...document.querySelectorAll('h1, h2')].some(h => h.textContent === 'Something went wrong.')) sessionStorage.setItem(crashKey, '1')
     }).observe(document, { childList: true, subtree: true, characterData: true })
   }, CRASH)
-  await fx.seed({ stage: 'Act', demo: { ambient: 'Always' } })
+  await fx.seed({ demo: { ambient: 'Always' } })
   await page.goto('/?demo' + hash)
 }
 const crashSeen = (page: Page) => page.evaluate(k => sessionStorage.getItem(k) === '1', CRASH)
@@ -91,10 +91,10 @@ test('In-page hash changes leave focus where the person put it', async ({ fx, pa
   await sidebar(page).getByRole('button', { name: /account and settings/i }).click()
   await page.getByRole('menu', { name: 'Account' }).getByRole('menuitem', { name: 'Your settings', exact: true }).click()
   await expect(page.getByRole('navigation', { name: 'Settings' })).toBeVisible()
-  const tab = page.getByRole('navigation', { name: 'Settings' }).getByRole('button', { name: 'Notifications' })
+  const tab = page.getByRole('navigation', { name: 'Settings' }).getByRole('button', { name: 'Memory', exact: true })
   await tab.focus()
   await tab.click()
-  await expect(page).toHaveURL(/#\/settings\/you-notif/)
+  await expect(page).toHaveURL(/#\/settings\/you-memory/)
   await expect(tab).toBeFocused()
 
   // Opening a Library file.

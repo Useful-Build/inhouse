@@ -6,8 +6,8 @@ import { mkdirSync } from 'node:fs'
 import { join } from 'node:path'
 import { atRest } from './states.js'
 
-async function start(page: Page, hash: string, stage: 'Watch' | 'Act' | 'Run' = 'Act', scenario = 'Normal') {
-  await fxFor(page, undefined).seed({ stage, scenario, demo: { ambient: 'Always' } })
+async function start(page: Page, hash: string, scenario = 'Normal') {
+  await fxFor(page, undefined).seed({ scenario, demo: { ambient: 'Always' } })
   await page.goto('/?demo' + hash)
 }
 
@@ -63,11 +63,9 @@ test('All chats has the plain background; full-shell Skyspace sits behind sideba
   await skyspaceBehind(page, 'hero', ['#sidebar', '[data-composer]'])
 })
 
-test('Today shows only the title, the composer and the Needs you cards, at every stage', async ({ page }) => {
-  for (const stage of ['Watch', 'Act', 'Run'] as const) {
-    await page.goto('about:blank')
-    await page.context().clearCookies()
-    await fxFor(page, undefined).restage({ stage, demo: { ambient: 'Always' } })
+test('Today shows only the title, the composer and the Needs you cards', async ({ page }) => {
+  {
+    await fxFor(page, undefined).restage({ demo: { ambient: 'Always' } })
     await page.goto('/?demo#/today')
     const h1 = page.getByRole('heading', { level: 1 })
     await expect(h1).toContainText('Good morning, Sam.')
@@ -83,9 +81,9 @@ test('Today shows only the title, the composer and the Needs you cards, at every
       const c = document.querySelector('[data-composer]')!.getBoundingClientRect()
       return c.top - h.bottom
     })
-    expect(gap, `title to composer gap at ${stage}`).toBeLessThan(50)
-    await expect(page.getByRole('button', { name: 'Notifications' })).toBeVisible()
-    if (stage === 'Act') await shot(page, 'today-1440')
+    expect(gap, 'title to composer gap').toBeLessThan(50)
+    await expect(page.getByRole('button', { name: /^Notifications/ })).toBeVisible()
+    await shot(page, 'today-1440')
   }
   // A page with its own heading doesn't repeat it in the top bar.
   await page.goto('/?demo#/chats/all')

@@ -1,8 +1,8 @@
-// PR 4 at 390 px: no card cuts a word at Watch, Act or Run; Today has no sort and Approvals' header stays on one line with
+// PR 4 at 390 px: no card cuts a word (the agent's action cards too); Today has no sort and Approvals' header stays on one line with
 // Approve all low-risk alone; each draft is its approve action (or Review draft) plus "···"; an approved row's time and Undo wrap under its text.
 import { expect, test } from './csp.js'
 import type { Page } from '@playwright/test'
-import { expectNothingCut, start, STAGES } from './today-approvals-helpers.js'
+import { expectNothingCut, start } from './today-approvals-helpers.js'
 
 const shot = async (page: Page, name: string) => {
   await page.evaluate(() => Promise.all(document.getAnimations().filter(a => a.timeline instanceof DocumentTimeline && a.effect?.getTiming().iterations !== Infinity).map(a => a.finished)))
@@ -11,16 +11,15 @@ const shot = async (page: Page, name: string) => {
 const waiting = (page: Page) => page.getByRole('heading', { level: 2, name: /^Waiting for you/ })
 const draft = (page: Page, title: string) => page.locator('[data-slot=card]').filter({ has: page.getByRole('heading', { level: 2, name: title, exact: true }) })
 
-for (const stage of STAGES) {
-  test(`Phone 390: at ${stage}, no card on Today or Approvals cuts any text`, async ({ page }) => {
-    await start(page, stage, '#/today')
-    await expectNothingCut(page, stage)
-    await shot(page, `approvals-${stage.toLowerCase()}-390`)
-  })
-}
+// The demo has no stages since decision A13: one view, with the agent's action cards beside the drafts.
+test('Phone 390: no card on Today or Approvals cuts any text', async ({ page }) => {
+  await start(page, '#/today')
+  await expectNothingCut(page)
+  await shot(page, 'approvals-390')
+})
 
 test('Phone 390: Today has no sort and no fixed card height; Approvals has one header line, Approve plus "···", and approved rows that reflow', async ({ page }) => {
-  await start(page, 'Act', '#/today')
+  await start(page, '#/today')
   await expect(page.getByRole('article').first()).toBeVisible()
   await expect(page.getByRole('combobox', { name: /^Sort cards/ })).toHaveCount(0)
   // No fixed card height: the cards have no minimum height at all.
@@ -57,7 +56,7 @@ test('Phone 390: Today has no sort and no fixed card height; Approvals has one h
 })
 
 test('Phone 390: the review panel gives its main action a full-width row of its own, on one line, with More below', async ({ page }) => {
-  await start(page, 'Act', '#/today')
+  await start(page, '#/today')
   await page.getByRole('article', { name: 'Ridge 30L Pack runs out in 9 days' }).getByRole('button', { name: 'Review' }).click()
   const panel = page.getByRole('dialog')
   const primary = await panel.getByRole('button', { name: /^Approve and/ }).boundingBox()

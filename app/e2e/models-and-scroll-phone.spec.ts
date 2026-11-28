@@ -10,7 +10,7 @@ async function visit(page: Page, hash: string) {
   await atRest(page)
 }
 async function start(page: Page, hash: string) {
-  await fxFor(page, undefined).seed({ stage: 'Act', demo: { ambient: 'Always' } })
+  await fxFor(page, undefined).seed({ demo: { ambient: 'Always' } })
   await visit(page, hash)
 }
 const out = process.env.VERIFY_DIR ?? 'e2e-artifacts'

@@ -11,6 +11,7 @@
 //  - a Pause leaves a card in its hold to go out, sends back one that already went out, or gives no notice or update;
 //    an approval goes through while paused;
 //  - a card that needs a check settles to other words than the server's, or someone who can't resolve it does;
+//  - a brand with no Slack still shows a Slack card or permission;
 //  - a card or a permission drifts from the contract's schema (the server's own words: server/outbox/demo-parity.test.ts).
 import { describe, expect, test } from 'vitest'
 import { FIRST_LINES, ITEMS_PAGE, MockActions } from './mock-actions'
@@ -24,11 +25,12 @@ function world() {
   let paused = false
   const changed: { actionId: string; rev: number }[] = []
   const sentBack: { actionId: string; rev: number; atMs: number }[] = []
+  let slack = true
   const a = new MockActions({
-    now: () => now, shown: () => shown, meId: 'm_sam', memberId: id => `m_${id}`, paused: () => paused,
+    now: () => now, shown: () => shown, hasTool: t => t !== 'slack' || slack, meId: 'm_sam', memberId: id => `m_${id}`, paused: () => paused,
     changed: u => { changed.push(u) }, sentBack: u => { sentBack.push(u) },
   })
-  return { a, tick: (ms: number) => { now += ms }, hide: (h: boolean) => { shown = !h }, pause: (p: boolean) => { paused = p }, changed, sentBack, now: () => now }
+  return { a, tick: (ms: number) => { now += ms }, hide: (h: boolean) => { shown = !h }, pause: (p: boolean) => { paused = p }, noSlack: () => { slack = false }, changed, sentBack, now: () => now }
 }
 const byTitle = (a: MockActions, title: string) => {
   const c = a.list().find(x => x.title === title)
@@ -190,6 +192,16 @@ describe('asking first and Always allow (the demo catch-up, PR 1)', () => {
     expect(refused(() => a.removePermission(stock.id, stock.rev)).code).toBe('not_found')
     hide(true)
     expect(a.permissions()).toEqual([])
+  })
+
+  test('a brand with no Slack has no Slack card or permission, and answers for neither', () => {
+    const { a, noSlack } = world()
+    const post = byTitle(a, POST)
+    noSlack()
+    expect(a.list().some(c => c.tool.label === 'Slack')).toBe(false)
+    expect(a.permissions().map(p => p.title)).toEqual(['Add stock'])
+    expect(refused(() => a.answer(post.id, post.rev, 'once')).code).toBe('not_found')
+    expect(refused(() => a.removePermission('pg_demoDanaOpsAlerts00000', 1)).code).toBe('not_found')
   })
 
   test('the card that went out yesterday names the permission it ran under', () => {

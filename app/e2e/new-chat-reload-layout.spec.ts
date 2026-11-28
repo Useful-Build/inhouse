@@ -80,7 +80,7 @@ for (const [viewport, hasTouch] of [[{ width: 1440, height: 900 }, false], [{ wi
     test.use({ viewport, hasTouch })
 
     test.beforeEach(async ({ page }) => {
-      await fxFor(page, undefined).seed({ stage: 'Act' })
+      await fxFor(page, undefined).seed({})
       await page.addInitScript(SAMPLER)
     })
 

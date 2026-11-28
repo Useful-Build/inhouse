@@ -3,7 +3,7 @@ import { expect, test } from './support/fx.js'
 import { atRest } from './states.js'
 
 test('Phone: the Slack row opens its page and nothing is cut', async ({ page, fx }) => {
-  await fx.seed({ stage: 'Act', demo: { ambient: 'Always' } })
+  await fx.seed({ demo: { ambient: 'Always' } })
   await page.goto('/?demo#/tools')
   await page.locator('[data-channel-row]').click()
   await expect(page).toHaveURL(/#\/tools\/slack$/)

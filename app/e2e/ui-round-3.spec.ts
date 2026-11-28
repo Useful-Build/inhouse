@@ -6,7 +6,7 @@ import { expect, test, type Fx } from './support/fx.js'
 import type { Page } from '@playwright/test'
 
 async function start(page: Page, fx: Fx, hash: string) {
-  await fx.seed({ stage: 'Act', demo: { ambient: 'Always' } })
+  await fx.seed({ demo: { ambient: 'Always' } })
   await page.goto('/?demo' + hash)
   await expect(page.getByRole('heading', { level: 1 }).first()).toBeVisible()
 }
@@ -203,11 +203,13 @@ test('Settings: five sections in order, each announced, and no lock for an Admin
   const groups = nav.getByRole('group')
   await expect(groups).toHaveCount(5)
   const sections: [string, string[]][] = [
-    ['You', ['General', 'Notifications', 'Memory']],
+    // The demo's own pages (Notifications, Who approves what, Run limits, Stage and plan) left with its stages (decision
+    // A13); Always allowed came in with its permissions. What the agent can do is the product's only (no ceiling here yet).
+    ['You', ['General', 'Memory', 'Always allowed']],
     ['Agent', ['Inhouse agent', 'Models', 'Team memory']],
-    ['Approvals and limits', ['Who approves what', 'Run limits', 'Spending cap']],
+    ['Spending', ['Spending cap']],
     ['Team', ['Members', 'Slack notices']],
-    ['Workspace', ['Stage and plan', 'Data and access', 'Audit log']],
+    ['Workspace', ['Data and access', 'Audit log']],
   ]
   for (const [i, [label, pages]] of sections.entries()) {
     const group = groups.nth(i)

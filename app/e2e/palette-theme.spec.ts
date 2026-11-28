@@ -7,7 +7,7 @@ import type { Page } from '@playwright/test'
 async function start(page: Page, fx: Fx, scheme: 'light' | 'dark', hash = '#/today') {
   // The OS setting for the run. No saved theme: the app follows it.
   await page.emulateMedia({ colorScheme: scheme })
-  await fx.seed({ stage: 'Act' })
+  await fx.seed({})
   await page.goto('/?demo' + hash)
   await expect(page.getByRole('heading', { level: 1 }).first()).toBeVisible()
 }

@@ -1,12 +1,12 @@
-// PR 3, data states and what flows from them (H10, M16, M17, M39, D6): First day and Loading open every page at Watch,
-// Act and Run without a crash, a console error or another state's data; pausing and disconnecting a tool change the
-// Tools count, the tool page and the composer alike; a $50 cap shows the banner without changing what was spent; Slack
-// is a connected channel from Act. Screenshots of each state go to the report.
-import { expect, fxFor, test, type Stage } from './support/fx.js'
+// PR 3, data states and what flows from them (H10, M16, M17, M39, D6): First day and Loading open every page without a
+// crash, a console error or another state's data (the demo has no stages since decision A13); pausing and disconnecting
+// a tool change the Tools count, the tool page and the composer alike; a $50 cap shows the banner without changing what
+// was spent; Slack is a connected channel. Screenshots of each state go to the report.
+import { expect, fxFor, test } from './support/fx.js'
 import type { Page } from '@playwright/test'
 
-async function start(page: Page, stage: Stage, scenario: string, hash: string) {
-  await fxFor(page, undefined).seed({ stage, scenario })
+async function start(page: Page, scenario: string, hash: string) {
+  await fxFor(page, undefined).seed({ scenario })
   await page.goto('/?demo' + hash)
 }
 
@@ -27,11 +27,11 @@ const PAGES = ['#/today', '#/library', '#/chats', '#/chats/all', '#/approvals', 
   '#/settings/you-general', '#/settings/team-spend', '#/settings/team-audit', '#/settings/team-memory']
 
 for (const scenario of ['First day', 'Loading']) {
-  for (const stage of ['Watch', 'Act', 'Run'] as const) {
-    test(`${scenario} at ${stage}: every page opens without a crash, a console error or another state's data`, async ({ page }) => {
+  {
+    test(`${scenario}: every page opens without a crash, a console error or another state's data`, async ({ page }) => {
       const errors = errorsOf(page)
-      await start(page, stage, scenario, '#/today')
-      await expect(page.getByRole('button', { name: `Demo switches: ${stage}, ${scenario}` })).toBeVisible()
+      await start(page, scenario, '#/today')
+      await expect(page.getByRole('button', { name: `Demo switches: ${scenario}` })).toBeVisible()
       for (const hash of PAGES) {
         await go(page, hash)
         await expect(page.locator('main')).toBeVisible()
@@ -47,7 +47,7 @@ for (const scenario of ['First day', 'Loading']) {
       await go(page, '#/today')
       if (scenario === 'First day') await expect(page.getByText('0 of 6 tools connected')).toBeVisible()
       else await expect(page.getByText('4 of 6 done')).toBeVisible()
-      await shot(page, `${scenario === 'First day' ? 'first-day' : 'loading'}-${stage.toLowerCase()}-today`)
+      await shot(page, `${scenario === 'First day' ? 'first-day' : 'loading'}-today`)
       expect(errors, errors.join('\n')).toEqual([])
     })
   }
@@ -59,7 +59,7 @@ const ability = (page: Page, key: 'read' | 'draft' | 'run') => page.locator(`[da
 const composerTools = (page: Page) => page.getByRole('button', { name: /^Tools read in this chat:/ })
 
 test('Tools: pausing a tool and a disconnected tool change the count, the tool page and the composer alike', async ({ page }) => {
-  await start(page, 'Act', 'Normal', '#/tools/shopify')
+  await start(page, 'Normal', '#/tools/shopify')
   await page.getByRole('button', { name: 'Pause access' }).click()
   // The tool page: paused, Read and Draft say so, no suggested questions.
   await expect(page.locator('main')).toContainText('Access paused')
@@ -80,7 +80,7 @@ test('Tools: pausing a tool and a disconnected tool change the count, the tool p
 })
 
 test('Tools: a disconnected tool reads as off on its page, in the count and in the composer', async ({ page }) => {
-  await start(page, 'Act', 'Tool disconnected', '#/tools/gorgias')
+  await start(page, 'Tool disconnected', '#/tools/gorgias')
   await expect(page.locator('main')).toContainText('Disconnected · login expired at 5:41 AM')
   await expect(ability(page, 'read')).toContainText('Off')
   await expect(ability(page, 'draft')).toContainText('Off')
@@ -96,7 +96,7 @@ test('Tools: a disconnected tool reads as off on its page, in the count and in t
 })
 
 test('First day: a tool being connected shows when it connects, as Today says, never an old connect date', async ({ page }) => {
-  await start(page, 'Act', 'First day', '#/today')
+  await start(page, 'First day', '#/today')
   // Today's setup list is the source: Shopify today, Amazon and ShipBob tomorrow, the rest this week.
   await expect(page.locator('main')).toContainText('Connecting today')
   await go(page, '#/tools')
@@ -116,7 +116,7 @@ test('First day: a tool being connected shows when it connects, as Today says, n
 })
 
 test('A $50 cap shows the cap banner and never changes what was spent', async ({ page }) => {
-  await start(page, 'Act', 'Normal', '#/usage')
+  await start(page, 'Normal', '#/usage')
   await expect(page.locator('main')).toContainText('$78.40')
   await expect(page.getByText('Spending cap reached.')).toHaveCount(0)
   await go(page, '#/settings/team-spend')
@@ -135,17 +135,12 @@ test('A $50 cap shows the cap banner and never changes what was spent', async ({
   await shot(page, 'cap-50-usage')
 })
 
-test('Slack is a connected channel at Act, and included from Act at Watch', async ({ page }) => {
-  await start(page, 'Act', 'Normal', '#/tools')
+test('Slack is a connected channel', async ({ page }) => {
+  await start(page, 'Normal', '#/tools')
   const slack = page.locator('[data-channel-row]').filter({ hasText: 'Slack' })
   await expect(slack).toContainText('Connected Nov 2')
   // A channel, not a tool the agent reads, and not in Add a tool either.
   await expect(page.locator('[data-tool-row]').filter({ hasText: 'Slack' })).toHaveCount(0)
   await expect(page.locator('main').getByText('Slack', { exact: true })).toHaveCount(1)
   await shot(page, 'slack-act')
-  await page.getByRole('button', { name: /^Demo switches:/ }).click()
-  await page.getByRole('radiogroup', { name: 'Stage' }).getByRole('radio', { name: 'Watch' }).click()
-  await page.getByRole('button', { name: 'Close demo switches' }).click()
-  await expect(slack).toContainText('Included from Act')
-  await shot(page, 'slack-watch')
 })
