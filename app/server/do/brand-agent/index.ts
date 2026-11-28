@@ -13,9 +13,12 @@ import { asksDeps, composePorts, jobDeps, p6Hooks, wireP6 } from './compose.ts'
 import { Asks, actionsOn, createAskTables } from './asks.ts'
 import { createInvocationTables, recordInvocation } from './invocations.ts'
 import { hubAccountFacts } from './hub-accounts.ts'
+import { cardFactsVia } from './card-facts.ts'
+import { taintStore } from '../../egress/taint.ts'
+import type { CleanCardFacts } from '../../outbox/detail.ts'
 import { alertApprovalWaiting } from '../../notify-slack/alerts-notices.ts'
 import type { HubAccountFacts } from '../../outbox/facts.ts'
-import type { ConnectGateway } from '../../../hub/index/contract.ts'
+import type { CardFactsRequest, ConnectGateway } from '../../../hub/index/contract.ts'
 import { questionWaits } from '../../questions/agent.ts'
 import { AgentCore } from './core.ts'
 import type {
@@ -253,6 +256,15 @@ export class BrandAgent extends DurableObject<Env> implements BrandAgentRpc {
       connect: this.env.HUB_CONNECT as unknown as Pick<ConnectGateway, 'listAccounts'>, db: this.env.DB, nowMs: Date.now(),
       requestId: `actions-accounts-${crypto.randomUUID()}`, log: entry => console.log(entry),
     })
+  }
+
+  /** Stage 1 M3 (card details, #488): card-facts.ts. The answer's tokens go to the fetch leak check's store first. */
+  async cardFacts(req: CardFactsRequest): Promise<CleanCardFacts | null> {
+    const taint = taintStore(this.env.DB, this.env.AUDIT_HASH_KEY)
+    return cardFactsVia({
+      connect: this.env.HUB_CONNECT as unknown as Pick<ConnectGateway, 'cardFacts'>, requestId: `actions-card-facts-${crypto.randomUUID()}`,
+      captureTaint: async body => { await taint.capture(body, { route: 'hub', tool: null }) }, log: entry => console.log(entry),
+    }, req)
   }
 
   // ---------- the API (routes 24, 27, 29-31, 35-37, 49) ----------

@@ -9,6 +9,8 @@ import { NUDGE_WINDOW_MS } from '../permissions/policy.ts'
 import type { CeilingFacts, ConnectedAccountFacts, DecideCtx, DecideFacts, GrantFacts, Resolved, ResolveFacts, WriteOperationKey } from '../permissions/types.ts'
 import { knownZone } from '../routines/brand.ts'
 import { DEFAULT_TZ } from '../usage/month.ts'
+import type { CardFactsReader, CardFactsView } from './detail.ts'
+import type { CardFactsRequest } from '../../hub/index/contract.ts'
 
 /** The one account per connector Stage 1 writes to (the hub's account ids). */
 export const ACCOUNT_IDS = { shopify: 'shopify:store', slack: 'slack:workspace' } as const
@@ -22,6 +24,11 @@ export interface HubAccountFacts { accountId: string; paused: boolean; label: st
 export interface OutboxFacts {
   resolveFacts(nowMs: number): Promise<ResolveFacts>
   decideFacts(r: Resolved, ctx: DecideCtx): Promise<DecideFacts>
+  /**
+   * Stage 1 M3 (card details, #488): what the card shows beside the ids, read from the store (detail.ts); null when the
+   * caller has no reader (absent) or the store didn't answer. Display only.
+   */
+  cardFacts?(req: CardFactsRequest): Promise<CardFactsView | null>
 }
 
 /** The brand's time zone (`g:tz`), for the day a use counts toward (N10). A stored value no runtime knows throws. */
@@ -63,9 +70,11 @@ function accountFacts(connector: 'shopify' | 'slack', row: AccountRow | undefine
   }
 }
 
-export function outboxFacts(d: { db: D1Database; hubAccounts: () => Promise<readonly HubAccountFacts[]> }): OutboxFacts {
+export function outboxFacts(d: { db: D1Database; hubAccounts: () => Promise<readonly HubAccountFacts[]>; cardFacts?: CardFactsReader }): OutboxFacts {
   const { db } = d
   return {
+    ...(d.cardFacts ? { cardFacts: d.cardFacts } : {}),
+
     async resolveFacts(nowMs) {
       // The hub's word first: reading it copies the hub's connection date and shop into `connector_accounts` (M2-D), so
       // the rows are read only after that write, never beside it (the first request after a connect would see the old row).

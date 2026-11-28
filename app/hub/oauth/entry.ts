@@ -5,7 +5,8 @@
 // refuses a `run` scope, the import-boundary lint and the product config check are the orchestrator's.
 import { safeError } from '../../server/safe-error'
 import { WorkerEntrypoint } from 'cloudflare:workers'
-import type { AccountSummary, CallToolOptions, CallerScope, ConnectGateway as ConnectApi, HubResult, Instant } from '../index/contract'
+import type { AccountSummary, CallToolOptions, CallerScope, CardFacts, CardFactsRequest, ConnectGateway as ConnectApi, HubResult, Instant } from '../index/contract'
+import { CardFactsRequestSchema } from '../index/schemas'
 import { err } from '../index/errors'
 import { log } from '../index/log'
 import { envRecord, flushTestLogs, isConfiguredFrom, loadRegistry, signInFor, signInName, TEST_FAKES_DO_NAME } from '../signin/signin'
@@ -112,6 +113,23 @@ export class ConnectGateway extends WorkerEntrypoint<Env> implements ConnectApi 
         await settledAnswer(stubFor(accountId).warmTestShop({ accountId, testShop }))
       }
       return G.listAccounts({ ...d, signIn: accountId => (shopifyAccounts.has(accountId) ? stubFor(accountId) : d.signIn(accountId)) as unknown as G.ConnectStub }, scope)
+    })
+  }
+  /**
+   * Stage 1 M3 (card details, #488; contract.ts `cardFacts`): a `server` scope only, its request parsed strictly, then the
+   * write SignIn's read in the test build. The deployable build answers `not_configured` and reads nothing (the guard is
+   * written out in full). Not `answered`: no customer's name is kept in the test hook's list of answers.
+   */
+  async cardFacts(scope: CallerScope, req: CardFactsRequest): Promise<HubResult<CardFacts>> {
+    return guarded(this.env, async () => {
+      if (!G.serverScope(scope)) return err('invalid_args', 'scope')
+      const parsed = CardFactsRequestSchema.safeParse(req)
+      if (!parsed.success) return err('invalid_args', 'req')
+      if (__INHOUSE_HUB_TEST__ && (this.env as Env & { INHOUSE_TEST_BUILD?: string }).INHOUSE_TEST_BUILD === '1') {
+        const ns = this.env.SHOPIFY_WRITE_SIGNIN
+        return (await settledAnswer(ns.get(ns.idFromName(SHOPIFY_WRITE_SIGNIN_ACCOUNT)).cardFacts(parsed.data))) as HubResult<CardFacts>
+      }
+      return err('not_configured', 'shopify_write')
     })
   }
   /**

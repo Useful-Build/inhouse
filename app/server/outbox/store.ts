@@ -2,7 +2,7 @@
 // (answer, Undo, withdraw, resolve) or the dispatcher's (dispatch.ts, sweep.ts). Each write is one D1 batch: one
 // conditional update (or insert) that decides, then statements and audit lines that act only where its stamp is. The
 // rules on who may act sit in that update's WHERE, never only in a read before it.
-import type { ActionCard, ActionFilter, ActionItemsPage } from '../../shared/contract/actions.ts'
+import type { ActionCard, ActionDetail, ActionFilter, ActionItemsPage } from '../../shared/contract/actions.ts'
 import type { AuditHook } from '../db/audit.ts'
 import { writeStamp } from '../db/ids.ts'
 import { all, first, runBatch, stmt } from '../db/sql.ts'
@@ -16,11 +16,14 @@ import { reserveUseSql, useDay as dayOfUse } from '../permissions/uses.ts'
 import { itemsPage } from './batch/rows.ts'
 import { ADMINS_APPROVER, cardsOf, kindOf } from './card.ts'
 import type { StoredCard, Viewer } from './card.ts'
-import { brandTimeZone } from './facts.ts'
+import { detailJson } from './detail.ts'
+import type { CardFactsView } from './detail.ts'
+import { ACCOUNT_IDS, brandTimeZone } from './facts.ts'
 import type { OutboxFacts } from './facts.ts'
 import { batchAnswerStmts, ITEMS_WITHIN_UNITS_MAX, resolveItemStmts } from './batch/answer.ts'
 import { collect, oneCallBatch, overBatchMax, replayItem, WAITING_SINGLES_MAX } from './batch/request.ts'
 import { grantDefaults, operationEntry } from './operations/index.ts'
+import type { OperationEntry } from './operations/types.ts'
 import {
   actionLine, both, butNot, CHAT_NOT_DELETED, GATE_OPEN, mayDo, newActionId, permissionUseKey, releaseUseWhere, reserveUseByKeyWhere, stamped, unreleasedUse,
 } from './sql.ts'
@@ -78,6 +81,7 @@ const INSERT_COLUMNS = [
   'id', 'rev', 'state', 'verdict', 'guardrail', 'origin', 'via', 'asked_by', 'approver', 'chat_id', 'run_id', 'turn_id', 'tool_use_id', 'job_id',
   'account_id', 'account_gen', 'operation', 'policy_rev', 'scope_json', 'scope_key', 'args_json', 'payload_hash', 'records', 'units', 'card_json',
   'grant_id', 'approved_by', 'approved_rev', 'approved_at_ms', 'send_at_ms', 'expires_at_ms', 'created_at_ms', 'updated_at_ms', 'stamp', 'approver_kind',
+  'detail_json',
 ] as const
 
 interface NewRow {
@@ -94,6 +98,8 @@ interface NewRow {
   stamp: string
   /** Stage 1 M3-X (N25): `admins` for a card any active admin answers (`approver = 'role:admin'`); a waiting single only. */
   approverKind: 'person' | 'admins'
+  /** Stage 1 M3 (card details): the card's display-only detail rows (detail.ts), or null. */
+  detail: ActionDetail | null
 }
 
 /**
@@ -113,7 +119,7 @@ function insertAction(n: NewRow, also: readonly Exists[]): Stmt {
     n.r.accountId, n.r.accountGen, n.r.operation, n.r.policyRev, JSON.stringify(n.r.scope), n.r.scopeKey, JSON.stringify(n.r.args), n.r.payloadHash,
     n.r.records, n.r.units, JSON.stringify(n.card),
     n.grantId, approved ? `grant:${n.grantId}` : null, approved ? 1 : null, approved ? n.nowMs : null, approved ? n.nowMs + t.holdMs : null,
-    n.nowMs + t.expiresMs, n.nowMs, n.nowMs, n.stamp, n.approverKind,
+    n.nowMs + t.expiresMs, n.nowMs, n.nowMs, n.stamp, n.approverKind, detailJson(n.detail),
   ]
   const conds = [
     `NOT EXISTS (SELECT 1 FROM outbox_actions WHERE chat_id = ? AND payload_hash = ? AND state = 'waiting' AND expires_at_ms > ?)`,
@@ -128,6 +134,17 @@ function insertAction(n: NewRow, also: readonly Exists[]): Stmt {
      ON CONFLICT DO NOTHING`,
     ...values, n.ctx.chatId, n.r.payloadHash, n.nowMs, n.ctx.chatId, ...also.flatMap(e => e.params),
   )
+}
+
+/**
+ * Stage 1 M3 (card details, #488): the store's facts for a call whose operation names any (its orders, its draft lines'
+ * variants), read from the write store the action is for; null when it names none or the store didn't answer.
+ */
+async function cardFactsFor(facts: OutboxFacts, entry: OperationEntry, r: Resolved, shop: string | null): Promise<CardFactsView | null> {
+  if (!facts.cardFacts || !entry.facts || !entry.detail || entry.connector !== 'shopify' || shop === null || r.accountId !== ACCOUNT_IDS.shopify) return null
+  const wanted = entry.facts(r.args)
+  if (wanted.orderIds.length === 0 && wanted.variantIds.length === 0) return null
+  return facts.cardFacts({ accountId: ACCOUNT_IDS.shopify, expect: { connectedAtMs: r.accountGen, shop }, ...wanted })
 }
 
 export function openOutbox(d: OutboxDeps): OutboxPort & {
@@ -226,7 +243,8 @@ export function openOutbox(d: OutboxDeps): OutboxPort & {
     async request(ctx, proposed, { mode }) {
       const facts = d.facts
       if (!facts) throw new Error('outbox: request needs the facts reader')
-      const nowMs = d.now()
+      // Read again after the store's facts (#572): the rows' times and an approved row's hold count from the write.
+      let nowMs = d.now()
       const rf = await facts.resolveFacts(nowMs)
       const r = await resolve(rf, proposed)
       if ('refuse' in r) return refusedRequest(r.refuse.reason)
@@ -251,12 +269,25 @@ export function openOutbox(d: OutboxDeps): OutboxPort & {
       if (!entry || !account) throw new Error('outbox: a resolved action names no operation or account')
       const words = entry.card(r.args, rf)
       const card = (nudge: boolean): StoredCard => ({ title: words.title, lines: words.lines, label: account.label, nudge })
+      // Stage 1 M3 (card details, #488): the store's facts for this call, read once, for the card's and each item's
+      // display-only rows. Never in `card` or an item's line (the words the agent reads back).
+      const view = await cardFactsFor(facts, entry, r, account.shop)
+      // #572: the read can take up to 5 s; every row below is written at the clock after it, so an "Always allow" write's
+      // hold (`send_at_ms`) is its full length from the insert, never what's left of it.
+      nowMs = d.now()
+      const detail = (a: unknown): ActionDetail | null => {
+        const rows = view !== null && entry.detail ? entry.detail(a, view) : null
+        // #575: an operation whose card names what the store holds says so when the store couldn't be read for it.
+        if (rows !== null || entry.unreadNote === undefined || !entry.facts) return rows
+        const wanted = entry.facts(a)
+        return wanted.orderIds.length + wanted.variantIds.length > 0 ? { rows: [], note: entry.unreadNote } : null
+      }
       const asker = ctx.asker
       if (!asker) throw new Error('outbox: decide let through an action with no asker')
       const via = mode === 'ask_only' ? 'approval_request' : 'tool'
       // Stage 1 M3-B (N22): a multi-record call of an operation that splits is a batch of its own when it runs under a
       // grant or is over the bulk threshold; a call that collects joins the chat's collecting batch.
-      const call = { ctx, r, entry, rf, via, label: account.label } as const
+      const call = { ctx, r, entry, rf, via, label: account.label, detail } as const
       const bd = { db, requestId: d.requestId, nowMs, hook }
       const splits = entry.items !== undefined && r.records > 1
       const collectAs = async (guardrail: 'count' | 'bulk'): Promise<OutboxRequestResult> => {
@@ -302,7 +333,7 @@ export function openOutbox(d: OutboxDeps): OutboxPort & {
         const use = reserveUseSql({ actionId: id, actionRev: 1, grantId: v.grantId, day: dayOfUse(nowMs, tz), units: r.units, atMs: nowMs })
         await runBatch(db, [
           use,
-          insertAction({ id, state: 'approved', verdict: 'run', guardrail: null, ctx, via, r, card: card(false), grantId: v.grantId, nowMs, stamp, approverKind: 'person' }, [unreleasedUse(id, 1), { sql: GATE_OPEN, params: [] }]),
+          insertAction({ id, state: 'approved', verdict: 'run', guardrail: null, ctx, via, r, card: card(false), grantId: v.grantId, nowMs, stamp, approverKind: 'person', detail: detail(r.args) }, [unreleasedUse(id, 1), { sql: GATE_OPEN, params: [] }]),
           stmt('DELETE FROM permission_uses WHERE id = ? AND NOT EXISTS (SELECT 1 FROM outbox_actions WHERE id = ?)', `${id}#1`, id),
           hook(actionLine(
             { ...at(asker.memberId, nowMs), args: { action: 'action.requested', actionId: id, operation: r.operation, verdict: 'run', origin: ctx.origin, records: r.records, units: r.units, permissionId: v.grantId } },
@@ -355,7 +386,7 @@ export function openOutbox(d: OutboxDeps): OutboxPort & {
         params: [ctx.chatId, r.operation, nowMs, WAITING_SINGLES_MAX],
       }
       await runBatch(db, [
-        insertAction({ id, state: 'waiting', verdict, guardrail, ctx, via, r, card: card(nudge), grantId: null, nowMs, stamp, approverKind: admins ? 'admins' : 'person' }, [roomForOne]),
+        insertAction({ id, state: 'waiting', verdict, guardrail, ctx, via, r, card: card(nudge), grantId: null, nowMs, stamp, approverKind: admins ? 'admins' : 'person', detail: detail(r.args) }, [roomForOne]),
         hook(actionLine(
           { ...at(asker.memberId, nowMs), args: { action: 'action.requested', actionId: id, operation: r.operation, verdict, ...(guardrail ? { guardrail } : {}), origin: ctx.origin, records: r.records, units: r.units } },
           stamped(id, stamp),

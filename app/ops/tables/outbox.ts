@@ -3,7 +3,9 @@
 // `approved_by` may instead name a permission), the parsed arguments the send needs, and the card's words. They go by
 // retention once final (`final_at_ms`), never while open. Stage 1 M3-B (N22): a batch's items, each one hub call: the
 // arguments and line of one write, no member id; they go with their batch (0770's triggers: aged by its `final_at_ms`,
-// deleted with its row).
+// deleted with its row). Stage 1 M3 (card details, 0791): both tables' `detail_json` holds what a card shows beside the
+// ids, read from the brand's store: order names, customers' names and amounts, product titles. Customers are no members
+// (no person key); the rows keep their tables' retention and export.
 import type { TableEntry } from './types.ts'
 
 export const outboxTables: readonly TableEntry[] = [

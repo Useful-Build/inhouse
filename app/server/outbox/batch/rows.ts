@@ -1,8 +1,8 @@
 // A batch's rows (Stage 1 M3-B, N22): the item ids and the collecting key, the items' insert, the reads a card and the
 // full list need, and the release of items' units back to a grant-backed batch's one use. Every write here is one
 // statement that acts only where its caller's winning change left its stamp (sql.ts).
-import { ACTION_ITEMS_PAGE, BATCH_FIRST_LINES } from '../../../shared/contract/actions.ts'
-import type { ActionItemRow, ActionItemsPage } from '../../../shared/contract/actions.ts'
+import { ACTION_ITEMS_PAGE, ActionDetailSchema, BATCH_FIRST_LINES } from '../../../shared/contract/actions.ts'
+import type { ActionDetail, ActionItemRow, ActionItemsPage } from '../../../shared/contract/actions.ts'
 import { operationEntry } from '../operations/index.ts'
 import type { OperationEntry } from '../operations/types.ts'
 import { all, stmt } from '../../db/sql.ts'
@@ -31,6 +31,8 @@ export interface NewItem {
   args: unknown
   payloadHash: string
   line: string
+  /** Stage 1 M3 (card details): the item's detail rows as stored (`detail_json`), or null. */
+  detail?: string | null
   records: number
   units: number
   movedFrom?: string | null
@@ -45,13 +47,14 @@ export interface NewItem {
 export function insertItemsStmt(actionId: string, chatId: string, items: readonly NewItem[], nowMs: number, onlyIf: Exists): Stmt {
   const list = items.map(i => ({
     id: i.itemId, n: i.n, tu: i.toolUseId, a: JSON.stringify(i.args), h: i.payloadHash, l: i.line, r: i.records, u: i.units, m: i.movedFrom ?? null,
+    d: i.detail ?? null,
   }))
   return stmt(
     `INSERT INTO outbox_items (item_id, action_id, n, chat_id, tool_use_id, args_json, payload_hash, line, records, units, moved_from,
-       state, created_at_ms, updated_at_ms)
+       detail_json, state, created_at_ms, updated_at_ms)
      SELECT json_extract(j.value, '$.id'), ?, json_extract(j.value, '$.n'), ?, json_extract(j.value, '$.tu'), json_extract(j.value, '$.a'),
        json_extract(j.value, '$.h'), json_extract(j.value, '$.l'), json_extract(j.value, '$.r'), json_extract(j.value, '$.u'),
-       json_extract(j.value, '$.m'), 'pending', ?, ?
+       json_extract(j.value, '$.m'), json_extract(j.value, '$.d'), 'pending', ?, ?
      FROM json_each(?) j
      WHERE EXISTS (SELECT 1 FROM outbox_actions a WHERE a.id = ? AND a.kind = 'batch'
          AND (a.approved_upto IS NULL OR json_extract(j.value, '$.n') > a.approved_upto))
@@ -83,11 +86,17 @@ export function releaseItemsStmt(p: {
 }
 
 /**
- * What a batch card shows beyond its row (N33): the first 10 lines, the same items as rows (Stage 1 M3-U), and for a
- * title, an item's arguments when every item has the same value at the operation's `titleKey`. The totals and the count
- * are the row's own.
+ * What a batch card shows beyond its row (N33): the first 10 lines, the same items as rows (Stage 1 M3-U), their detail
+ * rows (Stage 1 M3, card details: one per line, null where an item has none), and for a title, an item's arguments when
+ * every item has the same value at the operation's `titleKey`. The totals and the count are the row's own.
  */
-export interface BatchSummary { firstLines: string[]; firstRows: ActionItemRow[]; same: unknown }
+export interface BatchSummary { firstLines: string[]; firstRows: ActionItemRow[]; firstDetails: (ActionDetail | null)[]; same: unknown }
+
+/** A stored `detail_json` as the contract's detail, or null. A stored value that doesn't read is a bug: fail loud. */
+export function storedDetail(json: string | null): ActionDetail | null {
+  if (json === null) return null
+  return ActionDetailSchema.parse(JSON.parse(json))
+}
 
 /**
  * Stage 1 M3-U: an item as a row, from its stored arguments (they passed the operation's strict schema when they were
@@ -107,19 +116,20 @@ export async function batchSummaries(db: D1Database, rows: readonly Pick<OutboxA
     if (!entry) throw new Error(`outbox: batch ${r.id} names no operation`)
     return [r.id, entry] as const
   }))
-  for (const r of rows) out.set(r.id, { firstLines: [], firstRows: [], same: null })
+  for (const r of rows) out.set(r.id, { firstLines: [], firstRows: [], firstDetails: [], same: null })
   const ids = rows.map(r => r.id)
   // At most 50 ids a read: each is a bound parameter.
   for (let at = 0; at < ids.length; at += 50) {
     const part = ids.slice(at, at + 50)
-    const items = await all<{ action_id: string; line: string; args_json: string }>(db, stmt(
-      `SELECT action_id, line, args_json FROM outbox_items WHERE action_id IN (${part.map(() => '?').join(', ')}) AND n <= ? ORDER BY action_id, n`,
+    const items = await all<{ action_id: string; line: string; args_json: string; detail_json: string | null }>(db, stmt(
+      `SELECT action_id, line, args_json, detail_json FROM outbox_items WHERE action_id IN (${part.map(() => '?').join(', ')}) AND n <= ? ORDER BY action_id, n`,
       ...part, BATCH_FIRST_LINES,
     ))
     for (const i of items) {
       const s = out.get(i.action_id)!
       s.firstLines.push(i.line)
       s.firstRows.push(itemRowOf(entries.get(i.action_id)!, i.args_json, i.line))
+      s.firstDetails.push(storedDetail(i.detail_json))
     }
   }
   // A title that names what every item shares (the same tags) reads whether they all do: one read per such batch.
@@ -150,15 +160,19 @@ function itemResult(i: Pick<OutboxItemRow, 'state' | 'result_json'>): string | u
 export async function itemsPage(db: D1Database, batch: Pick<OutboxActionRow, 'id' | 'operation'>, after: number): Promise<ActionItemsPage> {
   const entry = operationEntry(batch.operation)
   if (!entry) throw new Error(`outbox: batch ${batch.id} names no operation`)
-  const rows = await all<Pick<OutboxItemRow, 'n' | 'line' | 'state' | 'result_json' | 'args_json'>>(db, stmt(
-    'SELECT n, line, state, result_json, args_json FROM outbox_items WHERE action_id = ? AND n > ? ORDER BY n LIMIT ?', batch.id, after, ACTION_ITEMS_PAGE + 1,
+  const rows = await all<Pick<OutboxItemRow, 'n' | 'line' | 'state' | 'result_json' | 'args_json' | 'detail_json'>>(db, stmt(
+    'SELECT n, line, state, result_json, args_json, detail_json FROM outbox_items WHERE action_id = ? AND n > ? ORDER BY n LIMIT ?', batch.id, after, ACTION_ITEMS_PAGE + 1,
   ))
   const page = rows.slice(0, ACTION_ITEMS_PAGE)
   const more = rows.length > ACTION_ITEMS_PAGE
   return {
     items: page.map(r => {
       const result = itemResult(r)
-      return { n: r.n, line: r.line, row: itemRowOf(entry, r.args_json, r.line), state: r.state, ...(result !== undefined ? { result } : {}) }
+      const detail = storedDetail(r.detail_json)
+      return {
+        n: r.n, line: r.line, row: itemRowOf(entry, r.args_json, r.line), state: r.state, ...(result !== undefined ? { result } : {}),
+        ...(detail !== null ? { detail } : {}),
+      }
     }),
     ...(more ? { next: page.at(-1)!.n } : {}),
   }

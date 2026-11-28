@@ -48,8 +48,9 @@ for (const theme of ['light', 'dark'] as const) {
     await expect(card.locator('[data-card-subtitle]')).toHaveText('Shopify · One approval covers all 450')
     const rows = card.locator('[data-card-rows] [data-row]')
     await expect(rows).toHaveCount(3)
-    await expect(rows.first()).toHaveText('#3901add VIP')
-    await expect(rows.last()).toHaveText('#3903add VIP')
+    // Each row: the order's name, its customer, the change and the order's total (the store's facts, as the real card's).
+    await expect(rows.first()).toHaveText('#3901Alex Mooreadd VIP$642.10')
+    await expect(rows.last()).toHaveText('#3903Jonas Weberadd VIP$517.45')
     await expect(card.locator('[data-card-more]')).toHaveText('and 447 moreSee all 450')
     await expect(card.locator('[data-card-actions] button')).toHaveText([APPROVE, 'No'])
     await expect(card.getByRole('button', { name: `See all 450: ${BATCH}` })).toBeVisible()
@@ -67,14 +68,14 @@ test('See all lists every change in order; its Approve covers the 450 it names, 
   await expect(sheet).toBeVisible()
   const items = sheet.locator('[data-item]')
   await readAll(sheet, 450)
-  await expect(items.nth(0)).toHaveText('#3901add VIP')
-  await expect(items.nth(449)).toHaveText('#4350add VIP')
+  await expect(items.nth(0)).toHaveText('#3901Alex Mooreadd VIP$642.10')
+  await expect(items.nth(449)).toHaveText('#4350Hana Satoadd VIP$560.00')
   // The footer adds no totals line for a list: the header says it.
   await expect(sheet.locator('[data-sheet-totals]')).toHaveCount(0)
   // A search narrows the rows on their own words.
   await sheet.getByRole('searchbox', { name: 'Search orders' }).fill('4123')
   await expect(items).toHaveCount(1)
-  await expect(items.first()).toHaveText('#4123add VIP')
+  await expect(items.first()).toHaveText('#4123Diego Ramosadd VIP$1,045.20')
   await sheet.getByRole('searchbox', { name: 'Search orders' }).fill('')
   await expect(items).toHaveCount(450)
   await items.nth(200).scrollIntoViewIfNeeded()
@@ -116,6 +117,8 @@ for (const theme of ['light', 'dark'] as const) {
     const refund = page.locator('[data-action-card]').filter({ has: page.getByRole('heading', { name: 'Refund $238.00 (USD) on order 4838' }) })
     await expect(refund).toContainText('Dana Kim asks an admin')
     await expect(refund).toContainText('Moves money')
+    // The order's name, its customer and the refund's amount (the store's facts, display only).
+    await expect(refund.locator('[data-card-detail] [data-row]')).toHaveText('#4838Nora Lindqvist$238.00')
     await expect(refund.locator('[data-card-actions] button')).toHaveText(['Approve', 'No'])
     await shot(page, `demo-approvals-desktop-${theme}`, true)
     await axeClean(page, `demo approvals ${theme}`)

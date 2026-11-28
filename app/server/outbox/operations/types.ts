@@ -2,7 +2,9 @@
 // `OperationTable` (each entry typed by its own key), so it and the hub's `WRITE_OPERATIONS` can't drift. Types only.
 import type { z } from 'zod'
 import type { WriteOperationKey } from '../../../hub/index/contract.ts'
+import type { ActionDetail } from '../../../shared/contract/actions.ts'
 import type { ResolveFacts } from '../../permissions/types.ts'
+import type { CardFactsView, FactsWanted } from '../detail.ts'
 
 export type { WriteOperationKey }
 
@@ -67,6 +69,21 @@ export interface OperationBase<A> {
    * in server words ("Order 1042 (store-a): add VIP, rush"). Nothing a person approves may be cut from it.
    */
   itemLine(item: A, f: ResolveFacts): string
+  /**
+   * Stage 1 M3 (card details, #488): the store records a card of this call names, for the facts a person sees beside the
+   * ids (detail.ts). Absent for an operation with none to read (a Slack post, a stock change).
+   */
+  facts?(a: A): FactsWanted
+  /**
+   * Stage 1 M3 (card details): the call's (or one item's) detail rows from the store's answer, or null when it didn't
+   * answer for every id. Display only: never part of `card`, `itemLine` or anything else the agent reads.
+   */
+  detail?(a: A, f: CardFactsView): ActionDetail | null
+  /**
+   * Stage 1 M3 (#575): the quiet note a card shows when the store couldn't be read for this call ("Product names couldn't
+   * be read."), in place of rows. Absent: no note (the card shows its ids only). The request goes ahead either way.
+   */
+  unreadNote?: string
   /**
    * Stage 1 M3-U (N33): one item as a row of the batch card and its full list: the record, the change and, where it has
    * one, its amount or quantity. Server words; the item's `line` stays the full form. Every operation that coalesces

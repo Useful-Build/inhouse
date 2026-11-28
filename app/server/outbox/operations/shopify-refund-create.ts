@@ -9,6 +9,7 @@
 // (hub/connectors/shopify/write/ops/refund-create.ts). `notifyCustomer` sends only Shopify's own refund email; the card
 // says whether it will.
 import { z } from 'zod'
+import { detailOf, orderRow } from '../detail.ts'
 import { shopScope } from './shopify-order-tags.ts'
 import type { MoneyAmount, OperationEntry } from './types.ts'
 
@@ -75,6 +76,9 @@ export const shopifyRefundCreate: OperationEntry<RefundArgs> & { key: 'shopify.r
       `refund email: ${a.notifyCustomer ? 'yes' : 'no'}`,
     ].join('; ')
   },
+  // Stage 1 M3 (card details): the order's name and customer, with the refund's own amount (never the order's total).
+  facts: a => ({ orderIds: [a.orderId], variantIds: [] }),
+  detail: (a, f) => detailOf([orderRow(f, a.orderId, { words: moneyWords(a.amount), currency: a.amount.currency })]),
   effects: { money: true, customer: true, destructive: false, access: false },
   memberMay: false,
   reversible: false,

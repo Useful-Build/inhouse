@@ -263,8 +263,8 @@ describe('batch rows and titles (M3-U)', () => {
     const add = OPERATIONS['shopify.order.tag_add'] as OperationEntry<TagAddArgs>
     const rm = OPERATIONS['shopify.order.tag_remove'] as OperationEntry<TagAddArgs>
     const a = { orderIds: ['gid://shopify/Order/1042', 'gid://shopify/Order/1043'], tags: ['VIP', 'rush'] }
-    expect(add.itemRow!(a)).toEqual({ ref: '#1042, #1043', change: 'add VIP, rush' })
-    expect(rm.itemRow!(a)).toEqual({ ref: '#1042, #1043', change: 'remove VIP, rush' })
+    expect(add.itemRow!(a)).toEqual({ ref: 'Orders 1042, 1043', change: 'add VIP, rush' })
+    expect(rm.itemRow!(a)).toEqual({ ref: 'Orders 1042, 1043', change: 'remove VIP, rush' })
     expect(add.titleKey).toBe('$.tags')
     expect(add.batchTitle!({ records: 450, units: 450 }, { orderIds: ['gid://shopify/Order/1'], tags: ['VIP'] })).toBe('Tag 450 orders as VIP')
     expect(add.batchTitle!({ records: 1, units: 1 }, a)).toBe('Tag 1 order as VIP and rush')

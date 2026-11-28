@@ -336,6 +336,8 @@ async function actionOp(env: TestFakesEnv, op: Extract<ProductOp, { op: 'action'
       actionChanged: actionId => stub.actionChanged(actionId),
       poke: p => stub.poke(p),
       hubAccounts: () => stub.hubAccounts(),
+      // Stage 1 M3 (card details): the store's facts for the card, as a real request reads them.
+      cardFacts: req => stub.cardFacts(req),
     },
     now: () => Date.now(), sleep: ms => new Promise(r => setTimeout(r, ms)), requestId: () => `test-fakes-${crypto.randomUUID()}`, log: entry => console.log(entry),
   }
