@@ -15,7 +15,10 @@
 //      stamp and time is a bound value, so nothing is drawn again). Rendering uses server/db/sql.ts's renderStmt, as
 //      server/seed/first-admin.ts does. The audit hash key is the config's vars.AUDIT_HASH_KEY or the environment's;
 //   4. the remote database must have no people yet (the seed never runs twice): `wrangler d1 execute --remote --json`;
-//   5. `wrangler d1 execute <name> --remote --file <sql> --yes`.
+//   5. `wrangler d1 execute <name> --remote --file <sql> --yes`;
+//   6. `wrangler r2 object put <the config's FILES bucket>/<R2_PROBE_KEY> --remote --file <probe>` (evals/r2-probe.ts): the one
+//      object the eval preflights read to prove a token can read objects on a bucket with no eval chat yet. The run's own
+//      token never gets R2 write; this deployer's step puts it.
 // wrangler runs with this process's environment minus AUDIT_HASH_KEY (the candidate deploy passes the key in the
 // environment for step 3 only). Exit 0 seeded, 1 refused or failed, 2 usage. SEED_REMOTE_WRANGLER_FOR_TESTS (a .mjs path) replaces wrangler with a
 // fake that records its calls (scripts/sandbox/seed-remote.test.mjs).
@@ -27,6 +30,7 @@ import { DatabaseSync } from 'node:sqlite'
 import { fileURLToPath, pathToFileURL } from 'node:url'
 import { checkSandboxConfig, parseSandboxMode, readSandboxConfig } from '../check-product-config.mjs'
 import { SandboxNameError, assertCandidateName, evalNames, perPrNames } from './names.mjs'
+import { R2_PROBE_BODY, R2_PROBE_KEY } from '../../evals/r2-probe.ts'
 
 const appDir = fileURLToPath(new URL('../../', import.meta.url))
 const MIGRATIONS = join(appDir, 'server/migrations')
@@ -172,6 +176,8 @@ async function main(argv) {
   }
   if (failures.length) throw new Refused(`${configPath} fails check-product-config --sandbox:\n${failures.map(f => `  - ${f}`).join('\n')}`)
   if (!(config.d1_databases ?? []).some(d => d?.database_name === database)) throw new Refused(`${configPath} binds no D1 named ${database}`)
+  const files = (config.r2_buckets ?? []).find(b => b?.binding === 'FILES')?.bucket_name
+  if (typeof files !== 'string' || files === '') throw new Refused(`${configPath} binds no R2 bucket as FILES`)
   const hashKey = config.vars?.AUDIT_HASH_KEY ?? process.env.AUDIT_HASH_KEY
   if (!hashKey) throw new Usage('no AUDIT_HASH_KEY in the config\'s vars or the environment')
   // 3. Render with no network.
@@ -186,7 +192,11 @@ async function main(argv) {
   if (people !== 0) throw new Refused(`${database} already has ${people} people: seed only a freshly migrated database`)
   // 5. Seed.
   wrangler([...remote, '--file', file, '--yes'])
-  console.log(`seed-remote: seeded ${database} (${sql.length} statements)`)
+  // 6. The preflight's probe object, in the config's own bucket.
+  const probe = join(dirname(file), 'r2-probe.json')
+  writeFileSync(probe, R2_PROBE_BODY)
+  wrangler(['r2', 'object', 'put', `${files}/${R2_PROBE_KEY}`, '--remote', '--file', probe, '--content-type', 'application/json', '--config', configPath])
+  console.log(`seed-remote: seeded ${database} (${sql.length} statements) and ${files}/${R2_PROBE_KEY}`)
 }
 
 if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {

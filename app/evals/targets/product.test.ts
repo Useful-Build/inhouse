@@ -5,6 +5,8 @@
 //  - the question's text and options aren't recorded for grading (T10 grades the call), or the call is counted twice
 //    when the trace already holds it;
 //  - a turn that answered, or ended with an end row, reads the questions at all.
+import { tmpdir } from 'node:os'
+import path from 'node:path'
 import { describe, expect, test, vi } from 'vitest'
 import { GRADED_PROMPT_APP, GRADED_PROMPT_VERSION } from '../prompt-version.ts'
 import { API_TIMEOUT_MS, QUESTION_ASK, createProductTarget, parkedAnswer, parkedQuestionOf, productSession } from './product.ts'
@@ -107,6 +109,13 @@ describe('#672: every call to the eval deployment has a deadline', () => {
       if (hang) await new Promise((_, reject) => (signal.aborted ? reject(signal.reason) : signal.addEventListener('abort', () => reject(signal.reason))))
       return new Response('{}')
     }) as typeof fetch,
+  })
+
+  test('setup refuses before any call when ps can\'t list the processes (#740)', async () => {
+    const seen: unknown[] = []
+    const t = createProductTarget({ paid: true, budgetUsd: 1, env, signIn: async () => ({}), ps: path.join(tmpdir(), 'no-such-ps'), fetch: (async (u: unknown) => { seen.push(u); return new Response('{}') }) as typeof fetch })
+    await expect(t.ready()).rejects.toThrow(/the process tree could not be listed .*the run stops/)
+    expect(seen).toEqual([])
   })
 
   test('a call with no signal of its own still gets one; a caller\'s cancel still ends it', async () => {

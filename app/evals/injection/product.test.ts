@@ -591,8 +591,9 @@ describe('Neon\'s #618 review on the product target', () => {
     let lists = 0
     // Three 503s, 30 ms each, 30 ms apart, then the list: about 210 ms in all, twice the 100 ms quiet bound.
     const sessionsFetch = (async () => {
-      await new Promise((r) => setTimeout(r, 30))
-      return ++lists <= 3 ? new Response('{}', { status: 503 }) : new Response(JSON.stringify({ success: true, result: [] }))
+      const n = ++lists
+      if (n <= 4) await new Promise((r) => setTimeout(r, 30)) // the later reads (the chat list, the probe's GET) answer at once
+      return n <= 3 ? new Response('{}', { status: 503 }) : new Response(JSON.stringify({ success: true, result: [] }))
     }) as unknown as typeof fetch
     const t = createProductInjectionTarget({
       paid: true, inhouse: null, base: b, setupQuietMs: 100, sessionsFetch, sessionsRetry: { sleep: (ms) => new Promise((r) => setTimeout(r, ms)), delaysMs: [30, 30, 30] },
@@ -602,7 +603,7 @@ describe('Neon\'s #618 review on the product target', () => {
     await new Promise((r) => setTimeout(r, 0))
     await t.close!()
     await expect(preflight).resolves.toBeUndefined()
-    expect(lists).toBe(5) // 3 retried lists, the list, then the list of an eval chat to read one object from (none here)
+    expect(lists).toBe(6) // 3 retried lists, the list, the list of an eval chat to read one object from (none here), then the probe object's GET (this fetch answers every request 200)
     expect(calls).toEqual(['lease back'])
     expect(t.notes!().filter((n) => n.startsWith('A door read was retried: an R2 preflight'))).toHaveLength(3)
   })

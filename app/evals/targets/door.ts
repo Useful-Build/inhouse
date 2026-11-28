@@ -419,6 +419,10 @@ export function shieldWranglerCalls(): void {
   shielded = true
 }
 export const wranglerCallsShielded = (): boolean => shielded
+/** Tests only: the shield is per process, so a test that sets it puts it back. */
+export function unshieldWranglerCallsForTests(): void {
+  shielded = false
+}
 
 /**
  * One wrangler call, asynchronous (a cancel's close is never stuck behind it), in this process's own process group
@@ -545,7 +549,9 @@ const D1_OVERLOADED = 7429
 const AUTH_CODES = new Set([10000, 7403])
 /**
  * D1's documented API codes (the same docs, "API error codes"), none of them a rate limit: a Retry-After beside one of these
- * is not a 429 (#717). 7429 is handled before; a 7500 that is one of D1_TRANSIENT_MESSAGES too.
+ * is not a 429 (#717). 7429 is handled before; a 7500 that is one of D1_TRANSIENT_MESSAGES too. 7500 stays here: D1's docs call it
+ * "conditional" (a platform failure or a SQLite error such as SQLITE_AUTH, "fix SQL or permission errors before retrying"), never
+ * transient as a code, so a bare 7500 with a Retry-After stops the run (https://developers.cloudflare.com/d1/observability/debug-d1/, read 2026-11-28).
  */
 const NOT_A_RATE_LIMIT = new Set([7403, 7404, 7406, 7500, 10000])
 /** The text wrangler gives the API's own JSON answer (throwFetchError), as against its WAF and malformed-page errors. */

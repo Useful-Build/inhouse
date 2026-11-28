@@ -303,6 +303,16 @@ describe('wireEval', () => {
     expect(f.state()).toMatchObject({ leaseHeld: false, effort: 'High', liveGrants: 0 })
     expect(f.http.filter((h) => h.startsWith('PUT inhouse')).length).toBe(2)
   })
+  it('refuses before any call when ps can\'t list the processes (#740): a wrangler call\'s deadline could not stop its tree', async () => {
+    const f = fakeEval(null)
+    await expect(wireEval({
+      env: f.env, model: 'claude-sonnet-5-5', budgetUsd: 10, cases: READ_SIDE_CASES, pageOrigin: 'https://pages.example.test', note: () => {},
+      fetch: f.doFetch, run: f.run, signIn: f.signIn, signInhouse: f.signIn, sessions: f.sessions, ps: path.join(tmpdir(), 'no-such-ps'),
+    })).rejects.toThrow(/the process tree could not be listed .*the run stops/)
+    expect(f.sql).toEqual([])
+    expect(f.http).toEqual([])
+    expect(f.state().leaseHeld).toBe(false)
+  })
   it('a stop while the effort is being pinned waits for the pin, then puts the effort back and ends the grant', async () => {
     let release!: () => void
     const hold = new Promise<void>((r) => { release = r })
@@ -332,6 +342,13 @@ describe('wireEval', () => {
 })
 
 describe('wireProof', () => {
+  it('refuses before any call when ps can\'t list the processes (#740)', async () => {
+    const calls: string[] = []
+    const raw = { current: async () => { calls.push('current'); return { status: 200, bytes: new Uint8Array(), json: {} } }, admin: async () => { calls.push('admin'); return { status: 200, bytes: new Uint8Array(), json: {} } } }
+    await expect(wireProof({ env: { ...env, INHOUSE_EVAL_D1_NAME: 'inhouse-sbx-pr7-db' }, pr: 7, api: (async () => ({ status: 200, json: {}, text: '' })) as never, raw: raw as never, scenarioOf: () => 'x', note: () => {}, run: async () => { calls.push('sql'); return [] }, ps: path.join(tmpdir(), 'no-such-ps') }))
+      .rejects.toThrow(/the process tree could not be listed .*the run stops/)
+    expect(calls).toEqual([])
+  })
   it('reaches the eval-build guard: a PR database whose deployment says evalBrand is refused before any write', async () => {
     const writes: string[] = []
     const raw = { current: async () => ({ status: 200, bytes: new Uint8Array(), json: { evalBrand: true, memberId: 'm_x' } }), admin: async () => ({ status: 200, bytes: new Uint8Array(), json: {} }) }

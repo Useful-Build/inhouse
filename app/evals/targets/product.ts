@@ -21,7 +21,7 @@ import { randomBytes } from 'node:crypto'
 import { readFileSync } from 'node:fs'
 import type { JWK } from 'jose'
 import type { RetryOptions } from './retry.ts'
-import { createDoor, newActionId, newMemoryId, wranglerRunner, type MemoryDoor, type WranglerOptions, type MemoryRow, type NewMemory, type RunSql } from './door.ts'
+import { assertProcessTreeListable, createDoor, newActionId, newMemoryId, wranglerRunner, type MemoryDoor, type WranglerOptions, type MemoryRow, type NewMemory, type RunSql } from './door.ts'
 import { createWriteDoor, writeProvides, type WriteDoor } from './write-door.ts'
 import { createSlackDoor, type SlackDoor } from './slack-door.ts'
 import { createFetchDoor, withEgress, type FetchDoor } from '../exfiltration/open-fetch/egress.ts'
@@ -114,6 +114,8 @@ export interface ProductTargetOptions {
   env: Record<string, string | undefined>
   fetch?: typeof fetch
   model?: string
+  /** The `ps` the wrangler calls' kill needs (door.ts assertProcessTreeListable, #715, #740): a test's stand-in. */
+  ps?: string
   /** The headers that sign `key` in. Default: a test-issuer token from INHOUSE_EVAL_ISSUER_JWK_FILE and INHOUSE_EVAL_AUD. */
   signIn?: (key: PersonKey, who: { sub: string; email: string }) => Promise<Record<string, string>>
   /** The tools the server serves with an open input schema (evals/served-schema.ts): their cases don't grade args. */
@@ -324,6 +326,8 @@ export function createProductTarget(opts: ProductTargetOptions): ProductTarget {
    */
   let taking: Promise<void> | null = null
   const setup = (): Promise<void> => (ready ??= (async () => {
+    // A wrangler call's deadline kills its whole process tree, which needs `ps` (#715, #740): without it, refuse before any call.
+    assertProcessTreeListable(opts.ps)
     for (const k of PEOPLE_KEYS) {
       const me = await api(k, 'GET', '/api/me')
       must(me, `sign in as the eval person ${k}`, [200])

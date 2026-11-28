@@ -6,8 +6,8 @@
 // deadline, as ever).
 // The graded run (run.mjs on EVAL_DB, gradedRun below) holds the eval lease, pins the eval brand's Spending cap and its
 // Default model through the door, and stops before the next case once the run has spent its --budget.
-import { CANCEL_SIGNALS } from '../signals.ts'
-import { shieldWranglerCalls } from '../targets/door.ts'
+import { CANCEL_SIGNALS, signalHost, type SignalHost } from '../signals.ts'
+import { assertProcessTreeListable, shieldWranglerCalls } from '../targets/door.ts'
 import type { MemoryDoor } from '../targets/door.ts'
 import type { MorningDoor } from './door.ts'
 import type { RunnerEnv } from './runner.ts'
@@ -208,22 +208,26 @@ export function remoteEnv(d: RemoteDeps): RunnerEnv {
   }
 }
 
-export interface SignalDeps {
-  on(signal: 'SIGINT' | 'SIGHUP' | 'SIGTERM', handler: () => void): void
-  exit(code: number): void
-  error(line: string): void
-}
-const processSignals: SignalDeps = { on: (s, h) => void process.once(s, h), exit: code => process.exit(code), error: line => console.error(line) }
+export type SignalDeps = SignalHost
+const processSignals: SignalDeps = signalHost()
 
 /**
  * run.mjs's stop handlers: on SIGINT, SIGHUP (#719) or SIGTERM the door is closed first (runAll may still be going, and its next setShop
  * must not write an override after the clear), then the override is cleared (awaited) before the process exits 130, 129 or 143,
  * so an interrupted run leaves no override behind. A clear that fails is printed; the exit code stays the signal's.
+ * One stop per run: a later signal (a second Ctrl-C, or a SIGINT then a SIGTERM) is said and ignored, so it can't queue a second
+ * clear and release or end the process before the lease is given back.
  */
 export function clearOnSignals(door: Pick<MorningDoor, 'close' | 'clearShop'>, d: SignalDeps = processSignals, release?: () => Promise<void>): void {
   const said = (e: unknown) => (e instanceof Error ? e.message : String(e))
+  let stopping = false
   for (const [signal, code] of CANCEL_SIGNALS) {
     d.on(signal, () => {
+      if (stopping) {
+        d.error(`run.mjs: ${signal} again: still clearing the test shop override and giving the eval lease back`)
+        return
+      }
+      stopping = true
       // The clear and the release run out of reach of a second signal (#716); a hangup stops the run too (#719).
       shieldWranglerCalls()
       door.close()
@@ -255,6 +259,8 @@ export interface GradedDeps {
   budgetUsd: number
   /** The probe chat's id (default: a fresh `eval-probe-<hex>`). */
   probeId?: () => string
+  /** The `ps` the wrangler calls' kill needs (assertProcessTreeListable, #740): a test's stand-in. */
+  ps?: string
   /**
    * A check run right after the lease is taken, before the probe chat, the cap and the Default model are written (the
    * store-data set's R2 read preflight); a throw refuses the start.
@@ -303,6 +309,8 @@ export function gradedRun(g: GradedDeps): GradedRun {
   const capUsd = Number(MORNING_CHECK_CAP.slice(1))
   return {
     async start() {
+      // A wrangler call's deadline kills its whole process tree, which needs `ps` (#715, #740): without it, refuse before the lease.
+      assertProcessTreeListable(g.ps)
       taking = g.door.takeLease(g.tag).then(() => { leased = true })
       await taking
       await g.preflight?.()

@@ -3,9 +3,11 @@
 import { mkdtempSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import path from 'node:path'
-import { describe, expect, it } from 'vitest'
-import { CANCEL_SIGNALS } from './signals.ts'
-import { wranglerCallsShielded } from './targets/door.ts'
+import { afterEach, describe, expect, it } from 'vitest'
+import { EventEmitter } from 'node:events'
+import { CANCEL_SIGNALS, signalHost } from './signals.ts'
+import { giveBackOnSignals } from './run-cancel.ts'
+import { unshieldWranglerCallsForTests, wranglerCallsShielded } from './targets/door.ts'
 import { stopOnSignals } from './read-side/cli.ts'
 import { clearOnSignals } from './morning-check/remote.ts'
 import { cancelHandler, listenForCancel } from './injection/run.ts'
@@ -17,6 +19,7 @@ const fakeProcess = () => {
 
 // First in the file: the shield is per process, and the tests below set it too.
 describe('#716: the first signal shields the wrangler calls the close makes', () => {
+  afterEach(() => unshieldWranglerCallsForTests())
   it('a cancel shields them before the close starts', async () => {
     expect(wranglerCallsShielded()).toBe(false)
     let closed = false
@@ -24,6 +27,100 @@ describe('#716: the first signal shields the wrangler calls the close makes', ()
     handle('SIGINT', 130)
     await new Promise((r) => setTimeout(r, 10))
     expect(closed).toBe(true)
+  })
+})
+
+// #739: each runner shields on its first signal itself, so deleting its own shieldWranglerCalls() turns one of these red.
+describe('#739: every runner shields the wrangler calls on its first signal', () => {
+  const next = () => new Promise((r) => setTimeout(r, 5))
+  const host = () => {
+    const p = fakeProcess()
+    const log: string[] = []
+    return { p, log, deps: { on: p.on, error: (l: string) => void log.push(l), exit: (c: number) => void log.push(`exit ${c}`) } }
+  }
+  afterEach(() => unshieldWranglerCallsForTests())
+
+  it.each(CANCEL_SIGNALS)('read-side: %s shields before it stops anything', async (signal) => {
+    const h = host()
+    let at: boolean | null = null
+    stopOnSignals(async () => { at = wranglerCallsShielded() }, h.deps)
+    expect(wranglerCallsShielded()).toBe(false)
+    h.p.handlers.get(signal)!()
+    await next()
+    expect(at).toBe(true)
+  })
+
+  it.each(CANCEL_SIGNALS)('morning-check: %s shields before the clear and the release', async (signal) => {
+    const h = host()
+    const at: boolean[] = []
+    clearOnSignals({ close: () => void at.push(wranglerCallsShielded()), clearShop: async () => { at.push(wranglerCallsShielded()); return null } }, h.deps, async () => void at.push(wranglerCallsShielded()))
+    expect(wranglerCallsShielded()).toBe(false)
+    h.p.handlers.get(signal)!()
+    await next()
+    expect(at).toEqual([true, true, true])
+  })
+
+  it.each(CANCEL_SIGNALS)('evals/run.ts: %s shields before the target gives the lease back', async (signal) => {
+    const h = host()
+    let at: boolean | null = null
+    giveBackOnSignals(async () => { at = wranglerCallsShielded(); return true }, h.deps)
+    expect(wranglerCallsShielded()).toBe(false)
+    h.p.handlers.get(signal)!()
+    await next()
+    expect(at).toBe(true)
+    expect(h.log).toContain(`exit ${CANCEL_SIGNALS.find(([s]) => s === signal)![1]}`)
+  })
+})
+
+// #741/#742 review: a second signal must not skip or double the give-back (the handlers were process.once, with no guard).
+describe('a second signal: one give-back, the first signal\'s exit code, nothing cut short', () => {
+  const pairs = [['SIGINT', 'SIGINT', 130], ['SIGINT', 'SIGTERM', 130], ['SIGTERM', 'SIGINT', 143], ['SIGHUP', 'SIGTERM', 129]] as const
+  const wire = (which: 'morning-check' | 'run') => {
+    const p = fakeProcess()
+    const log: string[] = []
+    let finished!: () => void
+    const gate = new Promise<void>((r) => { finished = r })
+    const deps = { on: p.on, error: (l: string) => void log.push(l), exit: (c: number) => void log.push(`exit ${c}`) }
+    if (which === 'morning-check') clearOnSignals({ close: () => void log.push('close'), clearShop: async () => { log.push('clear'); await gate; return null } }, deps, async () => void log.push('release'))
+    else giveBackOnSignals(async () => { log.push('close'); await gate; log.push('closed'); return true }, deps)
+    return { p, log, finished }
+  }
+  const settle = () => new Promise((r) => setTimeout(r, 10))
+
+  it.each(pairs)('morning-check: %s then %s clears and releases once, then exits %i once', async (first, second, code) => {
+    const w = wire('morning-check')
+    w.p.handlers.get(first)!()
+    w.p.handlers.get(second)!()
+    await settle()
+    expect(w.log.filter((l) => l.startsWith('exit'))).toEqual([])
+    expect(w.log.some((l) => l.includes(`${second} again`))).toBe(true)
+    w.finished()
+    await settle()
+    expect(w.log.filter((l) => ['close', 'clear', 'release'].includes(l))).toEqual(['close', 'clear', 'release'])
+    expect(w.log.filter((l) => l.startsWith('exit'))).toEqual([`exit ${code}`])
+  })
+
+  it.each(pairs)('evals/run.ts: %s then %s closes the target once, then exits %i once', async (first, second, code) => {
+    const w = wire('run')
+    w.p.handlers.get(first)!()
+    w.p.handlers.get(second)!()
+    await settle()
+    expect(w.log.filter((l) => l.startsWith('exit'))).toEqual([])
+    expect(w.log.some((l) => l.includes(`${second} again`))).toBe(true)
+    w.finished()
+    await settle()
+    expect(w.log.filter((l) => l === 'close' || l === 'closed')).toEqual(['close', 'closed'])
+    expect(w.log.filter((l) => l.startsWith('exit'))).toEqual([`exit ${code}`])
+  })
+
+  it('the real process host keeps its handler after a signal (on, never once): a second Ctrl-C reaches it, not Node\'s default', () => {
+    const proc = Object.assign(new EventEmitter(), { exit: (() => {}) as (code?: number) => never })
+    let hits = 0
+    signalHost(proc as never).on('SIGINT', () => { hits++ })
+    proc.emit('SIGINT')
+    proc.emit('SIGINT')
+    expect(hits).toBe(2)
+    expect(proc.listenerCount('SIGINT')).toBe(1)
   })
 })
 

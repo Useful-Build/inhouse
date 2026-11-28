@@ -130,6 +130,7 @@ describe('the remote steps (failure 3)', () => {
     expect(calls.map(c => c.args.slice(0, 6))).toEqual([
       ['d1', 'execute', 'inhouse-sbx-pr12-db', '--remote', '--config', fixture],
       ['d1', 'execute', 'inhouse-sbx-pr12-db', '--remote', '--config', fixture],
+      ['r2', 'object', 'put', 'inhouse-sbx-pr12-files/sessions/_eval-preflight.json', '--remote', '--file'],
     ])
     expect(calls[0].args.slice(6)).toEqual(['--json', '--command', "SELECT COUNT(*) AS n FROM members WHERE kind = 'person'"])
     expect(calls[1].args.slice(6, 7)).toEqual(['--file'])
@@ -138,6 +139,9 @@ describe('the remote steps (failure 3)', () => {
     expect(calls[1].sql).toContain("'s:cap'")
     expect(calls[1].sql).not.toContain(';;')
     expect(calls[1].sql.trim().endsWith(';')).toBe(true)
+    // The preflight's probe object (evals/r2-probe.ts), put last, in this PR's own bucket, from a file holding its body.
+    expect(calls[2].args.slice(6)).toEqual([expect.stringMatching(/r2-probe\.json$/), '--content-type', 'application/json', '--config', fixture])
+    expect(calls[2].sql).toBe('{"eval":"preflight-probe"}\n')
   })
   test('eval mode seeds the eval deployment\'s own database, with the hash key from the environment (failure 5)', () => {
     const w = fakeWrangler(0)
@@ -147,15 +151,22 @@ describe('the remote steps (failure 3)', () => {
     expect(w.calls().map(c => c.args.slice(0, 6))).toEqual([
       ['d1', 'execute', 'inhouse-sbx-eval-db', '--remote', '--config', evalFixture],
       ['d1', 'execute', 'inhouse-sbx-eval-db', '--remote', '--config', evalFixture],
+      ['r2', 'object', 'put', 'inhouse-sbx-eval-files/sessions/_eval-preflight.json', '--remote', '--file'],
     ])
-    expect(w.calls().map(c => c.auditKeyInEnv)).toEqual([false, false])
+    expect(w.calls().map(c => c.auditKeyInEnv)).toEqual([false, false, false])
   })
   test('wrangler never gets AUDIT_HASH_KEY in its environment, though the seed reads it from there', () => {
     const w = fakeWrangler(0)
     const r = run([...PR12, '--config', configWith(c => { delete c.vars.AUDIT_HASH_KEY }), '--database', 'inhouse-sbx-pr12-db'], w.fake, { ...ENV, AUDIT_HASH_KEY: 'key-from-the-environment-0123456789' })
     expect(r.stderr).toBe('')
     expect(r.status).toBe(0)
-    expect(w.calls().map(c => c.auditKeyInEnv)).toEqual([false, false])
+    expect(w.calls().map(c => c.auditKeyInEnv)).toEqual([false, false, false])
+  })
+  test('a config with no FILES bucket is refused before any remote call', () => {
+    const w = fakeWrangler(0)
+    const r = run([...PR12, '--config', configWith(c => { c.r2_buckets = [] }), '--database', 'inhouse-sbx-pr12-db'], w.fake)
+    expect(r.status).toBe(1)
+    expect(w.calls()).toEqual([])
   })
   test('refuses a database that already has people, without seeding', () => {
     const w = fakeWrangler(3)

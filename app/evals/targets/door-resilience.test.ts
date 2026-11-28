@@ -129,7 +129,7 @@ describe('#691 and #710: a transient door error retries, a permanent one stops a
     let calls = 0
     const reader = (more: (() => Response)[]) => createSessionReader({ env, bucket: 'inhouse-sbx-eval-files', retry: { ...noWait, onRetry: (l) => lines.push(l) }, fetch: (async () => { calls++; return (more.shift() ?? (() => json(200, { success: true, result: [] })))() }) as unknown as typeof fetch })
     await reader(answers).preflight()
-    expect(calls).toBe(5) // the 4 tries of the first list, then the eval-chat list (empty: nothing to read)
+    expect(calls).toBe(6) // the 4 tries of the first list, the eval-chat list (empty), then the probe object's GET (this fetch answers every request 200)
     expect(lines).toEqual([
       'A door read was retried: an R2 preflight (a 5xx from R2), try 2 of 4.',
       'A door read was retried: an R2 preflight (a network error), try 3 of 4.',
@@ -173,13 +173,45 @@ describe('the preflight reads one real object, not only a list (the live smoke a
     await expect(reader([{ key: KEY, size: 4 }], () => json(403, {}), []).preflight()).rejects.toThrow('R2 preflight get answered 403: CLOUDFLARE_API_TOKEN can list the bucket but not read its objects')
   })
 
-  it('no eval chat in the bucket yet: nothing to read, the lists pass; a foreign key is never read', async () => {
+  const PROBE = 'sessions/_eval-preflight.json'
+
+  it('no eval chat in the bucket yet: the probe object is read, so an empty bucket never passes without a read (#741)', async () => {
     const calls: string[] = []
-    await reader([], () => new Response('[{}]'), calls).preflight()
-    expect(calls).toEqual(['list sessions/', 'list sessions/eval-'])
+    await reader([], () => new Response('{"eval":"preflight-probe"}'), calls).preflight()
+    expect(calls).toEqual(['list sessions/', 'list sessions/eval-', `get ${PROBE}`])
+  })
+
+  it.each([401, 403])('an empty bucket and a token that can list but not read: the probe GET answers %i and stops the run, named (#741)', async (status) => {
+    const calls: string[] = []
+    await expect(reader([], () => json(status, {}), calls).preflight()).rejects.toThrow(`R2 preflight get answered ${status}: CLOUDFLARE_API_TOKEN can list the bucket but not read its objects`)
+    expect(calls).toEqual(['list sessions/', 'list sessions/eval-', `get ${PROBE}`])
+  })
+
+  it('an empty bucket with no probe object stops the run and says how to seed it; with an eval chat listed, the chat is read instead and the probe is not needed (#741)', async () => {
+    await expect(reader([], () => json(404, {}), []).preflight()).rejects.toThrow(`R2 preflight get answered 404: no eval chat and no probe object ${PROBE} in inhouse-sbx-eval-files`)
+    const calls: string[] = []
+    await reader([{ key: KEY, size: 4 }], () => new Response('[{}]'), calls).preflight()
+    expect(calls).toEqual(['list sessions/', 'list sessions/eval-', `get ${KEY}`])
+  })
+
+  it('a foreign key is never read, a list answering no result array or a negative size is refused, and nothing is read (#741)', async () => {
     const foreign: string[] = []
     await expect(reader([{ key: `sessions/${CHAT}/x.json`, size: 1 }], () => new Response('[{}]'), foreign).preflight()).rejects.toThrow(/not a transcript key/)
     expect(foreign.some((c) => c.startsWith('get'))).toBe(false)
+    const negative: string[] = []
+    await expect(reader([{ key: KEY, size: -1 }], () => new Response('[{}]'), negative).preflight()).rejects.toThrow(/has no size or is over the cap/)
+    expect(negative.some((c) => c.startsWith('get'))).toBe(false)
+    const malformed: string[] = []
+    const notAnArray = createSessionReader({
+      env, bucket: 'inhouse-sbx-eval-files', retry: { ...noWait, onRetry: () => {} },
+      fetch: (async (u: string | URL) => {
+        const url = new URL(String(u))
+        malformed.push(url.search ? `list ${url.searchParams.get('prefix')}` : 'get')
+        return json(200, { success: true, result: url.searchParams.get('prefix') === 'sessions/eval-' ? { not: 'an array' } : [] })
+      }) as unknown as typeof fetch,
+    })
+    await expect(notAnArray.preflight()).rejects.toThrow('R2 preflight list answered no result array')
+    expect(malformed).toEqual(['list sessions/', 'list sessions/eval-'])
   })
 })
 
