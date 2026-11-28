@@ -20,7 +20,8 @@ import { CancelWhySchema, TurnFailureSchema } from '../../shared/contract/runs.t
 import { randomBytes } from 'node:crypto'
 import { readFileSync } from 'node:fs'
 import type { JWK } from 'jose'
-import { createDoor, newActionId, newMemoryId, wranglerRunner, type MemoryDoor, type MemoryRow, type NewMemory, type RunSql } from './door.ts'
+import type { RetryOptions } from './retry.ts'
+import { casePersonRefusal, createDoor, newActionId, newMemoryId, teammateRefusal, wranglerRunner, type MemoryDoor, type WranglerOptions, type MemoryRow, type NewMemory, type RunSql } from './door.ts'
 import { createWriteDoor, writeProvides, type WriteDoor } from './write-door.ts'
 import { createSlackDoor, type SlackDoor } from './slack-door.ts'
 import { createFetchDoor, withEgress, type FetchDoor } from '../exfiltration/open-fetch/egress.ts'
@@ -130,6 +131,8 @@ export interface ProductTargetOptions {
   /** Milliseconds between reads while a turn runs. */
   pollMs?: number
   sleep?: (ms: number) => Promise<void>
+  /** Each door read's retry on a transient error (#691), one line each, for the run's report. Default: stderr. */
+  onRetry?: (line: string) => void
 }
 
 /** True for an email on `example.test` or a subdomain: the invented domain the seeded brands use. */
@@ -145,6 +148,8 @@ export function casePerson(run: string, caseId: string, rep: number): { sub: str
   const handle = `eval-${run}-${caseId.toLowerCase()}-r${rep}`
   return { sub: handle, email: `${handle}@example.test`, name: `Eval ${caseId} r${rep}` }
 }
+/** The address of a case-repeat's named teammate (M3-E, #566): the case person's, marked. */
+const teammateEmail = (who: { email: string }): string => who.email.replace('@', '-named@')
 /** A case person's email: what run start removes when it's another run's. */
 const CASE_PERSON = /^eval-[a-z0-9-]+@example\.test$/
 const newMemberId = (): string => `m_${randomBytes(16).toString('base64url')}`
@@ -192,6 +197,11 @@ export interface ProductTarget extends Target {
   /** The target's own checks (the eval brand, the members, the lease, the cap), once; makes its doors (M3-E's preflight, #662). */
   ready(): Promise<void>
   /**
+   * Why the door would refuse the case person a seed makes for this case-repeat, or its named teammate, or null (#724):
+   * the doors' own rules on the run's own addresses, so M3-E's preflight stops a case before any paid turn.
+   */
+  personRefusal(c: { caseId: string; rep: number; namedMember?: string }): string | null
+  /**
    * How many calls (to the deployment, through a door) have ended so far: a close waits on a case setup while this still
    * moves (#685), every call having its own deadline.
    */
@@ -204,6 +214,34 @@ export interface ProductTarget extends Target {
    */
   addTeammate(t: { caseId: string; rep: number; name: string }): Promise<string>
   removeTeammate(id: string): Promise<void>
+}
+
+/**
+ * The brand's WebFetch list a case seeds: its hosts, or the default (null) when it lists none. The server reads an empty
+ * list as no list (server/egress/webfetch.ts: "with the list empty or never set, no host at all"), and the door refuses
+ * one, so a spec with no hosts (an M3-E plant, which asks for no WebFetch) seeds the default: the live smoke after #670
+ * stopped at P03's seed on exactly that refusal.
+ */
+export function webfetchListFor(exfil: Pick<ExfilSpec, 'hosts'> | undefined): string[] | null {
+  return exfil && exfil.hosts.length > 0 ? exfil.hosts.map((h) => h.toLowerCase()) : null
+}
+
+/**
+ * The product target's SQL runner for its doors (wrangler on INHOUSE_EVAL_D1_NAME): every call ended is progress (#685),
+ * and so is every retry of a read (#689, #691: a try ended, so a close waiting on a setup keeps waiting while one of its
+ * reads retries), each retry also a line for the report (`onRetry`, default stderr). `spawn` and `sleep` are tests'.
+ */
+export function doorSql(o: { env: Record<string, string | undefined>; progress: () => void; onRetry?: (line: string) => void; spawn?: WranglerOptions['spawn']; readConfig?: WranglerOptions['readConfig']; sleep?: RetryOptions['sleep'] }): RunSql {
+  const report = o.onRetry ?? ((l: string) => process.stderr.write(`${l}\n`))
+  const retry: RetryOptions = { onRetry: (line) => { o.progress(); report(line) }, ...(o.sleep ? { sleep: o.sleep } : {}) }
+  const run = wranglerRunner({ database: o.env[EVAL_D1_NAME] ?? '', config: o.env[EVAL_WRANGLER_CONFIG] ?? '', env: o.env, retry, ...(o.spawn ? { spawn: o.spawn } : {}), ...(o.readConfig ? { readConfig: o.readConfig } : {}) })
+  return async (sql) => {
+    try {
+      return await run(sql)
+    } finally {
+      o.progress()
+    }
+  }
 }
 
 export function createProductTarget(opts: ProductTargetOptions): ProductTarget {
@@ -233,13 +271,7 @@ export function createProductTarget(opts: ProductTargetOptions): ProductTarget {
 
   /** Calls ended so far, each counted once whatever its outcome (#685: the close's progress check). */
   let callsDone = 0
-  const counted = (run: RunSql): RunSql => async (sql) => {
-    try {
-      return await run(sql)
-    } finally {
-      callsDone++
-    }
-  }
+  const sqlOf = (): RunSql => doorSql({ env: opts.env, progress: () => { callsDone++ }, ...(opts.onRetry ? { onRetry: opts.onRetry } : {}) })
   async function api(who: PersonKey, method: string, path: string, o: { json?: unknown; bytes?: Uint8Array; headers?: Record<string, string>; signal?: AbortSignal } = {}): Promise<{ status: number; json: any; text: string }> {
     const id = who === 'current' && caseWho ? caseWho : EVAL_PEOPLE[who]
     let signed = headersOf.get(`${who}:${id.sub}`)
@@ -290,12 +322,12 @@ export function createProductTarget(opts: ProductTargetOptions): ProductTarget {
   let slackDoor: SlackDoor | undefined = opts.slackDoor
   const slackOf = (): SlackDoor => {
     if (!checked) throw new ProductTargetRefusal('the Slack door is made only after the eval-brand check: seed a case first')
-    slackDoor ??= createSlackDoor(counted(wranglerRunner({ database: opts.env[EVAL_D1_NAME] ?? '', config: opts.env[EVAL_WRANGLER_CONFIG] ?? '', env: opts.env })))
+    slackDoor ??= createSlackDoor(sqlOf())
     return slackDoor
   }
   const writesOf = (): WriteDoor => {
     if (!checked) throw new ProductTargetRefusal('the write door is made only after the eval-brand check: seed a case first')
-    writeDoor ??= createWriteDoor(counted(wranglerRunner({ database: opts.env[EVAL_D1_NAME] ?? '', config: opts.env[EVAL_WRANGLER_CONFIG] ?? '', env: opts.env })))
+    writeDoor ??= createWriteDoor(sqlOf())
     return writeDoor
   }
   let ready: Promise<void> | undefined
@@ -357,7 +389,7 @@ export function createProductTarget(opts: ProductTargetOptions): ProductTarget {
     if (notServed !== null) throw new ProductTargetRefusal(`refusing: ${notServed}`)
     // (a) the door only after the check passed; (b) and (c) are door.ts's.
     if (!door || !fetchDoor) {
-      const sql = counted(wranglerRunner({ database: opts.env[EVAL_D1_NAME] ?? '', config: opts.env[EVAL_WRANGLER_CONFIG] ?? '', env: opts.env }))
+      const sql = sqlOf()
       door ??= createDoor(sql)
       fetchDoor ??= createFetchDoor(sql)
     }
@@ -429,13 +461,17 @@ export function createProductTarget(opts: ProductTargetOptions): ProductTarget {
     call: api,
     writeDoor: writesOf,
     ready: setup,
+    personRefusal: (c) => {
+      const who = casePerson(runTag, c.caseId, c.rep)
+      return casePersonRefusal(who) ?? (c.namedMember === undefined ? null : teammateRefusal({ email: teammateEmail(who), name: c.namedMember }))
+    },
     progress: () => callsDone,
     slackDoor: slackOf,
     async addTeammate(t) {
       if (!checked || !door) throw new ProductTargetRefusal('a teammate is added only after the eval-brand check: seed a case first')
       const who = casePerson(runTag, t.caseId, t.rep)
       const id = newMemberId()
-      await door.addTeammate({ id, email: who.email.replace('@', '-named@'), name: t.name })
+      await door.addTeammate({ id, email: teammateEmail(who), name: t.name })
       return id
     },
     async removeTeammate(id) {
@@ -465,7 +501,7 @@ export function createProductTarget(opts: ProductTargetOptions): ProductTarget {
         // exactly what the grader calls unlisted), any other case the default.
         settingsTouched = true
         await d.setWebSearch(false)
-        await d.setWebfetchHosts(exfil ? exfil.hosts.map((h) => h.toLowerCase()) : null)
+        await d.setWebfetchHosts(webfetchListFor(exfil))
         // M3-F (N29): an open-fetch case reaches any public host; every other case keeps the list (the default).
         await fetchDoor!.setMode(exfil?.fetch ?? 'list')
         await d.clear()

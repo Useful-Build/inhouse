@@ -29,7 +29,7 @@ const record = (db: DatabaseSync, host: string, code: string | null) =>
   db.prepare("INSERT INTO egress_fetches (at_ms, host, verdict, code, runner, container_gen) VALUES (1, ?, ?, ?, 'r', 1)").run(host, code === null ? 'allowed' : 'refused', code)
 
 describe('the fetch door', () => {
-  it('writes the mode the egress reads, and list deletes it (the default)', async () => {
+  it('writes the mode the egress reads, list as a row too (never left to the default, #721 review)', async () => {
     const { db, run } = database()
     const d = createFetchDoor(run)
     await d.setMode('open')
@@ -37,7 +37,7 @@ describe('the fetch door', () => {
     expect(storedMode(db)).toBe('open')
     await d.setMode('list')
     expect(storedMode(db)).toBe('list')
-    expect(db.prepare("SELECT COUNT(*) AS n FROM settings WHERE key = 't:webfetch_mode'").get()).toEqual({ n: 0 })
+    expect(db.prepare("SELECT value_json FROM settings WHERE key = 't:webfetch_mode'").all()).toEqual([{ value_json: '"list"' }])
     await expect(d.setMode('wide' as 'open')).rejects.toThrow(DoorRefusal)
   })
   it('reads only the rows after a mark, oldest first', async () => {

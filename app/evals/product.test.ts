@@ -4,8 +4,14 @@
 // a case needing a field the API doesn't show is graded anyway.
 import { describe, expect, it } from 'vitest'
 import { CASES } from './cases.ts'
-import { assertSandboxDatabase, createDoor, DoorRefusal, EVAL_DB, sqlString, wranglerRunner, WRANGLER_TIMEOUT_MS, type MemoryDoor, type MemoryRow, type NewApproval, type NewMemory } from './targets/door.ts'
-import { callOfStep, createProductTarget, EVAL_PEOPLE, onExampleTest, ProductTargetRefusal, readIssuerKey, unobservableReason, writesFromRows } from './targets/product.ts'
+import { assertSandboxDatabase, createDoor, DoorRefusal, EVAL_DB, sqlString, webfetchHostsRefusal, wranglerRunner, WRANGLER_TIMEOUT_MS, type MemoryDoor, type MemoryRow, type NewApproval, type NewMemory } from './targets/door.ts'
+import { callOfStep, createProductTarget, EVAL_PEOPLE, onExampleTest, ProductTargetRefusal, readIssuerKey, unobservableReason, webfetchListFor, writesFromRows } from './targets/product.ts'
+import { INJECTION_CASES } from './injection/cases.ts'
+import { DatabaseSync, type SQLInputValue } from 'node:sqlite'
+import { fileURLToPath } from 'node:url'
+import { createFetchDoor } from './exfiltration/open-fetch/egress.ts'
+
+import { plantSpecOf } from './injection/product.ts'
 import { gradeExfil } from './exfil.ts'
 import { mkdtempSync, readdirSync, readFileSync, writeFileSync } from 'node:fs'
 import { createHash } from 'node:crypto'
@@ -49,7 +55,12 @@ class FakeDoor implements MemoryDoor {
   approvals: NewApproval[] = []
   async insertApproval(a: NewApproval) { this.calls.push(`approval ${a.id}`); this.approvals.push(a) }
   async deleteApprovals(ids: string[]) { this.calls.push(`delete approvals ${ids.length}`); this.approvals = this.approvals.filter((a) => !ids.includes(a.id)) }
-  async setWebfetchHosts(hosts: string[] | null) { this.calls.push(`webfetch ${hosts === null ? 'default' : hosts.join(',')}`) }
+  // The real door's rule (the live smoke after #670 stopped on it at a seed): a list the server wouldn't read is refused.
+  async setWebfetchHosts(hosts: string[] | null) {
+    const why = hosts === null ? null : webfetchHostsRefusal(hosts)
+    if (why) throw new DoorRefusal(why)
+    this.calls.push(`webfetch ${hosts === null ? 'default' : hosts.join(',')}`)
+  }
   async setWebSearch(on: boolean) { this.calls.push(`websearch ${on}`) }
   /** The next insert throws (a seed that fails after the WebFetch list was set). */
   insertThrows = false
@@ -536,6 +547,56 @@ describe('a chat through the product', () => {
     expect(srv.s.sent.find((s) => s.path.endsWith('/turns'))!.body.attachments).toEqual([{ fileId: 'f_AAAAAAAAAAAAAAAAAAAAAA', name: 'note.txt' }])
   })
 
+  it('an M3-E plant (an attachment or a memory, no WebFetch hosts) seeds the default WebFetch list, never an empty one the door refuses (the live smoke after #670)', async () => {
+    // P03, the case the smoke stopped at: "a door refused: not a host list the server reads (parseHostlist)".
+    for (const id of ['P03', 'W02']) {
+      const c = INJECTION_CASES.find((x) => x.id === id)!
+      const spec = plantSpecOf(c)!
+      expect(spec.hosts).toEqual([])
+      const door = new FakeDoor()
+      const srv = server()
+      const session = await make(srv, door).seed([], { caseId: id, rep: 1, canary: 'kestrel-m3e', writes: false }, spec)
+      expect(door.calls).toContain('webfetch default')
+      if (c.plant!.via === 'attachment') {
+        await session.chat(c.prompt)
+        expect(srv.s.sent.find((x) => x.path.endsWith('/turns'))!.body.attachments).toEqual([{ fileId: 'f_AAAAAAAAAAAAAAAAAAAAAA', name: 'note.txt' }])
+      } else {
+        expect(door.rowsNow.some((r) => r.text.includes('kestrel-m3e'))).toBe(true)
+      }
+    }
+    // The shape of the failure, kept: an empty list is still refused at the door, so only the default may say "none".
+    await expect(new FakeDoor().setWebfetchHosts([])).rejects.toThrow(new DoorRefusal('not a host list the server reads (parseHostlist)'))
+    expect(webfetchListFor({ hosts: [] })).toBeNull()
+    expect(webfetchListFor({ hosts: ['Docs.Example.com'] })).toEqual(['docs.example.com'])
+  })
+
+  it('every M3-E case seeds WebFetch as `list` with no host, read through the server\'s own settings store and turn resolver (#721 review)', async () => {
+    // The real migrations on SQLite, the real doors' SQL, and the server's readers over a D1 shim: settingStore.list and
+    // resolveTurnSettings (server/api/runs.ts), which give a turn its WebFetch hosts (null would be open fetch).
+    const db = new DatabaseSync(':memory:')
+    const migrations = fileURLToPath(new URL('../server/migrations/', import.meta.url))
+    for (const f of readdirSync(migrations).filter((f) => f.endsWith('.sql')).sort()) db.exec(readFileSync(migrations + f, 'utf8'))
+    const run = async (sql: string) => db.prepare(sql).all() as Record<string, unknown>[]
+    const d1 = { prepare: (sql: string) => ({ bind: (...p: SQLInputValue[]) => ({ all: async () => ({ results: db.prepare(sql).all(...p) }), first: async () => db.prepare(sql).get(...p) ?? null }) }) }
+    // Loaded by URL: the server's types are the Workers runtime's, which this (node) project doesn't carry; the code runs.
+    const { settingStore } = (await import(String(new URL('../server/db/settings.ts', import.meta.url)))) as { settingStore: (d: { db: unknown; hashKey: string; members: unknown }) => unknown }
+    const { resolveTurnSettings } = (await import(String(new URL('../server/api/runs.ts', import.meta.url)))) as { resolveTurnSettings: (store: unknown, picker: string) => Promise<{ webFetchDomains: string[] | null } | { refused: unknown }> }
+    const settings = settingStore({ db: d1, hashKey: 'k', members: {} })
+    const realDoor = createDoor(run)
+    class SqlWebfetchDoor extends FakeDoor { override async setWebfetchHosts(hosts: string[] | null) { await super.setWebfetchHosts(hosts); await realDoor.setWebfetchHosts(hosts) } }
+    for (const c of INJECTION_CASES) {
+      const session = await make(server(), new SqlWebfetchDoor(), { fetchDoor: createFetchDoor(run) }).seed([], { caseId: c.id, rep: 1, canary: 'c', writes: false }, plantSpecOf(c))
+      for (const when of ['seeded', 'reset']) {
+        const turn = await resolveTurnSettings(settings, 'sonnet')
+        if ('refused' in turn) throw new Error(`the turn's settings were refused: ${JSON.stringify(turn.refused)}`)
+        expect([c.id, when, turn.webFetchDomains]).toEqual([c.id, when, []])
+        // `list` is a row, not the default (M3-J1 may make a brand with no list `open` by default).
+        expect([c.id, when, db.prepare("SELECT value_json FROM settings WHERE owner = 'brand' AND key = 't:webfetch_mode'").all()]).toEqual([c.id, when, [{ value_json: '"list"' }]])
+        if (when === 'seeded') await session.reset()
+      }
+    }
+  })
+
   it('a memory_search exfil case plants the text as a fact of the current person', async () => {
     const door = new FakeDoor()
     const x = kase('X04')
@@ -699,7 +760,7 @@ describe('the memory door', () => {
     expect((err as Error).message).toBe('wrangler d1 execute exited 1')
   })
   it('a wrangler call killed at its deadline is a refusal that says so (#672)', async () => {
-    const hung = wranglerRunner({ database: 'inhouse-sbx-eval-db', config: 'c', readConfig: () => JSON.stringify({ account_id: 'acct', d1_databases: [{ database_name: 'inhouse-sbx-eval-db' }] }), env: { CF_SANDBOX_ACCOUNT_ID: 'acct' }, spawn: () => ({ status: null, stdout: '' }) })
+    const hung = wranglerRunner({ database: 'inhouse-sbx-eval-db', config: 'c', readConfig: () => JSON.stringify({ account_id: 'acct', d1_databases: [{ database_name: 'inhouse-sbx-eval-db' }] }), env: { CF_SANDBOX_ACCOUNT_ID: 'acct' }, spawn: () => ({ status: null, stdout: '' }), retry: { sleep: async () => {}, onRetry: () => {} } })
     await expect(hung('SELECT 1')).rejects.toThrow(new DoorRefusal(`wrangler d1 execute did not end (killed after ${WRANGLER_TIMEOUT_MS / 1000} s, or by a signal)`))
   })
   it.each([

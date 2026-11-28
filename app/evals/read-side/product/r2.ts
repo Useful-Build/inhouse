@@ -9,6 +9,7 @@
 // are refused; each request and body read has a deadline; list pages, keys and bytes are capped; every listed key must be the
 // session store's exact shape (transcriptKey) under a chat id of the eval chats' shape, or nothing is read.
 import { DoorRefusal } from '../../targets/door.ts'
+import { TransientDoorError, withRetries, type RetryOptions } from '../../targets/retry.ts'
 import { EVAL_BUCKET, R2_API_BASE, TRANSCRIPT_CAPS, transcriptKey } from '../../exfiltration/store-data/transcripts.ts'
 
 /** The chats the product target makes: `eval-` and 24 hex (targets/product.ts rid). */
@@ -30,6 +31,19 @@ export interface SessionReaderOptions {
   proofPr?: number
   fetch?: typeof fetch
   caps?: Partial<typeof TRANSCRIPT_CAPS>
+  /** Each GET's retries on a transient failure (#691): where each is reported, the backoff (tests). */
+  retry?: RetryOptions
+}
+
+/**
+ * Why a failed R2 GET is clearly transient, as a fixed label, or null (#691): a network failure, a timeout, a 5xx or a 429.
+ * A 4xx (no R2 read, no bucket), a cap or a bad answer is never transient: the run stops at once.
+ */
+export function r2Transient(e: unknown): string | null {
+  if (e instanceof DoorRefusal) return /timed out after/.test(e.message) ? 'a timeout' : null
+  if (e instanceof Error && (e.name === 'TimeoutError' || e.name === 'AbortError')) return 'a timeout'
+  if (e instanceof TypeError) return 'a network error' // undici's "fetch failed" (a reset, a refused connection, DNS)
+  return null
 }
 
 export function createSessionReader(o: SessionReaderOptions): SessionReader {
@@ -51,8 +65,25 @@ export function createSessionReader(o: SessionReaderOptions): SessionReader {
       throw new DoorRefusal(scrub(e instanceof Error ? e.message : String(e)))
     }
   }
-  /** One GET within the deadline, the body read whole and capped. */
+  /**
+   * One GET, retried on a transient failure (#691): a network error or a timeout while tries are left, and a 5xx or 429
+   * answer (on the last try that answer is returned, so its caller names the status as before).
+   */
   async function get(url: string, what: string): Promise<{ status: number; bytes: Uint8Array }> {
+    return withRetries(`an R2 ${what.startsWith('object ') ? 'get' : what}`, async (last) => {
+      let r: { status: number; bytes: Uint8Array }
+      try {
+        r = await getOnce(url, what)
+      } catch (e) {
+        const why = r2Transient(e)
+        throw why ? new TransientDoorError(why, e instanceof Error ? e : new Error(String(e))) : e
+      }
+      if (!last && (r.status >= 500 || r.status === 429)) throw new TransientDoorError(r.status === 429 ? 'a 429 from R2' : 'a 5xx from R2', new DoorRefusal(`R2 ${what} answered ${r.status}`))
+      return r
+    }, o.retry)
+  }
+  /** One GET within the deadline, the body read whole and capped. */
+  async function getOnce(url: string, what: string): Promise<{ status: number; bytes: Uint8Array }> {
     const signal = AbortSignal.timeout(caps.timeoutMs)
     let timer: ReturnType<typeof setTimeout> | undefined
     const late = new Promise<never>((_, reject) => { timer = setTimeout(() => reject(new DoorRefusal(`R2 ${what} timed out after ${caps.timeoutMs} ms`)), caps.timeoutMs) })

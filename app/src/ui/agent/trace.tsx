@@ -33,9 +33,17 @@ export {
  * scroll-into-view (a keyboard Tab, a test's click) could scroll the rows up inside the clip, and then the browser pulls
  * them back down as the box grows, so a button there moves under the pointer between press and release (#607). A `clip`
  * box can't be scrolled, so every row stays where it is laid out and only appears once the box reaches it.
+ *
+ * Its height animation also fills backwards (`animation-fill-mode: backwards`). The animation runs on the main thread and
+ * starts in the same frame as the trigger's chevron, which the compositor rotates, so Chrome holds it at its first frame
+ * and then gives it the compositor's start time. That time can land just after the clock of the frame that applies it,
+ * and for that frame the animation is in its "before" phase: with no fill it has no effect at all, so the list was drawn
+ * at its full height (Details there to press) and the next frame collapsed it and opened it from zero under the pointer
+ * (#607). A busy page (an answer's markdown landing) stretches that one frame. Filled backwards, the before phase holds
+ * the first keyframe, height 0, so the list only ever grows.
  */
 export function TraceCollapsible(props: ComponentProps<typeof BaseTraceCollapsible>) {
-  return <BaseTraceCollapsible {...props} className={cn('*:data-[slot=trace-collapsible-content]:overflow-clip', props.className)} />
+  return <BaseTraceCollapsible {...props} className={cn('*:data-[slot=trace-collapsible-content]:overflow-clip *:data-[slot=trace-collapsible-content]:fill-mode-backwards', props.className)} />
 }
 
 /** A tool logo tile when `tool` is connected, or a round neutral tile with an icon when it isn't. */
