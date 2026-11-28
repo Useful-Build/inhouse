@@ -1,5 +1,6 @@
 // TEMPORARY diagnostic for #607 (never merged): what each pointer event hits around the Details click, when the steps
 // list's open animation starts, and when the answers' markdown renderer replaces the plain fallback.
+import { Worker } from 'node:worker_threads'
 import { fxFor, test } from './support/fx.js'
 
 test.afterEach(async ({ page }) => { await page.clock.resume() })
@@ -45,10 +46,12 @@ for (const copy of [1, 2, 3, 4, 5]) test(`diag: Details click ${copy}`, async ({
         if (n instanceof HTMLElement && n.closest('[data-answer]') && n.tagName === 'DIV' && n.querySelector(':scope > p')) log.push({ t: now(), type: 'markdown-commit', h: h() })
         if (n instanceof HTMLElement && n.getAttribute('role') === 'dialog') log.push({ t: now(), type: 'dialog-added' })
       }
-      for (const r of records) if (r.type === 'attributes' && r.target === content()) log.push({ t: now(), type: `attr ${r.attributeName}`, v: (r.target as HTMLElement).getAttribute(r.attributeName!)?.slice(0, 80), h: h() })
+      for (const r of records) if (r.type === 'attributes' && r.target === content()) log.push({ t: now(), type: `attr ${r.attributeName}`, v: (r.target as HTMLElement).getAttribute(r.attributeName!)?.slice(0, 240), h: h() })
     }).observe(document, { subtree: true, childList: true, attributes: true, attributeFilter: ['style', 'data-state', 'hidden'] })
   })
   await fxFor(page, undefined).seed({ stage: 'Act', scenario: 'Normal', demo: { ambient: 'Always' } })
+  // CPU pressure like a loaded CI shard: busy threads in the test process compete with the browser for the runner's cores.
+  const burners = [0, 1, 2].map(() => new Worker('for(;;){}', { eval: true }))
   await page.goto('/?demo#/chats/stuck')
   const first = page.getByRole('log', { name: 'Conversation' }).locator('[data-answer]').first()
   try {
@@ -58,6 +61,7 @@ for (const copy of [1, 2, 3, 4, 5]) test(`diag: Details click ${copy}`, async ({
     await page.evaluate(() => (window as unknown as { __diag: unknown[] }).__diag.push({ t: Math.round(Number(document.timeline.currentTime)), type: 'details-click-done' }))
     await page.getByRole('dialog', { name: 'What your Inhouse agent did' }).waitFor({ state: 'visible', timeout: 5000 })
   } finally {
+    await Promise.all(burners.map(b => b.terminate()))
     const log = await page.evaluate(() => (window as unknown as { __diag: unknown[] }).__diag)
     const failed = test.info().errors.length > 0 || !(log as { type: string }[]).some(e => e.type === 'dialog-added')
     console.log(failed ? `DIAGFAIL ${test.info().title} ${test.info().repeatEachIndex} ${JSON.stringify(log)}` : `DIAGOK ${JSON.stringify((log as { type: string; t: number; h?: number; target?: string }[]).filter(e => !e.type.startsWith('attr') && e.type !== 'resize' && e.type !== 'scroll').map(e => `${e.type}@${e.t}${e.h !== undefined ? `|h${e.h}` : ''}`))}`)
