@@ -21,13 +21,14 @@ async function noSidewaysScroll(page: Page) {
 
 test('Phone: Today, panel, Approvals and Chats fit 390 px; the drawer closes on navigation', async ({ fx, page }) => {
   await start(page, fx, '#/today')
-  await expect(page.getByRole('heading', { level: 1 })).toContainText('6 things need you')
+  await expect(page.getByRole('heading', { level: 1 })).toContainText('3 left to approve today.')
   await noSidewaysScroll(page)
   await page.screenshot({ path: test.info().outputPath('phone-today.png'), fullPage: true })
 
-  await page.getByRole('article', { name: 'Ridge 30L Pack runs out in 9 days' }).getByRole('button', { name: 'Review' }).click()
+  // A finding's window (#726: the Kestrel reorder is a suggestion now, with no draft).
+  await page.getByRole('article', { name: 'Ridge 30L Pack runs out in 9 days' }).getByRole('button', { name: 'Ridge 30L Pack runs out in 9 days', exact: true }).click()
   const panel = page.getByRole('dialog')
-  await expect(panel.getByRole('button', { name: 'Approve and send to Kestrel' })).toBeVisible()
+  await expect(panel).toContainText('Your Inhouse agent suggests')
   const box = await panel.boundingBox()
   expect(box!.x).toBeGreaterThanOrEqual(0)
   expect(box!.x + box!.width).toBeLessThanOrEqual(390)

@@ -61,7 +61,7 @@ async function escapeTo(page: Page, overlay: Locator, trigger: Locator) {
 }
 
 test('Dark, by keyboard: the palette, Help, the team window, the account menu and notifications open and give focus back', async ({ fx, page }) => {
-  await open(page, fx, '#/today', '6 things need you')
+  await open(page, fx, '#/today', 'Good morning, Sam.')
 
   // Command palette, from the sidebar's Search row: the field has focus, Escape gives it back.
   const search = side(page).getByRole('button', { name: 'Search', exact: true })
@@ -137,7 +137,7 @@ test('Dark, by keyboard: the palette, Help, the team window, the account menu an
 
 test('Dark, by keyboard: the problem panel, the trace window, a file viewer and a confirm question open and give focus back', async ({ fx, page }) => {
   // The review window, from a Today card's Review button: opened with focus on itself.
-  await open(page, fx, '#/today', '6 things need you')
+  await open(page, fx, '#/today', 'Good morning, Sam.')
   const review = page.getByRole('article').filter({ hasText: 'Ridge 30L Pack runs out in 9 days' }).getByRole('button', { name: 'Review' })
   await press(review)
   const panel = page.getByRole('dialog', { name: 'Ridge 30L Pack runs out in 9 days' })
@@ -232,7 +232,7 @@ test('Skip to content is the first Tab stop and moves focus into main; the top b
 test('Dark, by keyboard: F6 reaches the newest toast and goes back, traps nothing, does nothing over a modal, and the toast still times out', async ({ fx, page }) => {
   // Time runs on the page clock, held while the toasts are made, so no toast times out on a slow run.
   await page.clock.install()
-  await open(page, fx, '#/today', '6 things need you')
+  await open(page, fx, '#/today', 'Good morning, Sam.')
   const help = page.getByRole('dialog', { name: 'Help and guides' })
   async function openHelp() {
     await press(account(page))
@@ -320,7 +320,7 @@ test('Skip to content works with the sidebar collapsed, and its link opened on i
   const tab = await page.context().newPage()
   await tab.clock.install()
   await tab.goto('/?demo#main')
-  await expect(tab.getByRole('heading', { level: 1 })).toContainText('6 things need you')
+  await expect(tab.getByRole('heading', { level: 1 })).toContainText('3 left to approve today.')
   // A route notice would show just after the page draws: give it the time before checking there is none.
   await tab.clock.runFor(1000)
   await expect(tab.locator('[data-toast]')).toHaveCount(0)

@@ -1,6 +1,6 @@
-import { amountOf, channelFrom, draftView, flags, lowRiskIds, memberFor, pendingIds, problemById, riskLabel, showDraftsSection, userName, visibleProblems } from '../state/derive'
+import { amountOf, draftView, flags, lowRiskIds, memberFor, pendingIds, problemById, riskLabel, showDraftsSection, userName } from '../state/derive'
 import { isUrgent } from '../ui/severity'
-import { fmtMoney, fmtTime, hasAmount } from '../lib/format'
+import { fmtTime } from '../lib/format'
 import { display } from '../state/display'
 import { Skeleton } from '@/components/ui/skeleton'
 import { DropdownMenu, DropdownMenuContent, DropdownMenuTrigger } from '@/components/ui/dropdown-menu'
@@ -10,7 +10,7 @@ import { Card } from '@/components/ui/card'
 import { Badge } from '@/components/ui/badge'
 import { cn } from '@/lib/utils'
 import { escapeClosesMenuOnly } from '../ui/dialogs'
-import { Avatar, Button, DetailList, EmptyState, Icon, IconTile, LogoTile, MenuItem, Page, PageHeader, SectionHeader } from '../ui'
+import { Avatar, Button, DetailList, EmptyState, Icon, LogoTile, MenuItem, Page, PageHeader, SectionHeader } from '../ui'
 import { Select, TAP } from '../ui/fields'
 import { AgentAsks } from './approvals/AgentAsks'
 import { useAsksCount } from '../shell/asks-count'
@@ -22,17 +22,13 @@ export function Approvals() {
   const approve = useUi(s => s.approve)
   const unapprove = useUi(s => s.unapprove)
   const openProblem = useUi(s => s.openProblem)
-  const openTeam = useUi(s => s.openTeam)
   const { approveMany, setAside, patch } = useUi.getState()
   const phone = useUi(s => s.phone)
   const sort = useUi(s => s.approvalSort)
   const tap = phone ? TAP : undefined
-  const { S, agent } = ctx
+  const { agent } = ctx
   // The agent's actions and questions waiting on this person: with none of its drafts, they're all the page has (M2-I).
   const asks = useAsksCount()
-  // The copy describes Act, so it names the channel Act connects.
-  const channel = channelFrom(ctx.data, 1)
-  const where = channel ? `here or in ${channel.name}` : 'here'
   // Sorted on when the draft was made, never on the shown "6:02 AM". Drafts made at the same moment keep the agent's
   // order, whichever way time sorts.
   const draftedAt = (id: string) => problemById(ctx.data, id).draftedAt.ms
@@ -49,9 +45,6 @@ export function Approvals() {
     patch({ editing: id })
   }
   const { noData, isFirst, isLoading } = flags(ctx)
-  // Watch lists what Today shows: problems a person set aside aren't counted.
-  const watchList = visibleProblems(ctx)
-  const nProblems = watchList.length
   const approvedList = ctx.data.problems.filter(p => agent.approved[p.id]).map(p => draftView(ctx, p.id))
 
   const approveAll = lowRisk.length >= 2 && (
@@ -73,26 +66,6 @@ export function Approvals() {
       <PageHeader title="Approvals" description="Work your Inhouse agent drafted. Nothing goes out until someone approves it." />
       {/* Stage 1 M2-H: its questions and actions for this person (the demo's are its sample cards). */}
       <AgentAsks />
-
-      {S === 0 && (
-        <div data-watch-block className="mt-7 flex items-start gap-4 rounded-2xl border border-dashed border-border-strong p-7 text-foreground-3">
-          <IconTile icon="task_alt" iconSize={20} size="lg" tone="outline" />
-          <div className="min-w-0 flex-1">
-            <div className="text-md font-semibold text-foreground">{noData || nProblems === 0 ? 'In Act, drafted fixes would be waiting here' : `In Act, today's ${nProblems} ${nProblems === 1 ? 'fix' : 'fixes'} would be waiting here`}</div>
-            <div className="mt-1 max-w-140 text-base leading-prose">{noData || nProblems === 0 ? `In Act, your Inhouse agent drafts a fix for each problem it finds. Nothing goes out until someone approves it, ${where}.` : `Your Inhouse agent found these problems this morning. In Act it also drafts the fix for each one, and nothing goes out until someone approves it, ${where}.`}</div>
-            {!noData && nProblems > 0 && <ul className="m-0 mt-3.5 list-none border-t border-border p-0">
-              {watchList.map(p => (
-                <li key={p.id} className="flex min-h-9.75 items-center gap-2.5 border-b border-border text-sm">
-                  <Icon name="edit_note" size={16} />
-                  <span className="min-w-0 flex-1 text-foreground-2">{p.draft.title}</span>
-                  {hasAmount(p.cost) && <span className="whitespace-nowrap text-muted-foreground tabular-nums">{fmtMoney(p.cost, display())}</span>}
-                </li>
-              ))}
-            </ul>}
-            <Button variant="link" className="mt-3.5" onClick={() => openTeam('change', "We'd like to talk about moving to Act.")}>Talk to your Inhouse team about Act →</Button>
-          </div>
-        </div>
-      )}
 
       {showDraftsSection(ctx, asks) && (
         <>

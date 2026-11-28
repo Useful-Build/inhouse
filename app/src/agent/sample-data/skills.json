@@ -212,7 +212,7 @@
     },
     {
       "n": "Oversell guard",
-      "d": "Pauses a variant when orders pass the stock on hand.",
+      "d": "Flags a variant when orders pass the stock on hand.",
       "icon": "block",
       "need": 2,
       "by": "Inhouse team",

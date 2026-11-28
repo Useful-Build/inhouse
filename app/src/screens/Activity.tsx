@@ -28,7 +28,6 @@ type Day = { label: string; rows: ActivityRow[] }
 export function Activity() {
   useTraces()
   const ctx = useCtx()
-  const { S } = ctx
   const filter = useUi(s => s.actFilter)
   // The open line's sheet. Kept in the page, so coming back to Activity doesn't open the last line again.
   const [open, setOpen] = useState<string | null>(null)
@@ -48,8 +47,8 @@ export function Activity() {
   const openRow = open ? all.find(r => r.key === open) : undefined
   const empty = {
     all: ctx.data.status === 'loading' ? 'Still reading your tools. What your Inhouse agent does shows here.' : 'Nothing yet. Lines show here once your Inhouse agent starts working.',
-    change: S === 0 ? 'Nothing was changed. In Watch, your Inhouse agent only reads.' : 'Nothing has been changed yet.',
-    needs: S === 0 ? 'Nothing waits for approval in Watch. Today lists what needs you.' : 'Nothing needs you right now.',
+    change: 'Nothing has been changed yet.',
+    needs: 'Nothing needs you right now.',
   }[filter]
 
   return (

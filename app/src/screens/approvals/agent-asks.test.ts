@@ -269,6 +269,13 @@ describe('Activity: Stop allowing this', () => {
     await press('Remove', document.body.querySelector('[role="alertdialog"], [role="dialog"]') ?? document.body)
     expect(fake.removePermission).toHaveBeenCalledWith('pg_DDDDDDDDDDDDDDDDDDDDDD', 2)
   })
+  test("a member's action an admin sees that a person answered: says whose, and offers no permission to stop (issue 727)", async () => {
+    fake.actions.mockResolvedValue([card({ state: 'denied', askedBy: 'm_Dana', can: NONE })])
+    fake.permissions.mockResolvedValue([permission({ id: 'pg_DDDDDDDDDDDDDDDDDDDDDD', rev: 2, holder: { kind: 'member', memberId: 'm_Dana' } })])
+    await show(createElement(ActionRows, { needle: '' }))
+    expect(host.textContent).toContain('Add a tag to order 9001. Dana Kim said no. Nothing went out.')
+    expect(buttons()).toEqual([])
+  })
   test("a read that fails shows nothing, and says so in the console", async () => {
     const warn = vi.spyOn(console, 'warn').mockImplementation(() => undefined)
     fake.actions.mockRejectedValue(new AgentError('unavailable', 'x')); fake.permissions.mockRejectedValue(new AgentError('unavailable', 'x'))

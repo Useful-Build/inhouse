@@ -17,7 +17,8 @@ const card = (page: Page, title: string) => page.getByRole('article').filter({ h
 const toasts = (page: Page) => page.locator('[data-toast-stack] [data-toast]')
 const toast = (page: Page, text: string | RegExp) => toasts(page).filter({ hasText: text })
 const HELD = 'Approved. It goes out in 10 seconds.'
-const PO = 'PO-1187 from Kestrel is 6 days late'
+// The payout's post to #ops-alerts in Slack (#726: the PO-1187 chase email these used is a finding now, with no draft).
+const PAYOUT = 'Amazon paid out $1,240 less than expected'
 const STUCK = 'Order #4821 is stuck for 4 days'
 const approveOnCard = (page: Page, title: string) => card(page, title).getByRole('button', { name: /^Approve/ }).click()
 
@@ -35,7 +36,7 @@ async function deleteRoutine(page: Page, name: string) {
 
 test('Toasts: two approvals five seconds apart share one toast, and its one Undo takes back both', async ({ fx, page }) => {
   await start(page, fx)
-  await approveOnCard(page, PO)
+  await approveOnCard(page, PAYOUT)
   await expect(toast(page, HELD)).toHaveCount(1)
   await page.clock.runFor(5000)
   await approveOnCard(page, STUCK)
@@ -48,19 +49,19 @@ test('Toasts: two approvals five seconds apart share one toast, and its one Undo
   await toasts(page).getByRole('button', { name: 'Undo', exact: true }).click()
   await expect(toasts(page)).toHaveCount(0)
   await expect(card(page, STUCK).getByRole('button', { name: /^Approve/ })).toBeVisible()
-  await expect(card(page, PO).getByRole('button', { name: /^Approve/ })).toBeVisible()
+  await expect(card(page, PAYOUT).getByRole('button', { name: /^Approve/ })).toBeVisible()
 
   // Nothing went out.
   await page.clock.runFor(11_000)
   await expect(toast(page, /sent/i)).toHaveCount(0)
-  await expect(card(page, PO).getByRole('button', { name: /^Approve/ })).toBeVisible()
+  await expect(card(page, PAYOUT).getByRole('button', { name: /^Approve/ })).toBeVisible()
   await expect(card(page, STUCK).getByRole('button', { name: /^Approve/ })).toBeVisible()
   await shot(page, 'toasts-two-approvals-undone')
 })
 
 test("Toasts: the first approval's sent notice shows on its own; the shared toast keeps its Undo for the second until it goes out", async ({ fx, page }) => {
   await start(page, fx)
-  await approveOnCard(page, PO)
+  await approveOnCard(page, PAYOUT)
   await page.clock.runFor(5000)
   await approveOnCard(page, STUCK)
   const shared = toast(page, 'Approved 2 drafts.')
@@ -68,7 +69,7 @@ test("Toasts: the first approval's sent notice shows on its own; the shared toas
 
   // 10 s after the first approval it goes out: its notice shows, and the shared toast stays (same toast) for the second.
   await page.clock.runFor(5500)
-  await expect(toast(page, 'Chase sent to Mei at Kestrel')).toBeVisible()
+  await expect(toast(page, 'Posted to #ops-alerts for Dana')).toBeVisible()
   await expect(shared).toContainText('1 goes out in 10 seconds.')
   await expect(shared.getByRole('button', { name: 'Undo', exact: true })).toBeVisible()
   await shot(page, 'toasts-sent-notice-keeps-other-undo')
@@ -132,7 +133,7 @@ test('Toasts: delete two routines and undo both; a notice never pushes out an Un
 test('Toasts: a held approval is never pushed out, not even by four Undo toasts after it', async ({ fx, page }) => {
   await start(page, fx)
   await hold(page)
-  await approveOnCard(page, PO)
+  await approveOnCard(page, PAYOUT)
   await expect(toast(page, HELD)).toHaveCount(1)
   // Four snoozes, each with Undo, after the held approval: the fifth toast pushes out the oldest snooze, never the hold.
   for (const title of [STUCK, 'Ridge 30L Pack runs out in 9 days', 'Trail Shell Jacket', 'Amazon paid out']) {
@@ -151,7 +152,7 @@ test('Toasts: a held approval is never pushed out, not even by four Undo toasts 
 test('Toasts: after a keyboard Undo or Dismiss, focus goes to the next toast, then to the page', async ({ fx, page }) => {
   await start(page, fx)
   await hold(page)
-  for (const title of [PO, STUCK]) {
+  for (const title of [PAYOUT, STUCK]) {
     await card(page, title).getByRole('button', { name: 'More' }).click()
     await page.getByRole('menuitem', { name: 'Snooze until tomorrow' }).click()
     await expect(page.getByRole('menu')).toHaveCount(0)
@@ -176,7 +177,7 @@ test('Toasts: after a keyboard Undo or Dismiss, focus goes to the next toast, th
 
 test('Toasts: hover pauses the countdown, leaving resumes it, and the close button dismisses', async ({ fx, page }) => {
   await start(page, fx)
-  await card(page, PO).getByRole('button', { name: 'More' }).click()
+  await card(page, PAYOUT).getByRole('button', { name: 'More' }).click()
   await page.getByRole('menuitem', { name: 'Snooze until tomorrow' }).click()
   const snoozed = toast(page, 'Snoozed until tomorrow')
   await expect(snoozed).toBeVisible()
@@ -208,7 +209,7 @@ test('Toasts: hover pauses the countdown, leaving resumes it, and the close butt
 
 test('Toasts: when the focused toast leaves on its own, focus goes to the newest toast, not the page', async ({ fx, page }) => {
   await start(page, fx)
-  await approveOnCard(page, PO)
+  await approveOnCard(page, PAYOUT)
   const held = toast(page, HELD)
   await expect(held).toHaveCount(1)
   await page.keyboard.press('F6')
@@ -216,7 +217,7 @@ test('Toasts: when the focused toast leaves on its own, focus goes to the newest
   // The draft goes out 10 s later: the held toast leaves and focus moves to the sent notice that took its place.
   await page.clock.runFor(10_500)
   await expect(held).toHaveCount(0)
-  await expect(toast(page, 'Chase sent to Mei at Kestrel').getByRole('button', { name: 'Dismiss', exact: true })).toBeFocused()
+  await expect(toast(page, 'Posted to #ops-alerts for Dana').getByRole('button', { name: 'Dismiss', exact: true })).toBeFocused()
   await shot(page, 'toasts-focus-follows-sent-notice')
 })
 

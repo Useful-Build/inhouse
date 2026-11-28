@@ -114,7 +114,7 @@
     }
   ],
   "resolved": { "sent": "Sent.", "failed": "It didn’t go out." },
-  "lapsed": { "paused": "The agent was paused, so this needs your OK again.", "permission_removed": "The permission was removed, so this needs your OK again." },
+  "lapsed": { "paused": "The agent was paused, so this needs your OK again.", "permission_removed": "The permission was removed, so this needs your OK again.", "channel_not_listed": "The channel isn’t listed any more, so this needs your OK again." },
   "permissions": [
     { "id": "pg_demoAddStock0000000000", "operation": "shopify.inventory.restock", "holder": "sam", "grantedBy": "sam", "grantedAt": "-6d 10:20" },
     { "id": "pg_demoDanaOpsAlerts00000", "operation": "slack.channel.post", "holder": "dana", "grantedBy": "dana", "grantedAt": "-4d 09:15" }

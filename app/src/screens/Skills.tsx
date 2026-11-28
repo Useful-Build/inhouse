@@ -77,7 +77,7 @@ export function Skills() {
               <div className="min-w-0 flex-1">
                 <div className={`flex items-center gap-2 text-md font-strong ${locked ? 'text-foreground-3' : ''}`}>
                   {/* The name opens the skill's page; its tap area covers the whole row. */}
-                  <button type="button" onClick={() => openSkill(slugs.get(s)!)} className="min-w-0 text-left after:absolute after:inset-0 after:rounded-xl">{s.n}</button>
+                  <button type="button" data-skill-open onClick={() => openSkill(slugs.get(s)!)} className="min-w-0 text-left after:absolute after:inset-0 after:rounded-xl">{s.n}</button>
                   {off && <Badge variant="muted">Off</Badge>}
                 </div>
                 <div className="text-sm text-pretty text-muted-foreground">{keepUnitsTogether(s.d)}</div>

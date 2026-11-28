@@ -23,7 +23,7 @@ test('1440: no card on Today or Approvals cuts any text', async ({ page }) => {
 
 test('A draft with no text: Edit opens the panel on a note field, the note rides through approve and Undo', async ({ page }) => {
   await start(page, '#/approvals')
-  await expect(waiting(page)).toHaveText(/·\s6$/)
+  await expect(waiting(page)).toHaveText(/·\s3$/)
   // The restock has lines but no text of its own; Edit is in the card's "···" menu and always opens the panel.
   const card = draft(page, RETURNS)
   await expect(card.getByRole('button', { name: 'Approve and restock' })).toBeVisible()
@@ -43,7 +43,7 @@ test('A draft with no text: Edit opens the panel on a note field, the note rides
   const title = await panel.getByRole('heading', { name: '11 returns are not restocked' }).boundingBox()
   expect(done, 'Done is in the draft').not.toBeNull()
   expect(close!.y + close!.height, 'Close sits above the title').toBeLessThanOrEqual(title!.y)
-  await expect(panel.getByText(/^\d of 6$/)).toBeVisible()
+  await expect(panel.getByText(/^\d of 3$/)).toBeVisible()
   // The footer holds two buttons on one row, the main action then More (Don't send is inside More), inside the panel's box.
   const actions = await Promise.all(['More', 'Approve and restock'].map(n => panel.getByRole('button', { name: n, exact: true }).boundingBox()))
   const box = await panel.boundingBox()
@@ -58,31 +58,30 @@ test('A draft with no text: Edit opens the panel on a note field, the note rides
   await expect(panel.getByRole('heading', { level: 2 })).toBeVisible()
   await page.keyboard.press('Escape')
   await expect(panel).toHaveCount(0)
-  await expect(waiting(page)).toHaveText(/·\s5$/)
+  await expect(waiting(page)).toHaveText(/·\s2$/)
   const approved = page.getByRole('region', { name: 'Approved today' })
   await expect(approved).toContainText('11 units restocked on Shopify')
 
   // Undo brings the draft back with the note still on it.
   await approved.getByRole('button', { name: 'Undo', exact: true }).click()
-  await expect(waiting(page)).toHaveText(/·\s6$/)
+  await expect(waiting(page)).toHaveText(/·\s3$/)
   await expect(draft(page, RETURNS)).toContainText('Olive units first, the rest after the count.')
   await expect(draft(page, RETURNS)).toContainText('Your note')
 })
 
-test('Approve all low-risk approves three drafts, and one Undo in the toast takes them all back', async ({ page }) => {
+// Every waiting draft is low risk since #726 (the two posts to #ops-alerts and the restock): with all three approved
+// and only the agent's own cards waiting, the drafts section steps aside, and one Undo brings all three back.
+test('Approve all low-risk approves the three drafts, and one Undo in the toast takes them all back', async ({ page }) => {
   await start(page, '#/approvals')
-  await expect(waiting(page)).toHaveText(/·\s6$/)
-  await page.getByRole('button', { name: 'Approve all low-risk' }).click()
   await expect(waiting(page)).toHaveText(/·\s3$/)
-  const approved = page.getByRole('region', { name: 'Approved today' })
-  await expect(approved.getByRole('button', { name: 'Undo', exact: true })).toHaveCount(3)
+  await page.getByRole('button', { name: 'Approve all low-risk' }).click()
+  await expect(toast(page, 'Approved 3 drafts')).toBeVisible()
   await expect(page.getByRole('button', { name: 'Approve all low-risk' })).toHaveCount(0)
-  // The sensitive three stay: each one's primary action is Review.
-  await expect(page.getByRole('main').getByRole('button', { name: 'Review draft', exact: true })).toHaveCount(3)
+  await expect(page.getByRole('main').getByRole('button', { name: 'Review draft', exact: true })).toHaveCount(0)
   await shot(page, 'approved-all-low-risk-1440')
   await toast(page, 'Approved 3 drafts').getByRole('button', { name: 'Undo', exact: true }).click()
-  await expect(waiting(page)).toHaveText(/·\s6$/)
-  await expect(approved).toHaveCount(0)
+  await expect(waiting(page)).toHaveText(/·\s3$/)
+  await expect(page.getByRole('region', { name: 'Approved today' })).toHaveCount(0)
   await expect(page.getByRole('button', { name: 'Approve all low-risk' })).toBeVisible()
 })
 

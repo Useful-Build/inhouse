@@ -97,7 +97,8 @@ describe('item 7: what the agent did, its note and Activity\'s "by" are sentence
     const shown = Object.fromEntries(data.problems.filter(p => p.done).map(p => [p.id, F.fmtProse(p.done!, d)]))
     expect(shown).toEqual(BEFORE)
     const ctx = { S: 2 as const, scenario: 'Normal' as const, agent: agent.getSnapshot(), data }
-    expect(draftView(ctx, 'oversell').doneNote).toBe('Your Inhouse agent already paused the variant at 6:04\u00a0AM, inside your Run limits. The customer emails wait for a person.')
+    // The oversell is a finding since #726 (the agent never pauses a variant), so no draft carries a Run note any more.
+    for (const p of data.problems) expect(draftView(ctx, p.id).doneNote, p.id).toBeNull()
     expect(handled(ctx).summary).toContain('Paused the variant')
     const rows = activityRows(ctx)
     expect(rows.find(r => r.text === 'Paused the variant')?.t).toBe('6:04\u00a0AM')

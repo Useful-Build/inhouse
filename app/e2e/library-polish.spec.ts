@@ -176,7 +176,8 @@ test('The viewer\'s link to a chat, Routines or an approval leaves no dead histo
   await expect(page.getByRole('heading', { level: 1 })).toHaveText('All files')
   await items(page).filter({ hasText: 'PO-1188-ridge-30l-kestrel.pdf' }).first().click()
   await page.getByRole('dialog').getByRole('button', { name: 'Open the approval →' }).click()
-  await expect(page.getByRole('button', { name: 'Approve and send to Kestrel' })).toBeVisible()
+  // A finding's window (#726: the reorder is a suggestion, with no draft).
+  await expect(page.getByRole('dialog')).toContainText('Your Inhouse agent suggests')
   await expect(page.getByRole('dialog', { name: /^File: / })).toHaveCount(0)
   expect(hash(page)).toBe('#/library')
   await page.keyboard.press('Escape')

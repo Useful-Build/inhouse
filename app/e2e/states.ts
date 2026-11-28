@@ -49,7 +49,7 @@ export const STATES: UiState[] = [
   page_('act-first-day', 'First day', '#/today', 'Getting your Inhouse agent ready'),
   page_('act-loading', 'Loading', '#/today', 'Reading your tools'),
   page_('act-cap-today', 'Cap reached', '#/today', 'Spending cap reached.'),
-  page_('act-today', 'Normal', '#/today', '6 things need you. Drafts are ready.', true),
+  page_('act-today', 'Normal', '#/today', '3 left to approve today.', true),
   // Stage 1 M3-U: the agent's action cards (the demo's batch and a teammate's refund) sit above the drafts.
   page_('act-approvals', 'Normal', '#/approvals', 'Actions for you', true),
   page_('act-library', 'Normal', '#/library', 'All files', true),
@@ -92,14 +92,14 @@ export const STATES: UiState[] = [
     },
   },
   {
-    name: 'pop-notifications', scenario: 'Normal', hash: '#/today', ready: '6 things need you', a11y: true,
+    name: 'pop-notifications', scenario: 'Normal', hash: '#/today', ready: 'Good morning, Sam.', a11y: true,
     act: async page => {
       await page.getByRole('button', { name: 'Notifications' }).click()
       await expect(page.getByText('Mark all as read')).toBeVisible()
     },
   },
   {
-    name: 'pop-account', scenario: 'Normal', hash: '#/today', ready: '6 things need you', a11y: true,
+    name: 'pop-account', scenario: 'Normal', hash: '#/today', ready: 'Good morning, Sam.', a11y: true,
     act: async page => {
       await (await sidebar(page)).getByRole('button', { name: 'Settings' }).click()
       await expect(page.getByRole('menu').getByText('sam@northline.example', { exact: true })).toBeVisible()
@@ -107,7 +107,7 @@ export const STATES: UiState[] = [
     },
   },
   {
-    name: 'pop-team-bug', scenario: 'Normal', hash: '#/today', ready: '6 things need you', a11y: true,
+    name: 'pop-team-bug', scenario: 'Normal', hash: '#/today', ready: 'Good morning, Sam.', a11y: true,
     act: async page => {
       // Report a bug left the account menu; the palette keeps it, and the window opens on that type.
       await page.keyboard.press('ControlOrMeta+k')
@@ -116,17 +116,18 @@ export const STATES: UiState[] = [
     },
   },
   {
-    name: 'chat-empty', scenario: 'Normal', hash: '#/today', ready: '6 things need you',
+    name: 'chat-empty', scenario: 'Normal', hash: '#/today', ready: 'Good morning, Sam.',
     act: async page => {
       await (await sidebar(page)).getByRole('button', { name: 'New chat' }).click()
       await expect(page.getByText('What should we look into?')).toBeVisible()
     },
   },
   {
-    name: 'pop-problem-panel', scenario: 'Normal', hash: '#/today', ready: '6 things need you', a11y: true,
+    name: 'pop-problem-panel', scenario: 'Normal', hash: '#/today', ready: 'Good morning, Sam.', a11y: true,
     act: async page => {
-      await page.getByRole('article').filter({ hasText: 'Ridge 30L Pack runs out in 9 days' }).getByRole('button', { name: 'Review' }).click()
-      await expect(page.getByRole('dialog').getByRole('button', { name: /^Approve and send to Kestrel/ })).toContainText('$9,600')
+      // The payout's post to #ops-alerts in Slack (#726: the Kestrel reorder this showed is a finding now).
+      await page.getByRole('article').filter({ hasText: 'Amazon paid out $1,240 less than expected' }).click({ position: { x: 12, y: 12 } })
+      await expect(page.getByRole('dialog').getByRole('button', { name: 'Approve and post' })).toBeVisible()
     },
   },
   {
@@ -163,7 +164,7 @@ export const STATES: UiState[] = [
       }
       // The pointer leaves the last Approve before the clock runs: the list closes up under it, a "sent" notice can rise
       // under it, and a toast under the pointer pauses every countdown (src/shell/Toasts.tsx), so no notice would ever
-      // leave however far the clock ran (run 46020352931: the pointer at 146,688, over "Chase sent to Mei at Kestrel").
+      // leave however far the clock ran (run 46020352931: the pointer at 146,688, over a "sent" notice).
       await pointerAway(page)
       await page.clock.runFor(30_000)
       // Each "sent" notice starts its 4-second countdown in an effect once React has rendered it (src/shell/Toasts.tsx),
@@ -171,7 +172,8 @@ export const STATES: UiState[] = [
       // countdown waits on the paused clock and the notices stay for the shot (run 44956112491). Step on until they've gone.
       await expect.poll(async () => { await page.clock.runFor(1_000); return page.locator('[data-toast]').count() }, { message: 'every toast has left' }).toBe(0)
       await page.evaluate(() => { location.hash = '#/today' })
-      await expect(page.getByText('All 6 approved.')).toBeVisible()
+      // Every draft approved: what's left are the findings, to look at.
+      await expect(page.getByRole('heading', { level: 1 })).toContainText('3 things need you today.')
       // No hover or focus left over from the last Approve click on the card now under the pointer.
       await pointerAway(page)
       await page.evaluate(() => { if (document.activeElement instanceof HTMLElement) document.activeElement.blur() })
@@ -242,7 +244,7 @@ export const STATES: UiState[] = [
   },
   {
     // Help and guides with the first guide open in the accordion.
-    name: 'pop-help-guide', scenario: 'Normal', hash: '#/today', ready: '6 things need you', a11y: true,
+    name: 'pop-help-guide', scenario: 'Normal', hash: '#/today', ready: 'Good morning, Sam.', a11y: true,
     act: async page => {
       await (await sidebar(page)).getByRole('button', { name: 'Settings' }).click()
       await page.getByRole('menuitem', { name: 'Help and guides' }).click()

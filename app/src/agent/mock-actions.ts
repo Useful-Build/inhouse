@@ -40,7 +40,7 @@ const raw = actionsRaw as {
   operations: Record<string, RawOperation>
   singles: RawSingle[]
   resolved: Record<ActionResolution, string>
-  lapsed: { paused: string; permission_removed: string }
+  lapsed: { paused: string; permission_removed: string; channel_not_listed: string }
   permissions: RawPermission[]
 }
 
@@ -64,6 +64,8 @@ export interface MockActionsHost {
   shown(): boolean
   /** Whether the brand has this tool: a brand with no Slack (the demo's brand override) has no Slack card or permission. */
   hasTool(tool: ToolKey): boolean
+  /** The Slack channels the brand lists now (Settings > Slack notices, mock-notify.ts), by name. */
+  listedChannels(): readonly string[]
   /** The signed-in person's member id, and a member id for a sample person. */
   meId: string
   memberId(sampleId: string): string
@@ -336,7 +338,23 @@ export class MockActions {
   permissions(): Permission[] {
     return this.presentGrants().sort((a, b) => b.grantedAt - a.grantedAt).map(permissionOf)
   }
-  private presentGrants(): Grant[] { return this.h.shown() ? this.grants.filter(g => this.h.hasTool(operationOf(g.operation).tool)) : [] }
+  private presentGrants(): Grant[] { return this.h.shown() ? this.grants.filter(g => this.h.hasTool(operationOf(g.operation).tool) && this.listed(g.operation)) : [] }
+  /** Whether an operation's channel, if it posts to one, is listed (#653): a permission for an unlisted one can't stand. */
+  private listed(operation: string): boolean {
+    const op = operationOf(operation)
+    return op.tool !== 'slack' || this.h.listedChannels().includes(op.scope.replace(/^#/, ''))
+  }
+  /**
+   * The channel list changed (#653): a permission to post to a channel no longer listed is revoked, and a post still in
+   * its hold goes back to waiting with the server's words, as the product's unlisting does.
+   */
+  channelsChanged() {
+    this.grants = this.grants.filter(g => this.listed(g.operation))
+    for (const row of this.rows) {
+      this.settled(row)
+      if (row.card.state === 'approved' && row.operation && !this.listed(row.operation)) this.sendBack(row, raw.lapsed.channel_not_listed)
+    }
+  }
   /** Stops one permission at the rev it was read at; a stale rev is a conflict with the permission as it is now. */
   removePermission(id: string, ifRev: number): Permission[] {
     const g = this.presentGrants().find(x => x.id === id)

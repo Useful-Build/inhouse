@@ -95,7 +95,9 @@ describe("the demo agent's channel list", () => {
   it('saves open channels, refuses a shared or non-member one and a stale rev', async () => {
     const start = await agent.listNotifyChannels()
     const saved = await agent.saveNotifyChannels({ channelIds: ['C0DEMO0001', 'C0DEMO0002'], alertsChannelId: 'C0DEMO0001', ifRev: start.rev })
-    expect(saved).toEqual({ rev: start.rev + 1, channels: [{ channelId: 'C0DEMO0001', name: 'ops-alerts', alerts: true }, { channelId: 'C0DEMO0002', name: 'warehouse', alerts: false }], posting: { on: false } })
+    // A fresh demo lists #ops-alerts, with the agent's posts switched on (issue 653).
+    expect(start).toEqual({ rev: 0, channels: [{ channelId: 'C0DEMO0001', name: 'ops-alerts', alerts: false }], posting: { on: true, perDay: 50 } })
+    expect(saved).toEqual({ rev: start.rev + 1, channels: [{ channelId: 'C0DEMO0001', name: 'ops-alerts', alerts: true }, { channelId: 'C0DEMO0002', name: 'warehouse', alerts: false }], posting: { on: true, perDay: 50 } })
     await expect(agent.saveNotifyChannels({ channelIds: ['C0DEMO0003'], ifRev: saved.rev })).rejects.toMatchObject({ code: 'conflict', reason: 'shared_channel' })
     await expect(agent.saveNotifyChannels({ channelIds: ['C0DEMO0004'], ifRev: saved.rev })).rejects.toMatchObject({ code: 'conflict', reason: 'not_member' })
     await expect(agent.saveNotifyChannels({ channelIds: [], ifRev: start.rev })).rejects.toMatchObject({ code: 'conflict', current: { rev: saved.rev } })

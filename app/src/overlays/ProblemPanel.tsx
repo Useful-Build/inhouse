@@ -7,7 +7,7 @@ import { escapeClosesMenuOnly } from '../ui/dialogs'
 import { agent, demo } from '../agent'
 import { draftView } from '../state/derive'
 import type { Ctx, DraftView } from '../state/derive'
-import { fmtMoney, fmtProse, fmtTime, hasAmount } from '../lib/format'
+import { fmtMoney, fmtTime, hasAmount } from '../lib/format'
 import { display } from '../state/display'
 import { useCtx, useUi } from '../state/store'
 import { Button, DetailList, Icon, IconButton, InhouseMark, LogoTile, MenuItem, Window } from '../ui'
@@ -52,7 +52,7 @@ export function ProblemPanel() {
   if (seenId !== openId) { setSeenId(openId); setFailed(null) }
   if (!openId) return null
 
-  const { closeProblem, stepProblem, approve, unapprove, undoHandled, ask, setAside, openTrace, showToast, patch } = useUi.getState()
+  const { closeProblem, stepProblem, approve, unapprove, ask, setAside, openTrace, showToast, patch } = useUi.getState()
   const dv = draftView(ctx, openId)
   const p = dv.problem
   const isEditing = editing === openId
@@ -320,9 +320,6 @@ export function ProblemPanel() {
           {more}
         </>}
         {dv.mode === 'approved' && <div className="flex-1">{status('check_circle', dv.doneText, dv.approvedLine, dv.canUndo ? () => unapprove(openId) : null)}</div>}
-        {dv.mode === 'handled' && (
-          <div className="flex-1">{status('check_circle', 'Handled by Inhouse agent', `${p.done ? fmtProse(p.done, display()) : dv.doneText}. Within your Run limits · logged in Activity.`, () => undoHandled(openId))}</div>
-        )}
       </div>
     </Window>
   )

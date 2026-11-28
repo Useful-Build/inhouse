@@ -26,11 +26,12 @@ function world() {
   const changed: { actionId: string; rev: number }[] = []
   const sentBack: { actionId: string; rev: number; atMs: number }[] = []
   let slack = true
+  let listed: string[] = ['ops-alerts']
   const a = new MockActions({
-    now: () => now, shown: () => shown, hasTool: t => t !== 'slack' || slack, meId: 'm_sam', memberId: id => `m_${id}`, paused: () => paused,
+    now: () => now, shown: () => shown, hasTool: t => t !== 'slack' || slack, listedChannels: () => listed, meId: 'm_sam', memberId: id => `m_${id}`, paused: () => paused,
     changed: u => { changed.push(u) }, sentBack: u => { sentBack.push(u) },
   })
-  return { a, tick: (ms: number) => { now += ms }, hide: (h: boolean) => { shown = !h }, pause: (p: boolean) => { paused = p }, noSlack: () => { slack = false }, changed, sentBack, now: () => now }
+  return { a, tick: (ms: number) => { now += ms }, hide: (h: boolean) => { shown = !h }, pause: (p: boolean) => { paused = p }, noSlack: () => { slack = false }, list: (names: string[]) => { listed = names }, changed, sentBack, now: () => now }
 }
 const byTitle = (a: MockActions, title: string) => {
   const c = a.list().find(x => x.title === title)
@@ -48,7 +49,7 @@ const SENT = 'Add 40 units of stock to item 8012'
 const SENT_TEXT = 'Sent.'
 const FAILED_TEXT = 'It didn’t go out.'
 const NEEDS_CHECK_TEXT = 'It isn’t clear whether this went out. Check in the tool, then say whether it did.'
-const LAPSE_TEXT = { paused: 'The agent was paused, so this needs your OK again.', permission_removed: 'The permission was removed, so this needs your OK again.' }
+const LAPSE_TEXT = { paused: 'The agent was paused, so this needs your OK again.', permission_removed: 'The permission was removed, so this needs your OK again.', channel_not_listed: 'The channel isn’t listed any more, so this needs your OK again.' }
 const refused = (run: () => unknown) => { try { run() } catch (e) { return e as AgentError } throw new Error('not refused') }
 
 describe('the demo actions', () => {
@@ -214,6 +215,21 @@ describe('asking first and Always allow (the demo catch-up, PR 1)', () => {
     expect(refused(() => a.removePermission(stock.id, stock.rev)).code).toBe('not_found')
     hide(true)
     expect(a.permissions()).toEqual([])
+  })
+
+  test('unlisting #ops-alerts revokes the post permissions and sends a post in its hold back to waiting (issue 653)', () => {
+    const { a, list, changed } = world()
+    const post = byTitle(a, POST)
+    a.answer(post.id, post.rev, 'once')
+    list([])
+    a.channelsChanged()
+    expect(a.permissions().map(p => p.title)).toEqual(['Add stock'])
+    expect(a.get(post.id)).toMatchObject({ state: 'waiting', lapsed: LAPSE_TEXT.channel_not_listed, can: { allowOnce: true } })
+    expect(changed.map(u => u.actionId)).toEqual([post.id])
+    // Listed again, the revoked permission stays gone, as the product's.
+    list(['ops-alerts'])
+    a.channelsChanged()
+    expect(a.permissions().map(p => p.title)).toEqual(['Add stock'])
   })
 
   test('a brand with no Slack has no Slack card or permission, and answers for neither', () => {

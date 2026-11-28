@@ -131,7 +131,7 @@
           "agent": [
             {
               "type": "text",
-              "text": "The settlement for Oct 30 to Nov 12 paid $18,420. Xero expected $19,660, so the payout is $1,240 short. 18 orders were charged the large-item fee, though they ship as standard size. That's an Amazon error, so it can be claimed back. I can draft the reimbursement case for you to approve."
+              "text": "The settlement for Oct 30 to Nov 12 paid $18,420. Xero expected $19,660, so the payout is $1,240 short. 18 orders were charged the large-item fee, though they ship as standard size. That's an Amazon error, so it can be claimed back. I can post it to #ops-alerts so Dana opens the reimbursement case."
             }
           ],
           "trace": "payout",

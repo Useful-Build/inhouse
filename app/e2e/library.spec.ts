@@ -154,11 +154,12 @@ test('Opening a file shows the viewer, and its link goes back to the chat, routi
   await page.getByRole('navigation', { name: 'Main' }).getByRole('button', { name: 'Library' }).click()
   v = await open('PO-1188-ridge-30l-kestrel.pdf')
   await expect(v).toContainText('PDF document')
-  await expect(v).toContainText('Approval: Reorder 600 Ridge 30L Packs')
+  await expect(v).toContainText('Today: Ridge 30L Pack runs out in 9 days')
   await expect(v.getByText('$9,600').first()).toBeVisible()
   await shot(page, 'library-viewer-document')
   await v.getByRole('button', { name: 'Open the approval →' }).click()
-  await expect(page.getByRole('button', { name: 'Approve and send to Kestrel' })).toBeVisible()
+  // The reorder is a finding (#726): its window has the suggestion, no draft to approve.
+  await expect(page.getByRole('dialog')).toContainText('Your Inhouse agent suggests')
   await page.keyboard.press('Escape')
 
   // Routine link.

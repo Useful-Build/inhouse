@@ -300,7 +300,7 @@ test('Links: First day picked with a sample chat open falls back quietly, with n
 test("Links: an unknown page, tool, settings tab or chat lands where it did and says so; #/chats doesn't", async ({ page }) => {
   await page.clock.install() // time keeps flowing; runFor adds app time on top, so no real sleep
   await start(page, '#/nope')
-  await expect(page.getByRole('heading', { level: 1 })).toContainText('6 things need you.')
+  await expect(page.getByRole('heading', { level: 1 })).toContainText('3 left to approve today.')
   await expect(page.locator('[data-toast]').filter({ hasText: "That page doesn't exist. You're on Today." })).toBeVisible()
   await shot(page, 'links-unknown-page')
 

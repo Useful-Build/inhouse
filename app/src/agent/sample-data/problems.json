@@ -36,7 +36,7 @@
       ],
       "cost": { "minor": 119000, "currency": "USD" },
       "costNote": "in orders at risk",
-      "next": "pause the variant, then email 5 customers",
+      "next": "pause the Olive M variant on Shopify, then tell the 5 customers about the delay",
       "review": "Customers involved",
       "done": { "text": "Paused the variant at {at:time}. Customer emails wait in Approvals", "times": { "at": "0d 06:04" } },
       "doneText": "Variant paused, 5 customers emailed",
@@ -94,43 +94,9 @@
         }
       ],
       "draft": {
-        "kind": "Shopify and 5 emails",
-        "summary": "Offers each a new ship date, Tue, Dec 8, or a refund.",
-        "destination": "5 customers",
-        "title": "Pause the variant and email 5 customers",
-        "lines": [
-          [
-            "Pause on Shopify",
-            "Trail Shell Jacket · M · Olive"
-          ],
-          [
-            "Email 5 customers",
-            "New ship date Tue, Dec 8, or a refund"
-          ],
-          [
-            "Restock due",
-            "Thu, Dec 3 from Kestrel"
-          ]
-        ],
-        "bodyLabel": "Email to customers, in your tone",
-        "body": "Hi Jamie, thanks for your order. The Trail Shell in Olive, size M, sold faster than we expected, so yours will ship on Tue, Dec 8. If you'd rather not wait, reply and we'll refund you straight away. The Northline team",
-        "customer": true,
-        "memory": "Remembered: you offer a refund before a discount, and sign emails \"The Northline team\".",
-        "cta": "Approve and send 5 emails",
-        "approver": "Leo Park usually signs off customer emails. As an admin, you can approve them in Leo's place.",
-        "ask": "Ask Leo",
-        "runTitle": "Email 5 customers about the delay",
-        "runLines": [
-          [
-            "Email 5 customers",
-            "New ship date Tue, Dec 8, or a refund"
-          ],
-          [
-            "Restock due",
-            "Thu, Dec 3 from Kestrel"
-          ]
-        ],
-        "doneNote": { "text": "Your Inhouse agent already paused the variant at {at:time}, inside your Run limits. The customer emails wait for a person.", "times": { "at": "0d 06:04" } }
+        "title": "Pause the Olive M variant on Shopify, then tell the 5 customers about the delay",
+        "lines": [],
+        "cta": "Approve"
       }
     },
     {
@@ -213,53 +179,9 @@
         }
       ],
       "draft": {
-        "kind": "Purchase order",
-        "summary": "To Kestrel Supply as a PDF. 400 Olive, 200 Black.",
-        "amount": {
-          "money": { "minor": 960000, "currency": "USD" },
-          "direction": "spend"
-        },
-        "destination": "Kestrel",
-        "to": {
-          "name": "Kestrel Supply",
-          "note": "Mei Chen, as a PDF"
-        },
-        "items": [
-          {
-            "name": "Ridge 30L Pack · Olive",
-            "qty": 400,
-            "each": { "minor": 1600, "currency": "USD" }
-          },
-          {
-            "name": "Ridge 30L Pack · Black",
-            "qty": 200,
-            "each": { "minor": 1600, "currency": "USD" }
-          }
-        ],
-        "title": "Reorder 600 Ridge 30L Packs",
-        "lines": [
-          [
-            "Ridge 30L · Olive",
-            "400 × $16 = $6,400"
-          ],
-          [
-            "Ridge 30L · Black",
-            "200 × $16 = $3,200"
-          ],
-          [
-            "To",
-            "Kestrel Supply, PDF purchase order"
-          ],
-          [
-            "Total",
-            "$9,600"
-          ]
-        ],
-        "money": true,
-        "memory": "Remembered: Kestrel ships in 14 days and wants the PO as a PDF. Dana approves orders over $5,000.",
-        "cta": "Approve and send to Kestrel",
-        "approver": "Dana Kim usually signs off orders over $5,000. As an admin, you can approve it in Dana's place.",
-        "ask": "Ask Dana"
+        "title": "Reorder 600 from Kestrel Supply today",
+        "lines": [],
+        "cta": "Approve"
       }
     },
     {
@@ -339,31 +261,13 @@
         }
       ],
       "draft": {
-        "kind": "Team post",
+        "kind": "Slack post",
         "summary": "Asks Dana to claim back the large-item fee on 18 orders.",
-        "amount": {
-          "money": { "minor": 124000, "currency": "USD" },
-          "direction": "claim"
-        },
         "destination": "#ops-alerts",
-        "title": "Ask Dana to claim $1,240 from Amazon",
-        "lines": [
-          [
-            "To",
-            "#ops-alerts"
-          ],
-          [
-            "Orders",
-            "18, listed in the attachment"
-          ],
-          [
-            "Claim",
-            "$1,240, the large-item fee"
-          ]
-        ],
+        "title": "Post to #ops-alerts in Slack",
+        "lines": [],
         "bodyLabel": "Post",
-        "body": "Dana, Amazon charged the large-item fee on 18 orders that ship as standard size, so the Nov 12 payout is $1,240 short. Could you open a reimbursement case with Seller Support? The orders are in the attachment.",
-        "money": true,
+        "body": "Dana, Amazon charged the large-item fee on 18 orders that ship as standard size, so the Nov 12 payout is $1,240 short. Could you open a reimbursement case with Seller Support?",
         "memory": "Remembered: your Amazon rate card was last updated on Sep 30.",
         "cta": "Approve and post"
       }
@@ -442,24 +346,9 @@
         }
       ],
       "draft": {
-        "kind": "Email",
-        "summary": "To Mei Chen at Kestrel. \"PO-1187: new ship date?\"",
-        "destination": "Mei",
-        "title": "Chase Kestrel for a new ship date",
-        "lines": [
-          [
-            "To",
-            "Mei Chen, Kestrel Supply"
-          ],
-          [
-            "Subject",
-            "PO-1187: new ship date?"
-          ]
-        ],
-        "bodyLabel": "Email, in your tone",
-        "body": "Hi Mei, PO-1187 (420 Summit Fleece) was due on Nov 10 and we haven't seen a shipping notice. Could you send a new ship date today? We have about 12 days of stock left. Thanks, Sam",
-        "memory": "Remembered: Mei is your contact at Kestrel, and you keep supplier emails short.",
-        "cta": "Approve and send to Mei"
+        "title": "Ask Kestrel for a new ship date",
+        "lines": [],
+        "cta": "Approve"
       }
     },
     {
@@ -579,20 +468,11 @@
         }
       ],
       "draft": {
-        "kind": "Team post",
-        "summary": "Asks the team to chase ShipBob so it ships today.",
+        "kind": "Slack post",
+        "summary": "Asks the team to chase ShipBob so #4821 ships today.",
         "destination": "#ops-alerts",
-        "title": "Ask the team to chase ShipBob on #4821",
-        "lines": [
-          [
-            "To",
-            "#ops-alerts"
-          ],
-          [
-            "Order",
-            "#4821, paid Nov 12"
-          ]
-        ],
+        "title": "Post to #ops-alerts in Slack",
+        "lines": [],
         "bodyLabel": "Post",
         "body": "Order #4821 was released to ShipBob on Nov 12 and still shows as not picked. Could someone ask ShipBob what's holding it, so it ships today? It's for a repeat customer.",
         "cta": "Approve and post"

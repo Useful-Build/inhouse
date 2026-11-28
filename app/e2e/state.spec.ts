@@ -17,52 +17,52 @@ const badge = (page: Page) => page.getByRole('navigation', { name: 'Main' }).get
  */
 const ASKS = 6
 const card = (page: Page, title: string) => page.getByRole('article').filter({ hasText: title })
-const KESTREL = 'Ridge 30L Pack runs out in 9 days'
-const sentToast = (page: Page) => page.getByRole('status').filter({ hasText: 'Reorder of 600 sent to Kestrel Supply' })
+// The payout's post to #ops-alerts in Slack: a draft with the 10 s hold and no Undo after it (#726: the Kestrel reorder,
+// which these checks used before, is a finding now, as no tool sends a purchase order).
+const POST = 'Amazon paid out $1,240 less than expected'
+const sentToast = (page: Page) => page.getByRole('status').filter({ hasText: 'Posted to #ops-alerts for Dana' })
 
-/** Approve the Kestrel reorder from the panel and close the panel. Returns the "goes out in 10 seconds" toast. */
-async function approveKestrel(page: Page) {
-  await card(page, KESTREL).getByRole('button', { name: 'Review' }).click()
-  await page.getByRole('dialog').getByRole('button', { name: 'Approve and send to Kestrel' }).click()
+/** Approve the payout's post from its card. Returns the "goes out in 10 seconds" toast. */
+async function approvePost(page: Page) {
+  await card(page, POST).getByRole('button', { name: 'Approve and post', exact: true }).click()
   const toast = page.getByRole('status').filter({ hasText: 'Approved. It goes out in 10 seconds.' })
   await expect(toast).toBeVisible()
-  await page.keyboard.press('Escape')
   return toast
 }
 
-test('Act: a reload during the 10 s hold still sends the Kestrel reorder, and Undo is gone', async ({ fx, page }) => {
+test('Act: a reload during the 10 s hold still sends the post, and Undo is gone', async ({ fx, page }) => {
   await start(page, fx, 'Normal', '#/today', true)
-  await approveKestrel(page)
+  await approvePost(page)
   await page.clock.runFor(3000)
   await page.reload()
-  await expect(page.getByRole('heading', { level: 1 })).toContainText('5 left to approve today.')
-  await expect(card(page, KESTREL)).toContainText('going out')
+  await expect(page.getByRole('heading', { level: 1 })).toContainText('2 left to approve today.')
+  await expect(card(page, POST)).toContainText('going out')
 
   const sent = sentToast(page)
   await page.clock.fastForward(10_000)
   await expect(sent).toBeVisible()
   await expect(sent.getByRole('button', { name: 'Undo', exact: true })).toHaveCount(0)
-  await expect(card(page, KESTREL)).not.toContainText('going out')
-  await card(page, KESTREL).click()
+  await expect(card(page, POST)).not.toContainText('going out')
+  await card(page, POST).click({ position: { x: 12, y: 12 } })
   const panel = page.getByRole('dialog')
-  await expect(panel).toContainText('Reorder of 600 sent to Kestrel Supply')
+  await expect(panel).toContainText('Posted to #ops-alerts for Dana')
   await expect(panel.getByRole('button', { name: 'Undo', exact: true })).toHaveCount(0)
   await page.screenshot({ path: test.info().outputPath('state-reload-sent.png') })
 })
 
 test('Act: Undo in the toast during the hold cancels the send', async ({ fx, page }) => {
   await start(page, fx, 'Normal', '#/today', true)
-  const toast = await approveKestrel(page)
-  await expect(badge(page)).toContainText(String(5 + ASKS))
+  const toast = await approvePost(page)
+  await expect(badge(page)).toContainText(String(2 + ASKS))
   await toast.getByRole('button', { name: 'Undo', exact: true }).click()
-  await expect(badge(page)).toContainText(String(6 + ASKS))
-  await expect(card(page, KESTREL).getByRole('button', { name: 'Review' })).toBeVisible()
+  await expect(badge(page)).toContainText(String(3 + ASKS))
+  await expect(card(page, POST).getByRole('button', { name: 'Approve and post', exact: true })).toBeVisible()
 
   await page.clock.runFor(11_000)
-  await expect(badge(page)).toContainText(String(6 + ASKS))
-  await expect(card(page, KESTREL).getByRole('button', { name: 'Review' })).toBeVisible()
+  await expect(badge(page)).toContainText(String(3 + ASKS))
+  await expect(card(page, POST).getByRole('button', { name: 'Approve and post', exact: true })).toBeVisible()
   await expect(sentToast(page)).toHaveCount(0)
-  await expect(card(page, KESTREL)).not.toContainText('Approved by Sam')
+  await expect(card(page, POST)).not.toContainText('Approved by Sam')
 })
 
 // Pause lives on the Spending cap page (the demo has no Run stage, whose top bar had it, since decision A13).
@@ -80,29 +80,29 @@ test('Pause, then Undo in the toast, puts Inhouse agent back to running', async 
 
 test('Act: Reset demo during the hold clears the approval and nothing is sent', async ({ fx, page }) => {
   await start(page, fx, 'Normal', '#/today', true)
-  await approveKestrel(page)
-  await expect(badge(page)).toContainText(String(5 + ASKS))
+  await approvePost(page)
+  await expect(badge(page)).toContainText(String(2 + ASKS))
 
   await page.getByRole('button', { name: /Demo switches/ }).click()
   await page.getByRole('button', { name: 'Reset demo', exact: true }).click()
-  await expect(badge(page)).toContainText(String(6 + ASKS))
-  await expect(card(page, KESTREL).getByRole('button', { name: 'Review' })).toBeVisible()
+  await expect(badge(page)).toContainText(String(3 + ASKS))
+  await expect(card(page, POST).getByRole('button', { name: 'Approve and post', exact: true })).toBeVisible()
 
   await page.clock.runFor(11_000)
-  await expect(badge(page)).toContainText(String(6 + ASKS))
+  await expect(badge(page)).toContainText(String(3 + ASKS))
   await expect(sentToast(page)).toHaveCount(0)
 })
 
-test('Act: two tabs, closing the one that started the hold still sends the reorder, and the other tab says so', async ({ fx, page, context }) => {
+test('Act: two tabs, closing the one that started the hold still sends the post, and the other tab says so', async ({ fx, page, context }) => {
   // Only page A seeds storage. Page B joins the same browser context and must not clear it.
   // The clock belongs to the context, so tab B shares it with tab A.
   await start(page, fx, 'Normal', '#/today', true)
-  await approveKestrel(page)
+  await approvePost(page)
 
   const other = await context.newPage()
   await other.goto('/?demo#/today')
-  await expect(other.getByRole('heading', { level: 1 })).toContainText('5 left to approve today.')
-  await expect(card(other, KESTREL)).toContainText('going out')
+  await expect(other.getByRole('heading', { level: 1 })).toContainText('2 left to approve today.')
+  await expect(card(other, POST)).toContainText('going out')
 
   await page.clock.runFor(2000)
   await page.close()
@@ -110,7 +110,7 @@ test('Act: two tabs, closing the one that started the hold still sends the reord
   const sent = sentToast(other)
   await other.clock.fastForward(10_000)
   await expect(sent).toBeVisible()
-  await expect(card(other, KESTREL)).not.toContainText('going out')
+  await expect(card(other, POST)).not.toContainText('going out')
   await other.screenshot({ path: test.info().outputPath('state-two-tabs-sent.png') })
 })
 
@@ -120,15 +120,15 @@ test('Deep links: an unknown page lands on Today and an unknown tool on the Tool
 
   // Cold loads of a stale link end with the same history as a clean link.
   await start(page, fx, 'Normal', '#/today')
-  await expect(page.getByRole('heading', { level: 1 })).toContainText('6 things need you.')
+  await expect(page.getByRole('heading', { level: 1 })).toContainText('3 left to approve today.')
   const reference = await context.newPage()
   await start(reference, fxFor(reference, baseURL), 'Normal', '#/today')
-  await expect(reference.getByRole('heading', { level: 1 })).toContainText('6 things need you.')
+  await expect(reference.getByRole('heading', { level: 1 })).toContainText('3 left to approve today.')
   const clean = await historyLength(reference)
 
   const nope = await context.newPage()
   await start(nope, fxFor(nope, baseURL), 'Normal', '#/nope')
-  await expect(nope.getByRole('heading', { level: 1 })).toContainText('6 things need you.')
+  await expect(nope.getByRole('heading', { level: 1 })).toContainText('3 left to approve today.')
   await expect.poll(() => hash(nope)).toBe('#/today')
   expect(await historyLength(nope)).toBe(clean)
 
@@ -142,7 +142,7 @@ test('Deep links: an unknown page lands on Today and an unknown tool on the Tool
   const before = await historyLength(page)
   await page.evaluate(() => { location.hash = '#/nope' })
   await expect.poll(() => hash(page)).toBe('#/today')
-  await expect(page.getByRole('heading', { level: 1 })).toContainText('6 things need you.')
+  await expect(page.getByRole('heading', { level: 1 })).toContainText('3 left to approve today.')
   expect(await historyLength(page)).toBe(before + 1)
 
   await page.evaluate(() => { location.hash = '#/tools/bogus' })
@@ -182,7 +182,7 @@ test('Saved storage holding old values (persona name, morning email settings, re
     setAside: {}, routinesDeleted: {}, routineRuns: [], chatTitles: {}, chatPinned: {}, chatDeleted: {},
   })
   await page.goto('/?demo#/today')
-  await expect(page.getByRole('heading', { level: 1 })).toContainText('6 things need you')
+  await expect(page.getByRole('heading', { level: 1 })).toContainText('3 left to approve today.')
 
   // The old dot sweep value maps to the renamed option instead of falling back to Always.
   await page.getByRole('button', { name: /^Demo switches:/ }).click()

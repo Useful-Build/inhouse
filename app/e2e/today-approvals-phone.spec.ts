@@ -9,7 +9,6 @@ const shot = async (page: Page, name: string) => {
   await page.screenshot({ path: test.info().outputPath(`${name}.png`), fullPage: true })
 }
 const waiting = (page: Page) => page.getByRole('heading', { level: 2, name: /^Waiting for you/ })
-const draft = (page: Page, title: string) => page.locator('[data-slot=card]').filter({ has: page.getByRole('heading', { level: 2, name: title, exact: true }) })
 
 // The demo has no stages since decision A13: one view, with the agent's action cards beside the drafts.
 test('Phone 390: no card on Today or Approvals cuts any text', async ({ page }) => {
@@ -30,7 +29,7 @@ test('Phone 390: Today has no sort and no fixed card height; Approvals has one h
 
   await page.getByRole('button', { name: 'Menu' }).click()
   await page.getByRole('complementary', { name: 'Sidebar' }).getByRole('button', { name: /Approvals/ }).click()
-  await expect(waiting(page)).toHaveText(/·\s6$/)
+  await expect(waiting(page)).toHaveText(/·\s3$/)
   await expect(page.getByRole('combobox', { name: /^Sort drafts/ })).toHaveCount(0)
   // The header is one line: the title and Approve all low-risk share a row.
   const title = await waiting(page).boundingBox()
@@ -38,7 +37,8 @@ test('Phone 390: Today has no sort and no fixed card height; Approvals has one h
   expect(all!.y, 'the action starts on the title line').toBeLessThan(title!.y + title!.height)
 
   // A card's footer: the primary action and "···" share a row.
-  const stuck = draft(page, 'Ask the team to chase ShipBob on #4821')
+  // The stuck order's post to #ops-alerts (both posts carry the product's title, so its text tells it apart).
+  const stuck = page.locator('[data-slot=card]').filter({ hasText: 'Order #4821 was released to ShipBob' })
   const primary = await stuck.getByRole('button', { name: 'Approve and post' }).boundingBox()
   const more = await stuck.getByRole('button', { name: /^More actions for/ }).boundingBox()
   expect(Math.abs(primary!.y - more!.y)).toBeLessThanOrEqual(8)
@@ -57,7 +57,8 @@ test('Phone 390: Today has no sort and no fixed card height; Approvals has one h
 
 test('Phone 390: the review panel gives its main action a full-width row of its own, on one line, with More below', async ({ page }) => {
   await start(page, '#/today')
-  await page.getByRole('article', { name: 'Ridge 30L Pack runs out in 9 days' }).getByRole('button', { name: 'Review' }).click()
+  // The payout's post (#726: the Kestrel reorder this opened is a finding, with no main action).
+  await page.getByRole('article', { name: 'Amazon paid out $1,240 less than expected' }).getByRole('button', { name: 'Amazon paid out $1,240 less than expected', exact: true }).click()
   const panel = page.getByRole('dialog')
   const primary = await panel.getByRole('button', { name: /^Approve and/ }).boundingBox()
   const dont = await panel.getByRole('button', { name: 'More', exact: true }).boundingBox()

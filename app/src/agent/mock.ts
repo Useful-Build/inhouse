@@ -7,7 +7,7 @@ import {
   traces, tools as sampleTools, usage, usageAtCap, usageHistory,
 } from './data'
 import { loadSkillBodies, routineIdOf, sampleAt, sampleRuns } from './data'
-import type { TraceKey } from './data'
+import type { ProblemSeed, TraceKey } from './data'
 import type {
   CreateChatInput, ApprovalRule, AuditLine, MemberRecord, MemberRole, Me, ResourceKey, ResourceStatus,
   AgentClient, AgentData, AgentErrorCode, AgentNotice, AgentNotification, AgentState, ApproveResult, ActiveRun, ChatList, ChatPage, ChatSendInput, ChatSummary, ChatThread, LinkState, RunFrame, SendTurnResult, StoredMessage, ClockTime, DemoContext,
@@ -207,13 +207,19 @@ function routineDefs(): RoutineDef[] {
 }
 
 const DRAFT_TIMES = draftTimes()
+/**
+ * A brand with no Slack (the data override) has no Slack post to approve, as the product wouldn't draft one: such a problem
+ * is a finding, its suggestion and no draft (the product's look card, server/today/problem.ts).
+ */
+const withoutSlackPost = (p: ProblemSeed): ProblemSeed => (tools.channels.some(c => c.key === 'slack') || tools.connected.includes('slack') || p.draft.kind !== 'Slack post'
+  ? p : { ...p, draft: { title: p.next.charAt(0).toUpperCase() + p.next.slice(1), lines: [], cta: 'Approve' } })
 /** A problem's draft trace id: the recorded `draft` steps, titled for that problem (see `getTrace`). */
 const DRAFT_TRACE = 'draft:'
 /** Built once, so `read()` returns the same object every time. The data for the Normal scenario (and, with their changes below, the others). */
 const DATA: AgentData = {
   status: 'ready',
   meta,
-  problems: problems.map(p => ({ ...p, trace: `${DRAFT_TRACE}${p.id}`, draftedAt: DRAFT_TIMES[p.id] })),
+  problems: problems.map(p => ({ ...withoutSlackPost(p), trace: `${DRAFT_TRACE}${p.id}`, draftedAt: DRAFT_TIMES[p.id] })),
   tools,
   routines: routineDefs(),
   skills,
@@ -893,6 +899,8 @@ export class MockAgent implements AgentClient {
     // A demo whose actions loaded starts them again; one that never read them has nothing to reset.
     void this.demoActionsLoad?.then(a => a.reset())
     this.sentBack = []
+    this.slackListed = ['ops-alerts']
+    void this.notifyLoad?.then(m => m.demoNotify.reset())
     // A Pause sent just before (its cards' lapse still queued) belongs to the demo this reset ends.
     this.resets++
     try { localStorage.removeItem(RUNS_KEY) } catch (e) { console.warn('Inhouse demo: could not clear saved runs.', e) }
@@ -1016,6 +1024,8 @@ export class MockAgent implements AgentClient {
   // (check-bundle).
   private demoActionsLoad: Promise<MockActions> | null = null
   private actionListeners = new Set<(u: { actionId: string; rev: number }) => void>()
+  /** The Slack channels listed (mock-notify.ts), by name: a fresh demo lists #ops-alerts (#653). */
+  private slackListed: readonly string[] = ['ops-alerts']
   /** Counts Reset demo, so a Pause queued before one never lapses the fresh demo's cards. */
   private resets = 0
   private demoActions(): Promise<MockActions> {
@@ -1023,6 +1033,7 @@ export class MockAgent implements AgentClient {
       now: () => demoNow(this.startedAt).getTime(),
       shown: () => this.demo.scenario === 'Normal',
       hasTool: tool => { const t = this.read().tools; return tool !== 'slack' || t.connected.includes('slack') || t.channels.some(c => c.key === 'slack') },
+      listedChannels: () => this.slackListed,
       meId: ME_ID,
       memberId: memberIdOf,
       paused: () => this.state.paused !== null,
@@ -1398,9 +1409,17 @@ export class MockAgent implements AgentClient {
 
   // ---------- P5 (p5-w4): the Slack channels listed for notices ----------
   // The demo's list lives in ./mock-notify, loaded on first use, so none of it weighs on Today's first load.
-  listNotifyChannels = (): Promise<NotifyChannelList> => import('./mock-notify').then(m => m.demoNotify.list())
-  availableNotifyChannels = (): Promise<AvailableChannels> => import('./mock-notify').then(m => m.demoNotify.available())
-  saveNotifyChannels = (input: PutNotifyChannels): Promise<NotifyChannelList> => import('./mock-notify').then(m => m.demoNotify.save(input))
+  private notifyLoad: Promise<typeof import('./mock-notify')> | null = null
+  private loadNotify = () => (this.notifyLoad ??= import('./mock-notify'))
+  listNotifyChannels = (): Promise<NotifyChannelList> => this.loadNotify().then(m => m.demoNotify.list())
+  availableNotifyChannels = (): Promise<AvailableChannels> => this.loadNotify().then(m => m.demoNotify.available())
+  saveNotifyChannels = (input: PutNotifyChannels): Promise<NotifyChannelList> => this.loadNotify().then(async m => {
+    const list = await m.demoNotify.save(input)
+    // The demo's Slack cards and permissions follow the list (#653).
+    this.slackListed = m.demoNotify.names()
+    void this.demoActionsLoad?.then(a => a.channelsChanged())
+    return list
+  })
   disconnect = (): void => undefined
 
   // ----- skills -----

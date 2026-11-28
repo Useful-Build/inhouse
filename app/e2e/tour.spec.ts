@@ -16,7 +16,7 @@ async function open(page: Page, fx: Fx, scenario: string, hash: string) {
 const shot = (page: Page, name: string) => page.screenshot({ path: test.info().outputPath(`${name}.png`), fullPage: true })
 
 const PAGES: [string, string, string][] = [
-  ['Normal', '#/today', '6 things need you. Drafts are ready.'],
+  ['Normal', '#/today', '3 left to approve today.'],
   ['Normal', '#/approvals', 'Waiting on your team'],
   ['Normal', '#/chats/order-tags', 'Post to #ops-alerts in Slack'],
   ['Normal', '#/activity', 'Activity'],

@@ -12,7 +12,7 @@ import { FAILED_TEXT, LAPSE_TEXT, NEEDS_CHECK_TEXT, SENT_TEXT } from './words.ts
 type RawOperation = { title: string; unitsLabel: string; perDay: number; unitsMax: number; ceilingPerDay: number; ceilingUnitsMax: number; reversible?: boolean }
 type RawSingle = { id: string; operation: string; title: string; lines: string[]; state: string; result?: string }
 const demo = JSON.parse(Object.values(import.meta.glob('../../src/agent/sample-data/actions.json', { query: '?raw', import: 'default', eager: true }))[0] as string) as {
-  operations: Record<string, RawOperation>; singles: RawSingle[]; resolved: Record<string, string>; lapsed: { paused: string; permission_removed: string }
+  operations: Record<string, RawOperation>; singles: RawSingle[]; resolved: Record<string, string>; lapsed: { paused: string; permission_removed: string; channel_not_listed: string }
 }
 const single = (id: string) => demo.singles.find(s => s.id === id)!
 
@@ -45,7 +45,7 @@ describe("the demo's actions say what the server says", () => {
 
   test('the settled, needs-check and lapse words are the outbox\'s', () => {
     expect(demo.resolved).toEqual({ sent: SENT_TEXT, failed: FAILED_TEXT })
-    expect(demo.lapsed).toEqual({ paused: LAPSE_TEXT.paused, permission_removed: LAPSE_TEXT.permission_removed })
+    expect(demo.lapsed).toEqual({ paused: LAPSE_TEXT.paused, permission_removed: LAPSE_TEXT.permission_removed, channel_not_listed: LAPSE_TEXT.channel_not_listed })
     expect(demo.singles.filter(s => s.state === 'needs_check').map(s => s.result)).toEqual([NEEDS_CHECK_TEXT])
     expect(demo.singles.filter(s => s.state === 'sent').map(s => s.result)).toEqual([SENT_TEXT])
   })

@@ -116,8 +116,7 @@ test('Cap reached: a chat is refused with the cap notice, and a waiting draft ca
   await expect(log(page).getByText(A)).toHaveCount(0)
   // Waiting drafts can still be approved at the cap.
   await go(page, '#/today')
-  await page.getByRole('article').filter({ hasText: 'Ridge 30L Pack runs out in 9 days' }).getByRole('button', { name: 'Review' }).click()
-  await page.getByRole('dialog').getByRole('button', { name: 'Approve and send to Kestrel' }).click()
+  await page.getByRole('article').filter({ hasText: 'Amazon paid out $1,240 less than expected' }).getByRole('button', { name: 'Approve and post', exact: true }).click()
   await expect(page.getByRole('status').filter({ hasText: 'Approved. It goes out in 10 seconds.' })).toBeVisible()
 })
 
@@ -135,13 +134,13 @@ test('Reset demo puts the scenario back to Normal, clears the change, and stays 
   await resetDemo(page)
   await expect(page.getByRole('button', { name: 'Demo switches: Normal' })).toBeVisible()
   await expect(page.getByText('Spending cap reached.')).toHaveCount(0)
-  await expect(page.getByRole('heading', { level: 1 })).toContainText('6 things need you.')
+  await expect(page.getByRole('heading', { level: 1 })).toContainText('3 left to approve today.')
   await expect(side(page).getByRole('group', { name: 'Pinned' })).toHaveCount(0)
   await shot(page, 'reset-demo-normal')
 
   await page.reload()
   await expect(page.getByRole('button', { name: 'Demo switches: Normal' })).toBeVisible()
-  await expect(page.getByRole('heading', { level: 1 })).toContainText('6 things need you.')
+  await expect(page.getByRole('heading', { level: 1 })).toContainText('3 left to approve today.')
   await expect(side(page).getByRole('group', { name: 'Pinned' })).toHaveCount(0)
 })
 
