@@ -18,7 +18,7 @@
 // Break-glass, only once no run is going: a dead run's lease lapses after EVAL_LEASE_TTL_MS, or is removed at once with
 //   npx wrangler d1 execute inhouse-sbx-eval-db --remote --config <the sandbox config> --command "DELETE FROM settings WHERE owner = 'test-control' AND key = 'eval:lease'"
 import { PLANTED_NAME_LIST } from '../injection/names.ts'
-import { spawn as spawnChild } from 'node:child_process'
+import { execFileSync, spawn as spawnChild } from 'node:child_process'
 import { readFileSync } from 'node:fs'
 import { randomBytes } from 'node:crypto'
 import path from 'node:path'
@@ -312,75 +312,138 @@ export interface WranglerResult {
   status: number | null
   stdout: string
   output?: string
+  /** The call's own deadline ended it (a null status otherwise means a signal from outside: a cancel, never retried). */
+  timedOut?: boolean
 }
 
 /**
- * How long one wrangler call may take (#672): killed past this, its whole process group (#690: npx and the wrangler
- * under it), and its null status is a refusal (a read retries it, #691).
+ * How long one wrangler call may take (#672): killed past this, npx and every process under it (#690), and its null status
+ * is a refusal (a read retries it, #691).
  */
 export const WRANGLER_TIMEOUT_MS = 120_000
 const WRANGLER_MAX_OUTPUT = 16 * 1024 * 1024
+/** How long output may stay open after the call exits (#713), before its streams are closed. */
+export const WRANGLER_DRAIN_MS = 5_000
 
-/** Process groups of wrangler calls still running: killed when the process exits, so none outlives the run (#690). */
-const liveGroups = new Set<number>()
-let exitHooked = false
-const killGroup = (pid: number) => {
+/**
+ * Every process under `root` (its children, theirs, and so on), from one `ps` listing (macOS and Linux both take
+ * `-A -o pid=,ppid=`).
+ */
+function descendants(root: number): number[] {
+  let listing: string
   try {
-    process.kill(-pid, 'SIGKILL')
+    listing = execFileSync('ps', ['-A', '-o', 'pid=,ppid='], { encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'] })
   } catch {
-    // Already gone (ESRCH): nothing left in the group to stop.
+    return []
+  }
+  const kids = new Map<number, number[]>()
+  for (const line of listing.split('\n')) {
+    const [pid, ppid] = line.trim().split(/\s+/).map(Number)
+    if (!pid || ppid === undefined || Number.isNaN(ppid)) continue
+    kids.set(ppid, [...(kids.get(ppid) ?? []), pid])
+  }
+  const out: number[] = []
+  const queue = [root]
+  while (queue.length) {
+    for (const k of kids.get(queue.shift()!) ?? []) {
+      out.push(k)
+      queue.push(k)
+    }
+  }
+  return out
+}
+
+const sendSignal = (pid: number, sig: NodeJS.Signals) => {
+  // Never 0 (this process's group), -1 (every process) or init (#713): only a real child's pid.
+  if (!Number.isInteger(pid) || pid <= 1) return
+  try {
+    process.kill(pid, sig)
+  } catch {
+    // Already gone (ESRCH).
   }
 }
 
 /**
- * One command in its own process group (#690): `detached` makes the child a group leader, so a timeout kills npx and
- * the wrangler it starts together (killing npx alone left wrangler running, free to land its SQL after the lease went
- * back). Whatever is left in the group when the leader exits is killed too, and so is every live group when this
- * process exits. Asynchronous, so a cancel's close is never stuck behind a call. `bin` replaces `npx --no-install
- * wrangler` (tests).
+ * Kills `root` and every process under it (#690, #711): each is stopped first (so none forks or exits and hands its
+ * children to init mid-walk), the tree walked again for anything started meanwhile, then all are killed.
+ */
+export function killTree(root: number): void {
+  if (!Number.isInteger(root) || root <= 1) return
+  const seen = new Set<number>([root])
+  for (let pass = 0; pass < 3; pass++) {
+    const found = [root, ...descendants(root)].filter((p) => pass === 0 || !seen.has(p))
+    if (pass > 0 && found.length === 0) break
+    for (const p of found) {
+      seen.add(p)
+      sendSignal(p, 'SIGSTOP')
+    }
+  }
+  for (const p of seen) sendSignal(p, 'SIGKILL')
+}
+
+/** Wrangler calls still running: killed, with everything under them, when this process exits (#690). */
+const live = new Set<number>()
+let exitHooked = false
+
+/**
+ * One wrangler call, asynchronous (a cancel's close is never stuck behind it), in this process's own process group
+ * (#711): a SIGHUP, SIGINT or a SIGKILL sent to the run's group reaches npx and wrangler too, so none is left running
+ * with no deadline (#690's `detached` took them out of the group, which a group kill then missed). Its deadline kills
+ * npx and every process under it (killTree), not npx alone, which once left wrangler free to land its SQL after the lease
+ * went back; so does this process's exit. `bin` replaces `npx --no-install wrangler` (tests).
  */
 export function spawnWrangler(args: string[], env: Record<string, string | undefined>, o: { bin?: readonly string[]; timeoutMs?: number } = {}): Promise<WranglerResult & { timedOut: boolean }> {
   const [cmd, ...pre] = o.bin ?? ['npx', '--no-install', 'wrangler']
   const timeoutMs = o.timeoutMs ?? WRANGLER_TIMEOUT_MS
   if (!exitHooked) {
     exitHooked = true
-    process.on('exit', () => { for (const pid of liveGroups) killGroup(pid) })
+    process.on('exit', () => { for (const pid of live) killTree(pid) })
   }
   return new Promise((resolve, reject) => {
-    const child = spawnChild(cmd!, [...pre, ...args], { cwd: path.resolve(import.meta.dirname, '../..'), env: env as NodeJS.ProcessEnv, stdio: ['ignore', 'pipe', 'pipe'], detached: true })
+    const child = spawnChild(cmd!, [...pre, ...args], { cwd: path.resolve(import.meta.dirname, '../..'), env: env as NodeJS.ProcessEnv, stdio: ['ignore', 'pipe', 'pipe'] })
     const pid = child.pid
     let stdout = ''
     let stderr = ''
     let timedOut = false
     let tooBig = false
+    let exitCode: number | null = null
+    let drain: ReturnType<typeof setTimeout> | undefined
     const timer = setTimeout(() => {
       timedOut = true
-      if (pid !== undefined) killGroup(pid)
+      if (pid !== undefined) killTree(pid)
     }, timeoutMs)
-    if (pid !== undefined) liveGroups.add(pid)
+    if (pid !== undefined) live.add(pid)
     const take = (into: 'out' | 'err') => (d: string) => {
       if (into === 'out') stdout += d
       else stderr += d
       if (stdout.length + stderr.length > WRANGLER_MAX_OUTPUT && !tooBig) {
         tooBig = true
-        if (pid !== undefined) killGroup(pid)
+        if (pid !== undefined) killTree(pid)
       }
     }
     child.stdout.setEncoding('utf8').on('data', take('out'))
     child.stderr.setEncoding('utf8').on('data', take('err'))
-    // The leader's exit: anything it left in its group goes too (a grandchild holding the pipes open included).
-    child.on('exit', () => { if (pid !== undefined) killGroup(pid) })
+    // The outcome is the exit's (#713): the deadline stops at the exit, so a call that ended just before it is never a
+    // false timeout while its output drains. Output still open after the exit (a leftover child holding the pipe) gets a
+    // bounded drain, then the streams are closed and the exit code stands.
+    child.on('exit', (code) => {
+      clearTimeout(timer)
+      exitCode = code
+      if (pid !== undefined) live.delete(pid)
+      drain = setTimeout(() => { child.stdout.destroy(); child.stderr.destroy() }, WRANGLER_DRAIN_MS)
+    })
     child.on('error', (e) => {
       clearTimeout(timer)
-      if (pid !== undefined) liveGroups.delete(pid)
+      if (pid !== undefined) live.delete(pid)
       // npx missing or not runnable: a refusal (a bad setup, never retried), naming only the error's code.
       reject(new DoorRefusal(`wrangler could not start (${(e as NodeJS.ErrnoException).code ?? e.name})`))
     })
     child.on('close', (code) => {
       clearTimeout(timer)
-      if (pid !== undefined) liveGroups.delete(pid)
+      clearTimeout(drain)
+      if (pid !== undefined) live.delete(pid)
       if (tooBig) reject(new DoorRefusal(`wrangler d1 execute answered more than ${WRANGLER_MAX_OUTPUT} bytes`))
-      else resolve({ status: timedOut ? null : code, stdout, output: `${stdout}\n${stderr}`, timedOut })
+      else resolve({ status: timedOut ? null : (exitCode ?? code), stdout, output: `${stdout}\n${stderr}`, timedOut })
     })
   })
 }
@@ -389,7 +452,7 @@ const defaultSpawn: NonNullable<WranglerOptions['spawn']> = (args, env) => spawn
 
 /** One wrangler call at a time, as when they ran synchronously: a read never races a write of the same run. */
 let wranglerTail: Promise<unknown> = Promise.resolve()
-const oneAtATime = <T>(work: () => Promise<T>): Promise<T> => {
+export const oneAtATime = <T>(work: () => Promise<T>): Promise<T> => {
   const p = wranglerTail.then(work, work)
   wranglerTail = p.then(() => undefined, () => undefined)
   return p
@@ -399,17 +462,62 @@ const oneAtATime = <T>(work: () => Promise<T>): Promise<T> => {
 export const readOnlySql = (sql: string): boolean => /^\s*SELECT\b/i.test(sql) && !/;\s*\S/.test(sql)
 
 /**
- * Why a failed wrangler call is clearly transient, as a fixed label, or null (#691). An auth refusal is never transient,
- * whatever else the output says; nor is anything unrecognised (a bad config, a SQL error): those stop the run at once.
+ * The D1 errors its docs say to retry (https://developers.cloudflare.com/d1/observability/debug-d1/, "List of D1_ERRORs"
+ * and "API error codes", read 2026-11-28), as the API words them: a platform reset, a lost connection, an unreachable node
+ * or an overloaded database. Not the CPU or memory limit, the size or free-tier limits: those fail the same query again.
+ */
+export const D1_TRANSIENT_MESSAGES: readonly string[] = [
+  'D1 DB reset because its code was updated.',
+  'Internal error while starting up D1 DB storage caused object to be reset.',
+  'Network connection lost.',
+  'Replica disconnected from primary.',
+  'Internal error in D1 DB storage caused object to be reset.',
+  'Cannot resolve D1 DB due to transient issue on remote node.',
+  'Can\'t read from request stream because client disconnected.',
+  'D1 DB storage operation exceeded timeout which caused object to be reset.',
+  'D1 DB is overloaded. Requests queued for too long.',
+  'D1 DB is overloaded. Too many requests queued.',
+  'D1 DB is overloaded. Too many resources consumed within a 10 second window',
+]
+/** D1's "DB overloaded" API code (the same docs: retry with backoff). */
+const D1_OVERLOADED = 7429
+/** API codes that refuse the token or the account: never retried, whatever else the answer says. */
+const AUTH_CODES = new Set([10000, 7403])
+
+/**
+ * Why a failed wrangler call is clearly transient, as a fixed label, or null (#691, #710). Read from what wrangler 4.162
+ * prints with --json (its d1 execute: `{"error": <the APIError>}` on stdout; samples in fixtures/wrangler-d1-errors, made
+ * by its capture.mjs against a fake API). Wrangler never prints the HTTP status there, so the signs are its own:
+ *   - D1's overloaded code 7429, or one of D1_TRANSIENT_MESSAGES in a note (each note is the API's message and code);
+ *   - a 429: wrangler adds `retryAfterMs` (and a note) from the Retry-After header, which the API sends on a rate limit;
+ *   - a gateway's non-JSON page: "Received a malformed response from the API" with a `-> 5xx` note;
+ *   - a network failure or wrangler's own timeout, which it prints as the error's text alone ("fetch failed").
+ * Never transient: an auth code (10000, 7403), our deadline's kill only when it was ours (a signal from outside is a
+ * cancel), output that isn't wrangler's JSON, and anything else (a SQL error, a missing database, a bad config).
  */
 export function wranglerTransient(r: WranglerResult): string | null {
-  if (r.status === null) return 'a timeout'
-  const out = r.output ?? r.stdout
-  if (/\b(401|403)\b|unauthori[sz]ed|authentication|not authori[sz]ed|forbidden|invalid (api )?token/i.test(out)) return null
-  if (/\b429\b|too many requests|rate.?limit/i.test(out)) return 'a 429 from the API'
-  if (/\b50[0-4]\b|internal server error|bad gateway|service unavailable|gateway time-?out/i.test(out)) return 'a 5xx from the API'
-  if (/ECONNRESET|ECONNREFUSED|ETIMEDOUT|ENOTFOUND|EAI_AGAIN|EPIPE|socket hang up|fetch failed|network (error|connection)/i.test(out)) return 'a network error'
-  if (/timed? ?out/i.test(out)) return 'a timeout'
+  if (r.status === null) return r.timedOut ? 'a timeout' : null
+  let e: { text?: unknown; notes?: { text?: unknown }[]; code?: unknown; name?: unknown; retryAfterMs?: unknown } | undefined
+  try {
+    e = (JSON.parse(r.stdout) as { error?: typeof e }).error
+  } catch {
+    return null
+  }
+  if (!e || typeof e !== 'object') return null
+  const notes = (Array.isArray(e.notes) ? e.notes : []).map((n) => (typeof n?.text === 'string' ? n.text : ''))
+  const codes = [e.code, ...notes.map((n) => Number(/\[code: (\d+)\]\s*$/.exec(n)?.[1]))]
+  if (codes.some((c) => typeof c === 'number' && AUTH_CODES.has(c))) return null
+  if (e.name === 'APIError') {
+    if (codes.includes(D1_OVERLOADED)) return 'D1 overloaded'
+    if (notes.some((n) => D1_TRANSIENT_MESSAGES.some((m) => n.startsWith(m)))) return 'a transient D1 error'
+    if (typeof e.retryAfterMs === 'number') return 'a 429 from the API'
+    if (e.text === 'Received a malformed response from the API' && notes.some((n) => / -> 5\d\d\b/.test(n))) return 'a 5xx from the API'
+    return null
+  }
+  // Not an API answer at all: wrangler prints a thrown error as its message alone.
+  if (typeof e.text !== 'string') return null
+  if (/^fetch failed$|ECONNRESET|ECONNREFUSED|ETIMEDOUT|ENOTFOUND|EAI_AGAIN|socket hang up/.test(e.text)) return 'a network error'
+  if (/aborted due to timeout/.test(e.text)) return 'a timeout'
   return null
 }
 

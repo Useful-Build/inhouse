@@ -16,6 +16,7 @@
 // Planting in the store or a web page needs a per-case dataset on the eval hub, not built: those cases are listed as not
 // served here (their twins W31 to W37 plant the same attacks through a file or a memory hit).
 import { WRANGLER_TIMEOUT_MS } from '../targets/door.ts'
+import type { RetryOptions } from '../targets/retry.ts'
 import { accessHeaders, createProductTarget, EVAL_AUD_VAR, JOB_END_TIMEOUT_MS, testIssuerSignIn, type ProductTarget, type ProductTargetOptions } from '../targets/product.ts'
 import { connectSlack, disconnectSlack, slackShown, type InhouseApi } from '../targets/slack-door.ts'
 import { SEED_INHOUSE } from '../../server/seed/brand.ts'
@@ -144,6 +145,9 @@ export interface ProductInjectionOptions extends Pick<ProductTargetOptions, 'pai
   now?: () => number
   /** How long a close waits for the running repeat to end (tests); default REPEAT_END_WAIT_MS. */
   repeatEndWaitMs?: number
+  /** The default session reader's fetch and retry backoff (tests); default fetch and DOOR_RETRY_DELAYS_MS. */
+  sessionsFetch?: typeof fetch
+  sessionsRetry?: Pick<RetryOptions, 'sleep' | 'delaysMs'>
   /** How long a close waits on a case setup with no call ending (tests); default SETUP_QUIET_MS. */
   setupQuietMs?: number
 }
@@ -153,6 +157,11 @@ export function createProductInjectionTarget(o: ProductInjectionOptions): Inject
   const notes: string[] = []
   // Each door read's retry (#691) is a line of the report's notes.
   const onRetry = (line: string) => { notes.push(line) }
+  // The session transcripts' reader (R2): each retry is a note, and progress for the close's wait (#714), as a D1 retry is.
+  const newSessions = () => createSessionReader({
+    env: o.env, bucket: EVAL_BUCKET, ...(o.sessionsFetch ? { fetch: o.sessionsFetch } : {}),
+    retry: { ...o.sessionsRetry, onRetry: (line) => { stepsDone++; onRetry(line) } },
+  })
   const base = o.base ?? createProductTarget({ paid: o.paid, budgetUsd: o.budgetUsd, env: o.env, model: o.model, onRetry })
   const rawInhouse = o.inhouse === undefined ? inhouseApi(o.env) : o.inhouse
   // Every Inhouse app call ended is progress for the close's wait on a setup (#689), like the product target's own.
@@ -279,7 +288,7 @@ export function createProductInjectionTarget(o: ProductInjectionOptions): Inject
           // origin or aud stops the run here, not at the first Slack case (#671).
           await slackShown(inhouse)
         }
-        sessions ??= createSessionReader({ env: o.env, bucket: EVAL_BUCKET, retry: { onRetry } })
+        sessions ??= newSessions()
         await sessions.preflight()
       })()
       starting.add(p)
@@ -533,7 +542,7 @@ export function createProductInjectionTarget(o: ProductInjectionOptions): Inject
         evidence: read,
         // What the model received (Neon's #618 review): the non-error tool results in the repeat's session transcripts.
         async plantDelivered(plant) {
-          sessions ??= createSessionReader({ env: o.env, bucket: EVAL_BUCKET, retry: { onRetry } })
+          sessions ??= newSessions()
           const chatIds = (session as { chatIds?: () => readonly string[] }).chatIds?.() ?? []
           const parts: Uint8Array[][] = []
           for (const id of chatIds) parts.push(await sessions.parts(id))

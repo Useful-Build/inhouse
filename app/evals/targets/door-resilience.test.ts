@@ -1,21 +1,37 @@
-// The doors' resilience (#689, #690, #691), ways it could fail, written first:
+// The doors' resilience (#689, #690, #691, #710, #711, #712), ways it could fail, written first:
 //  - one transient error (a reset, a 5xx, a 429, a timeout) on a read ends a 6-hour run;
-//  - a retry hides a permanent error (an auth refusal, a bad config) or repeats a write that may have landed;
-//  - a retry is silent: the report never says the run leaned on one;
+//  - the retry reads a status wrangler never prints (#710), so D1's own overloaded or reset answers still end the run;
+//  - a retry hides a permanent error (an auth refusal, a SQL error) or repeats a write that may have landed;
+//  - a retry is silent: the report never says the run leaned on one, nor does the close's progress check;
 //  - the 120 s kill stops npx but not the wrangler under it, which lands its SQL after the lease went back;
-//  - the product target's progress counter misses calls, so a close gives up on a setup that is still moving.
-import { chmodSync, mkdtempSync, readFileSync, writeFileSync } from 'node:fs'
+//  - a hangup, or a SIGKILL to the run's group, leaves npx and wrangler running with no deadline (#711);
+//  - two calls run at once, or a call outlives the run's exit (#712).
+import { spawn } from 'node:child_process'
+import { EventEmitter } from 'node:events'
+import { chmodSync, mkdtempSync, readFileSync, readdirSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import path from 'node:path'
 import { describe, expect, it } from 'vitest'
-import { DoorRefusal, readOnlySql, spawnWrangler, wranglerRunner, wranglerTransient, type WranglerResult } from './door.ts'
+import { DoorRefusal, oneAtATime, readOnlySql, spawnWrangler, wranglerRunner, wranglerTransient, type WranglerResult } from './door.ts'
 import { TransientDoorError, withRetries } from './retry.ts'
 import { createSessionReader } from '../read-side/product/r2.ts'
-import { createProductTarget } from './product.ts'
+import { createProductTarget, doorSql } from './product.ts'
+import { CANCEL_SIGNALS, listenForCancel } from '../injection/run.ts'
 
 const noWait = { sleep: async () => {} }
+const FIXTURES = path.join(import.meta.dirname, 'fixtures/wrangler-d1-errors')
+/** A real `wrangler d1 execute --remote --json` failure (wrangler 4.162, captured by fixtures/wrangler-d1-errors/capture.mjs). */
+const sample = (name: string): WranglerResult => {
+  const text = readFileSync(path.join(FIXTURES, `${name}.txt`), 'utf8')
+  const status = Number(/^exit (\d+)/.exec(text)![1])
+  const stdout = text.split('--- stdout\n')[1]!.split('--- stderr\n')[0]!
+  const stderr = text.split('--- stderr\n')[1] ?? ''
+  return { status, stdout, output: `${stdout}\n${stderr}` }
+}
+const D1 = { database: 'inhouse-sbx-eval-db', config: 'c', env: { CF_SANDBOX_ACCOUNT_ID: 'acct' }, readConfig: () => JSON.stringify({ account_id: 'acct', d1_databases: [{ database_name: 'inhouse-sbx-eval-db' }] }) }
+const OK: WranglerResult = { status: 0, stdout: '[{"results":[{"n":1}]}]' }
 
-describe('#691: a transient door error retries, a permanent one stops at once', () => {
+describe('#691 and #710: a transient door error retries, a permanent one stops at once', () => {
   it('withRetries: a transient error that recovers is retried and reported; a permanent one is thrown on the first try', async () => {
     const lines: string[] = []
     let tries = 0
@@ -28,51 +44,71 @@ describe('#691: a transient door error retries, a permanent one stops at once', 
     tries = 0
     await expect(withRetries('a read', async () => { tries++; throw new DoorRefusal('answered 403') }, { ...noWait, onRetry: (l) => lines.push(l) })).rejects.toThrow('answered 403')
     expect(tries).toBe(1)
-    // Still transient on the last try: its own error, after 4 tries in all.
     tries = 0
     await expect(withRetries('a read', async () => { tries++; throw new TransientDoorError('a timeout', new DoorRefusal('did not end')) }, { ...noWait, onRetry: () => {} })).rejects.toThrow(new DoorRefusal('did not end'))
     expect(tries).toBe(4)
   })
 
-  const runner = (results: WranglerResult[], lines: string[], argv: string[][] = []) => wranglerRunner({
-    database: 'inhouse-sbx-eval-db', config: 'c', env: { CF_SANDBOX_ACCOUNT_ID: 'acct' },
-    readConfig: () => JSON.stringify({ account_id: 'acct', d1_databases: [{ database_name: 'inhouse-sbx-eval-db' }] }),
-    spawn: (a) => { argv.push(a); return results.shift() ?? { status: 0, stdout: '[{"results":[{"n":1}]}]' } },
-    retry: { ...noWait, onRetry: (l) => lines.push(l) },
+  it('wrangler\'s real output for each transient API failure reads as transient (#710)', () => {
+    expect(readdirSync(FIXTURES).filter((f) => f.endsWith('.txt')).length).toBe(13)
+    expect(wranglerTransient(sample('d1-overloaded-queued'))).toBe('D1 overloaded')
+    expect(wranglerTransient(sample('d1-overloaded-too-long'))).toBe('D1 overloaded')
+    expect(wranglerTransient(sample('d1-network-lost'))).toBe('a transient D1 error')
+    expect(wranglerTransient(sample('d1-reset-code-updated'))).toBe('a transient D1 error')
+    expect(wranglerTransient(sample('d1-transient-remote-node'))).toBe('a transient D1 error')
+    expect(wranglerTransient(sample('rate-limited-429'))).toBe('a 429 from the API')
+    expect(wranglerTransient(sample('gateway-502-html'))).toBe('a 5xx from the API')
+    expect(wranglerTransient(sample('connection-refused'))).toBe('a network error')
+    expect(wranglerTransient({ status: null, stdout: '', timedOut: true })).toBe('a timeout')
   })
 
-  it('a D1 read through wrangler: a 5xx, a reset or a timeout retries and recovers; each retry is a line', async () => {
+  it('wrangler\'s real output for an auth refusal, a missing database, a SQL error or a CPU limit is permanent (#710)', () => {
+    for (const name of ['auth-10000', 'auth-7403', 'db-not-found-7404', 'sqlite-error', 'cpu-limit-reset']) expect([name, wranglerTransient(sample(name))]).toEqual([name, null])
+    // An auth code wins over anything else in the same answer.
+    const mixed = sample('d1-overloaded-queued')
+    expect(wranglerTransient({ ...mixed, stdout: mixed.stdout.replace('"notes": [', '"notes": [\n      { "text": "Authentication error [code: 10000]" },') })).toBeNull()
+    // A signal from outside (a cancel), or output that isn't wrangler's JSON: never retried.
+    expect(wranglerTransient({ status: null, stdout: '' })).toBeNull()
+    expect(wranglerTransient({ status: 1, stdout: 'Error: 503 Service Unavailable' })).toBeNull()
+  })
+
+  const runner = (results: WranglerResult[], lines: string[], argv: string[][] = []) => wranglerRunner({
+    ...D1, spawn: (a) => { argv.push(a); return results.shift() ?? OK }, retry: { ...noWait, onRetry: (l) => lines.push(l) },
+  })
+
+  it('a D1 read through wrangler: D1 overloaded, a reset, a 429 and a refused connection retry and recover; each retry is a line', async () => {
     const lines: string[] = []
-    const run = runner([{ status: 1, stdout: '', output: 'A request to the Cloudflare API failed: 503 Service Unavailable' }, { status: 1, stdout: '', output: 'TypeError: fetch failed (ECONNRESET)' }, { status: null, stdout: '' }], lines)
+    const run = runner([sample('d1-overloaded-queued'), sample('d1-network-lost'), sample('rate-limited-429')], lines)
     expect(await run('SELECT 1 AS n')).toEqual([{ n: 1 }])
     expect(lines).toEqual([
-      'A door read was retried: a D1 read through wrangler (a 5xx from the API), try 2 of 4.',
-      'A door read was retried: a D1 read through wrangler (a network error), try 3 of 4.',
-      'A door read was retried: a D1 read through wrangler (a timeout), try 4 of 4.',
+      'A door read was retried: a D1 read through wrangler (D1 overloaded), try 2 of 4.',
+      'A door read was retried: a D1 read through wrangler (a transient D1 error), try 3 of 4.',
+      'A door read was retried: a D1 read through wrangler (a 429 from the API), try 4 of 4.',
     ])
+    const again: string[] = []
+    expect(await runner([sample('connection-refused'), { status: null, stdout: '', timedOut: true }], again)('SELECT 1 AS n')).toEqual([{ n: 1 }])
+    expect(again.map((l) => /\((.*)\)/.exec(l)![1])).toEqual(['a network error', 'a timeout'])
   })
 
-  it('an auth refusal, an unknown failure or a write never retries: the first error stops it', async () => {
+  it('an auth refusal, a SQL error or a write never retries: the first error stops it', async () => {
     const lines: string[] = []
     const argv: string[][] = []
-    // A 403 stops at once, even when the output also reads like a 5xx.
-    await expect(runner([{ status: 1, stdout: '', output: 'Authentication error [code: 10000] 403 (and a 503 before it)' }], lines, argv)('SELECT 1')).rejects.toThrow('wrangler d1 execute exited 1')
-    await expect(runner([{ status: 1, stdout: '', output: 'no such table: memories' }], lines, argv)('SELECT 1')).rejects.toThrow('wrangler d1 execute exited 1')
-    // A write that timed out or met a 5xx may have landed: never sent again.
-    await expect(runner([{ status: null, stdout: '' }], lines, argv)("INSERT INTO t VALUES (1)")).rejects.toThrow(/did not end/)
-    await expect(runner([{ status: 1, stdout: '', output: '503 Service Unavailable' }], lines, argv)('SELECT 1; DELETE FROM t')).rejects.toThrow('exited 1')
-    expect(argv).toHaveLength(4)
+    await expect(runner([sample('auth-10000')], lines, argv)('SELECT 1')).rejects.toThrow('wrangler d1 execute exited 1')
+    await expect(runner([sample('sqlite-error')], lines, argv)('SELECT 1')).rejects.toThrow('wrangler d1 execute exited 1')
+    // A write met by D1 overloaded, or that timed out, may have landed: never sent again.
+    await expect(runner([sample('d1-overloaded-queued')], lines, argv)('INSERT INTO t VALUES (1)')).rejects.toThrow('exited 1')
+    await expect(runner([{ status: null, stdout: '', timedOut: true }], lines, argv)('UPDATE t SET a = 1')).rejects.toThrow(/did not end/)
+    await expect(runner([sample('d1-network-lost')], lines, argv)('SELECT 1; DELETE FROM t')).rejects.toThrow('exited 1')
+    expect(argv).toHaveLength(5)
     expect(lines).toEqual([])
   })
 
-  it('reads are one SELECT only; the labels never carry the output', () => {
+  it('reads are one SELECT only', () => {
     expect(readOnlySql('  select * from t')).toBe(true)
     expect(readOnlySql('SELECT 1;')).toBe(true)
     expect(readOnlySql('SELECT 1; DELETE FROM t')).toBe(false)
     expect(readOnlySql('WITH x AS (SELECT 1) INSERT INTO t SELECT * FROM x')).toBe(false)
     expect(readOnlySql('UPDATE t SET a = 1')).toBe(false)
-    expect(wranglerTransient({ status: 1, stdout: '', output: 'secret-host 429 Too Many Requests' })).toBe('a 429 from the API')
-    expect(wranglerTransient({ status: 1, stdout: '', output: 'Unauthorized' })).toBeNull()
   })
 
   const ACCOUNT = '0123456789abcdef0123456789abcdef'
@@ -95,7 +131,6 @@ describe('#691: a transient door error retries, a permanent one stops at once', 
     lines.length = 0
     await expect(reader([() => json(403, {})]).preflight()).rejects.toThrow(/answered 403: CLOUDFLARE_API_TOKEN lacks R2 read/)
     expect(calls).toBe(1)
-    // A 5xx on every try: the status is named as before, after 4 tries.
     calls = 0
     await expect(reader([() => json(502, {}), () => json(502, {}), () => json(502, {}), () => json(502, {})]).preflight()).rejects.toThrow('R2 preflight answered 502')
     expect(calls).toBe(4)
@@ -103,9 +138,46 @@ describe('#691: a transient door error retries, a permanent one stops at once', 
   })
 })
 
-describe('#690: the deadline kills the whole process group', () => {
+describe('#712: one call at a time, and a retry is progress', () => {
+  it('oneAtATime runs work in the order asked, one at a time, and goes on after a rejection (#714)', async () => {
+    const log: string[] = []
+    const job = (name: string, ms: number, fail = false) => () => new Promise<string>((resolve, reject) => {
+      log.push(`start ${name}`)
+      setTimeout(() => { log.push(`end ${name}`); if (fail) reject(new Error(name)); else resolve(name) }, ms)
+    })
+    const a = oneAtATime(job('a', 30))
+    const b = oneAtATime(job('b', 5, true))
+    const c = oneAtATime(job('c', 1))
+    await expect(a).resolves.toBe('a')
+    await expect(b).rejects.toThrow('b')
+    await expect(c).resolves.toBe('c')
+    expect(log).toEqual(['start a', 'end a', 'start b', 'end b', 'start c', 'end c'])
+  })
+
+  it('two reads asked for at once run one after the other, never together', async () => {
+    let running = 0
+    let most = 0
+    const run = wranglerRunner({ ...D1, spawn: async () => { running++; most = Math.max(most, running); await new Promise((r) => setTimeout(r, 10)); running--; return OK } })
+    const other = wranglerRunner({ ...D1, spawn: async () => { running++; most = Math.max(most, running); await new Promise((r) => setTimeout(r, 10)); running--; return OK } })
+    await Promise.all([run('SELECT 1'), run('SELECT 2'), other('SELECT 3')])
+    expect(most).toBe(1)
+  })
+
+  it('the product target\'s door runner: each retry of a read counts as progress and is reported; the call\'s end counts too', async () => {
+    let progress = 0
+    const lines: string[] = []
+    const results = [sample('d1-overloaded-queued'), sample('d1-network-lost')]
+    const sql = doorSql({ env: { INHOUSE_EVAL_D1_NAME: 'inhouse-sbx-eval-db', INHOUSE_EVAL_WRANGLER_CONFIG: 'c', CF_SANDBOX_ACCOUNT_ID: 'acct' }, readConfig: D1.readConfig, progress: () => { progress++ }, onRetry: (l) => lines.push(l), spawn: () => results.shift() ?? OK, ...noWait })
+    expect(await sql('SELECT 1 AS n')).toEqual([{ n: 1 }])
+    // Two retries and the call's end.
+    expect(progress).toBe(3)
+    expect(lines).toHaveLength(2)
+  })
+})
+
+describe('#690 and #711: the deadline kills npx and everything under it; nothing outlives the run', () => {
   // A stand-in for `npx wrangler`: a shell that starts a long-lived child (as npx starts wrangler), writes its pid, waits.
-  const stub = (body: string) => {
+  const stub = (body = 'sleep 30 &\necho $! > "$PIDFILE"\nwait') => {
     const dir = mkdtempSync(path.join(tmpdir(), 'wrangler-stub-'))
     const bin = path.join(dir, 'wrangler')
     writeFileSync(bin, `#!/bin/sh\n${body}\n`)
@@ -125,25 +197,63 @@ describe('#690: the deadline kills the whole process group', () => {
     while (alive(pid) && Date.now() < deadline) await new Promise((r) => setTimeout(r, 20))
     return !alive(pid)
   }
+  const childOf = (pidFile: string) => Number(readFileSync(pidFile, 'utf8'))
+  /** The run in miniature (fixtures/wrangler-holder.ts), in its own process group, as a job runner starts one. */
+  const holder = (bin: string, pidFile: string, mode: 'wait' | 'exit') => {
+    const p = spawn(process.execPath, [path.join(import.meta.dirname, 'fixtures/wrangler-holder.ts'), bin, pidFile, mode], { stdio: ['ignore', 'pipe', 'inherit'], detached: true })
+    const ready = new Promise<void>((resolve) => { p.stdout!.on('data', (d: Buffer) => { if (d.toString().includes('ready')) resolve() }) })
+    const exited = new Promise<void>((resolve) => p.on('exit', () => resolve()))
+    return { p, ready, exited }
+  }
 
-  it('a call past its deadline: the leader and the child under it are both killed, and its status is null', async () => {
-    const { bin, pidFile } = stub('sleep 30 &\necho $! > "$PIDFILE"\nwait')
-    const r = await spawnWrangler(['d1', 'execute'], { PATH: process.env.PATH, PIDFILE: pidFile }, { bin: [bin], timeoutMs: 300 })
+  it('a call past its deadline: npx and the child under it are both killed, and its status is null', async () => {
+    const { bin, pidFile } = stub()
+    const r = await spawnWrangler(['d1', 'execute'], { PATH: process.env.PATH, PIDFILE: pidFile }, { bin: [bin], timeoutMs: 2_000 })
     expect(r).toMatchObject({ status: null, timedOut: true })
-    const child = Number(readFileSync(pidFile, 'utf8'))
-    expect(child).toBeGreaterThan(0)
-    expect(await gone(child)).toBe(true)
+    expect(await gone(childOf(pidFile))).toBe(true)
   })
 
   it('a command that can\'t start is a refusal, not a retry', async () => {
     await expect(spawnWrangler([], { PATH: process.env.PATH }, { bin: [path.join(tmpdir(), 'no-such-wrangler-bin')] })).rejects.toThrow(new DoorRefusal('wrangler could not start (ENOENT)'))
   })
 
-  it('a call that ends: its answer comes back, and a child it left in its group is killed too', async () => {
-    const { bin, pidFile } = stub('sleep 30 > /dev/null 2>&1 &\necho $! > "$PIDFILE"\necho \'[{"results":[]}]\'')
-    const r = await spawnWrangler(['d1', 'execute'], { PATH: process.env.PATH, PIDFILE: pidFile }, { bin: [bin], timeoutMs: 10_000 })
-    expect(r).toMatchObject({ status: 0, stdout: '[{"results":[]}]\n', timedOut: false })
-    expect(await gone(Number(readFileSync(pidFile, 'utf8')))).toBe(true)
+  it('a call that ends: its answer comes back with its status', async () => {
+    const { bin } = stub('echo \'[{"results":[]}]\'')
+    expect(await spawnWrangler(['d1', 'execute'], { PATH: process.env.PATH }, { bin: [bin], timeoutMs: 10_000 })).toMatchObject({ status: 0, stdout: '[{"results":[]}]\n', timedOut: false })
+  })
+
+  it('a call that exits just before its deadline while its output is still open is its exit, never a false timeout (#713)', async () => {
+    // The stub answers and exits at once; a child it leaves holds the output open past the 300 ms deadline.
+    const { bin } = stub('sleep 1 &\necho \'[{"results":[]}]\'')
+    const r = await spawnWrangler(['d1', 'execute'], { PATH: process.env.PATH }, { bin: [bin], timeoutMs: 300 })
+    expect(r).toMatchObject({ status: 0, timedOut: false, stdout: '[{"results":[]}]\n' })
+  })
+
+  it('a SIGKILL to the run\'s whole process group takes the call\'s processes with it: no orphan (#711)', async () => {
+    const { bin, pidFile } = stub()
+    const h = holder(bin, pidFile, 'wait')
+    await h.ready
+    const child = childOf(pidFile)
+    expect(alive(child)).toBe(true)
+    process.kill(-h.p.pid!, 'SIGKILL')
+    await h.exited
+    expect(await gone(child)).toBe(true)
+  })
+
+  it('the run\'s exit with a call still running kills the call and the child under it (#712: the exit hook)', async () => {
+    const { bin, pidFile } = stub()
+    const h = holder(bin, pidFile, 'exit')
+    await h.exited
+    expect(await gone(childOf(pidFile))).toBe(true)
+  })
+
+  it('a hangup cancels the run like a Ctrl-C or a job stop, with its own exit code (#711)', () => {
+    const proc = new EventEmitter()
+    const got: [string, number][] = []
+    listenForCancel((s, c) => got.push([s, c]), proc as unknown as NodeJS.Process)
+    for (const s of ['SIGINT', 'SIGHUP', 'SIGTERM']) proc.emit(s)
+    expect(got).toEqual([['SIGINT', 130], ['SIGHUP', 129], ['SIGTERM', 143]])
+    expect(CANCEL_SIGNALS.map(([s]) => s)).toContain('SIGHUP')
   })
 })
 
