@@ -7,7 +7,7 @@ import { NO_ACTIONS_LINE } from './actions.ts'
 
 describe('the system prompt v1', () => {
   it('carries the softer memory rule, not the reflex', () => {
-    expect(SYSTEM_PROMPT_VERSION).toBe(5)
+    expect(SYSTEM_PROMPT_VERSION).toBe(6)
     expect(SYSTEM_PROMPT_V1).toContain('search memory when the question could depend on saved context')
     expect(SYSTEM_PROMPT_V1).toContain("You don't need to search on every chat.")
     expect(SYSTEM_PROMPT_V1).not.toMatch(/before answering/i)

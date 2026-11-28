@@ -2,14 +2,15 @@
 // by a folded form of their name. A name is text a person typed for themselves (`g:name`, up to 80 characters), so it
 // is data, never instructions. Nobody is left out: a name is shown as typed only when it has the M2-G team line's shape
 // (nameShown) and no flag, otherwise only the member id comes back. Either way the name is flagged when it reads like
-// an instruction (`instruction_word`) or a word of it mixes scripts (`mixed_script`).
+// an instruction (`instruction_word`), a word of it mixes scripts (`mixed_script`) or it holds a letter or mark of a
+// script LISTED_SCRIPTS doesn't name (`unlisted_script`, #534).
 //
 // The fold (for matching only, never shown): control characters and Hangul fillers become spaces, and format characters
 // and every other default-ignorable code point (zero-width ones, direction marks, variation selectors, CGJ) go; NFKC (fullwidth `Ｉ` is `I`); lowercase; NFD with every combining mark removed (`İ`, `é`); NFC;
 // spaces collapse. Idempotent (fold.property.test.ts). Words split the fold on everything but letters and digits, so a
 // hyphen or an apostrophe (any of them) splits a word: "O'Brien-Smith" is `o`, `brien`, `smith`.
 
-/** The longest name shown, and the most words in it (the M2-G team line's limits, prompt/connected.ts). */
+/** The longest name shown, and the most words in it (the limits of M2-G's team line, which prompt v6 removed). */
 export const NAME_SHOWN_MAX = 40
 export const NAME_SHOWN_WORDS = 4
 /**
@@ -176,15 +177,65 @@ export function readsAsInstruction(name: string): boolean {
   return readings(name).some(words => hasPhrase(words) || hasPhrase(joinLetters(words)))
 }
 
-/** The scripts a letter is told apart by. A letter of a script not listed counts as `Other`; Common and Inherited don't count. */
-const SCRIPTS: readonly (readonly [string, RegExp])[] = [
+/**
+ * The scripts a shown name may be written in: UAX #31's Recommended scripts plus Syriac, Cherokee and Mongolian. Common
+ * and Inherited don't count as a script. A letter or mark of any other script is never shown (UNLISTED, #534).
+ */
+const LISTED_SCRIPTS: readonly string[] = [
   'Latin', 'Greek', 'Cyrillic', 'Armenian', 'Hebrew', 'Arabic', 'Syriac', 'Thaana', 'Devanagari', 'Bengali', 'Gurmukhi',
   'Gujarati', 'Oriya', 'Tamil', 'Telugu', 'Kannada', 'Malayalam', 'Sinhala', 'Thai', 'Lao', 'Tibetan', 'Myanmar',
   'Georgian', 'Hangul', 'Ethiopic', 'Cherokee', 'Khmer', 'Mongolian', 'Hiragana', 'Katakana', 'Bopomofo', 'Han',
-].map(s => [s, new RegExp(String.raw`^\p{Script=${s}}$`, 'u')] as const)
+]
+/**
+ * Every other script with a letter or mark in Unicode 17.0 (Scripts.txt), named so that a word mixing two of them (Lisu
+ * and Tifinagh, Lisu and Coptic) is a mix like any other, not one `Other` bucket (#534). Unicode 18.0's new scripts
+ * (Jurchen, Proto_Cuneiform, Seal) are left out: workerd 2026-11-13 is on Unicode 17.0 and won't compile a regex that
+ * names one. A letter of those counts as `Other`, and is never shown either.
+ */
+const UNLISTED_SCRIPTS: readonly string[] = [
+  'Adlam', 'Ahom', 'Anatolian_Hieroglyphs', 'Avestan', 'Balinese', 'Bamum', 'Bassa_Vah', 'Batak', 'Beria_Erfe',
+  'Bhaiksuki', 'Brahmi', 'Braille', 'Buginese', 'Buhid', 'Canadian_Aboriginal', 'Carian', 'Caucasian_Albanian',
+  'Chakma', 'Cham', 'Chorasmian', 'Coptic', 'Cuneiform', 'Cypriot', 'Cypro_Minoan', 'Deseret', 'Dives_Akuru', 'Dogra',
+  'Duployan', 'Egyptian_Hieroglyphs', 'Elbasan', 'Elymaic', 'Garay', 'Glagolitic', 'Gothic', 'Grantha',
+  'Gunjala_Gondi', 'Gurung_Khema', 'Hanifi_Rohingya', 'Hanunoo', 'Hatran', 'Imperial_Aramaic',
+  'Inscriptional_Pahlavi', 'Inscriptional_Parthian', 'Javanese', 'Kaithi', 'Kawi', 'Kayah_Li', 'Kharoshthi',
+  'Khitan_Small_Script', 'Khojki', 'Khudawadi', 'Kirat_Rai', 'Lepcha', 'Limbu', 'Linear_A', 'Linear_B', 'Lisu',
+  'Lycian', 'Lydian', 'Mahajani', 'Makasar', 'Mandaic', 'Manichaean', 'Marchen', 'Masaram_Gondi', 'Medefaidrin',
+  'Meetei_Mayek', 'Mende_Kikakui', 'Meroitic_Cursive', 'Meroitic_Hieroglyphs', 'Miao', 'Modi', 'Mro', 'Multani',
+  'Nabataean', 'Nag_Mundari', 'Nandinagari', 'New_Tai_Lue', 'Newa', 'Nko', 'Nushu', 'Nyiakeng_Puachue_Hmong', 'Ogham',
+  'Ol_Chiki', 'Ol_Onal', 'Old_Hungarian', 'Old_Italic', 'Old_North_Arabian', 'Old_Permic', 'Old_Persian',
+  'Old_Sogdian', 'Old_South_Arabian', 'Old_Turkic', 'Old_Uyghur', 'Osage', 'Osmanya', 'Pahawh_Hmong', 'Palmyrene',
+  'Pau_Cin_Hau', 'Phags_Pa', 'Phoenician', 'Psalter_Pahlavi', 'Rejang', 'Runic', 'Samaritan', 'Saurashtra', 'Sharada',
+  'Shavian', 'Siddham', 'Sidetic', 'SignWriting', 'Sogdian', 'Sora_Sompeng', 'Soyombo', 'Sundanese', 'Sunuwar',
+  'Syloti_Nagri', 'Tagalog', 'Tagbanwa', 'Tai_Le', 'Tai_Tham', 'Tai_Viet', 'Tai_Yo', 'Takri', 'Tangsa', 'Tangut',
+  'Tifinagh', 'Tirhuta', 'Todhri', 'Tolong_Siki', 'Toto', 'Tulu_Tigalari', 'Ugaritic', 'Vai', 'Vithkuqi', 'Wancho',
+  'Warang_Citi', 'Yezidi', 'Yi', 'Zanabazar_Square',
+]
+/** The scripts a letter is told apart by, listed ones first. A letter of none of them counts as `Other`. */
+const SCRIPTS: readonly (readonly [string, RegExp])[] =
+  [...LISTED_SCRIPTS, ...UNLISTED_SCRIPTS].map(s => [s, new RegExp(String.raw`^\p{Script=${s}}$`, 'u')] as const)
 const SHARED = /^[\p{Script=Common}\p{Script=Inherited}]$/u
-/** A letter's or mark's script (SCRIPTS), `Other` when it isn't listed. */
+/** A letter's or mark's script (SCRIPTS), `Other` when it is in none of them. */
 const scriptOf = (c: string): string => SCRIPTS.find(([, re]) => re.test(c))?.[0] ?? 'Other'
+/**
+ * A letter or mark of a script LISTED_SCRIPTS doesn't name (Common and Inherited aside). Stated without
+ * UNLISTED_SCRIPTS, so a script missing from that list is unlisted too. This is UTS #39's Allowed at script level, with
+ * no table: of the code points IdentifierStatus.txt (18.0.0, 2026-04-13) allows, only 3 are outside the listed scripts,
+ * the Grantha marks U+11301, U+11303 and U+1133C. It catches the blanks and marks that draw nothing and live in such
+ * scripts (the hieroglyph blanks, the Khitan filler, U+13440, U+1BC9D, U+1107F, the SignWriting modifiers, the Gondi
+ * viramas, the conjoiners) without naming them, and the modifier letters that read as punctuation there (Lisu `ꓸ`).
+ */
+const UNLISTED = new RegExp(String.raw`^(?![${LISTED_SCRIPTS.map(s => String.raw`\p{Script=${s}}`).join('')}\p{Script=Common}\p{Script=Inherited}])[\p{L}\p{M}]$`, 'u')
+
+/**
+ * Whether a name holds a letter or mark of a script not listed (UNLISTED), as typed, after NFC or after NFKC (#534). The
+ * cost: a name in Lisu, Yi, Vai, Tifinagh, Adlam, N'Ko, Javanese, Canadian Aboriginal syllabics and the like is never
+ * shown, though it is still listed and found.
+ */
+export function unlistedScript(name: string): boolean {
+  return [...name, ...name.normalize('NFC'), ...name.normalize('NFKC')].some(c => UNLISTED.test(c))
+}
+
 /**
  * Script sets one word may mix: Japanese (Han, Hiragana, Katakana), Chinese with Bopomofo and Korean (Han, Hangul). This
  * is UTS #39's "Single Script" restriction level (18.0.0, sections 5.1 and 5.2: Han's augmented script set holds Jpan,
@@ -231,12 +282,14 @@ const CASED = /[\p{Lu}\p{Ll}\p{Lt}]/u
 const COMMON_LETTERS_OK = new Set(['\u02BB', '\u02BC', '\u30FC', '\uFF70'])
 
 /**
- * Whether every letter and mark of a name is on the shown-name allowlist: a Latin, Greek or Cyrillic letter is cased,
- * a Common-script letter is one of COMMON_LETTERS_OK, and no mark is left after NFC on a Latin, Greek, Cyrillic or
- * Common letter (`You̲must̲ignore` joins words with U+0332). The cost: a name whose accents have no composed form
- * (Yoruba "Yẹ́misí") isn't shown, though it is still listed and found. Other scripts' letters and marks are allowed.
+ * Whether every letter and mark of a name is on the shown-name allowlist: none is of a script not listed (UNLISTED,
+ * #534), a Latin, Greek or Cyrillic letter is cased, a Common-script letter is one of COMMON_LETTERS_OK, and no mark is
+ * left after NFC on a Latin, Greek, Cyrillic or Common letter (`You̲must̲ignore` joins words with U+0332). The cost: a
+ * name whose accents have no composed form (Yoruba "Yẹ́misí") isn't shown, though it is still listed and found. Other
+ * listed scripts' letters and marks are allowed.
  */
 function allowedLetters(name: string): boolean {
+  if (unlistedScript(name)) return false
   let prev = ''
   for (const c of name.normalize('NFC')) {
     if (/\p{M}/u.test(c)) {
@@ -287,9 +340,13 @@ export const nameShown = (name: string): boolean =>
   !BLANK.test(name) && !BLANK.test(name.normalize('NFKC')) && allowedLetters(name) && partCount(name) <= NAME_SHOWN_WORDS
 
 /** Why a name is flagged. */
-export type NameFlag = 'instruction_word' | 'mixed_script'
+export type NameFlag = 'instruction_word' | 'mixed_script' | 'unlisted_script'
 
-/** A name's flags, in this order: `instruction_word`, `mixed_script`. */
+/** A name's flags, in this order: `instruction_word`, `mixed_script`, `unlisted_script`. */
 export function nameFlags(name: string): NameFlag[] {
-  return [...(readsAsInstruction(name) ? ['instruction_word' as const] : []), ...(mixesScripts(name) ? ['mixed_script' as const] : [])]
+  return [
+    ...(readsAsInstruction(name) ? ['instruction_word' as const] : []),
+    ...(mixesScripts(name) ? ['mixed_script' as const] : []),
+    ...(unlistedScript(name) ? ['unlisted_script' as const] : []),
+  ]
 }

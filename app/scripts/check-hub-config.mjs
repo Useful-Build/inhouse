@@ -19,7 +19,10 @@
 //     (Stage 1 M2-C);
 //   - has a `main` other than hub/index/index.ts;
 //   - sets `worker_loaders` as anything but exactly one entry `{ "binding": "LOADER" }` (P5 W2's code mode; absent is
-//     allowed: code mode then has no loader).
+//     allowed: code mode then has no loader);
+//   - sets `d1_databases` at all (Stage 1 M3, #589): the deployable hub holds no database. Only the eval hub, the hub's
+//     test build, binds one (EVAL_WRITE_LOG, the eval write log and fake Slack workspace; check-product-config.mjs
+//     `--sandbox --eval --hub` locks that config).
 // Not checked: `compatibility_flags` (allowed; a flag changes runtime behaviour, not the route, secret or bundle rules).
 // It passes on wrangler.hub.jsonc and must FAIL on wrangler.hub.test.jsonc (CI asserts both). No dependencies: the
 // hub's CI job doesn't install app/. scripts/check-hub-config.test.mjs runs it on one fixture per rule
@@ -153,6 +156,7 @@ export function checkHubConfig(config) {
     fail('write-signin-migration', 'no migration { tag: "v2" } with `new_sqlite_classes` containing "ShopifyWriteSignIn"')
   }
   if (config.main !== 'hub/index/index.ts') fail('main', '`main` must be "hub/index/index.ts"')
+  if (has(config, 'd1_databases')) fail('database', '`d1_databases` is set; the deployable hub holds no database (only the eval hub, the test build, binds one)')
   if (has(config, 'worker_loaders')) {
     const loaders = config.worker_loaders
     const one = Array.isArray(loaders) && loaders.length === 1 ? loaders[0] : null
@@ -182,5 +186,5 @@ if (process.argv[1] && import.meta.url === pathToFileURL(realpathSync(process.ar
     for (const f of failures) console.error(`    ${f}`)
     process.exit(1)
   }
-  console.log(`ok    ${path}: no route or other public surface, no env block, no test build, secrets required and not in the file, SignIn bound and migrated, the write SignIn bound with its v2 migration.`)
+  console.log(`ok    ${path}: no route or other public surface, no env block, no test build, secrets required and not in the file, SignIn bound and migrated, the write SignIn bound with its v2 migration, no database.`)
 }

@@ -1,0 +1,40 @@
+{
+ "row": {
+  "caseId": "R06",
+  "cat": "recall",
+  "pair": null,
+  "rep": 1,
+  "chat": 1,
+  "pass": true,
+  "checks": {
+   "tool": true,
+   "answer": true
+  },
+  "called": [
+   "memory_search"
+  ],
+  "toolSearches": 0,
+  "answer": "The Moss glaze is discontinued. Offer Fern instead.",
+  "costUsd": 0,
+  "runOk": true
+ },
+ "result": {
+  "runOk": true,
+  "usage": {
+   "inputTokens": 0,
+   "cacheCreationTokens": 0,
+   "cacheReadTokens": 0,
+   "outputTokens": 0
+  },
+  "costUsd": 0,
+  "answer": "The Moss glaze is discontinued. Offer Fern instead.",
+  "toolCalls": [
+   {
+    "name": "mcp__inhouse__memory_search",
+    "inputSha256": "d63c61b1a761605065ae9b794d45a271bf0a307fd3f26b34f9656bbbfc3e9c5e",
+    "inputExcerpt": "{\"query\":\"Moss glaze\"}",
+    "resultExcerpt": "The Moss glaze is discontinued. Offer Fern instead."
+   }
+  ]
+ }
+}

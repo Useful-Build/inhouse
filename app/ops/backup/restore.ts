@@ -1,7 +1,8 @@
 // The restore from an R2 backup (P8 G1; plan "Design notes", a restore step by step, steps 1 and 2). In order:
 //  1. snapshot the live audit log and list the deletion log to `restore/<restoreId>/snapshot/`, before anything is
 //     written anywhere (a readable `live` whose snapshot fails stops the restore);
-//  2. check the backup (manifest, format, migration level, columns, every part's rows and sha256);
+//  2. check the backup (manifest, format, the same set of applied migrations as the target (#585), columns, every
+//     part's rows and sha256);
 //  3. check the target is a freshly migrated database (only rows identical to the backup's, the service rows, or a
 //     named migration-seeded row, which the write overwrites with the backup's values);
 //  4. write each part as one statement, members before the audit log;
@@ -18,6 +19,7 @@ import { tables as realRegistry } from '../tables/index.ts'
 import type { TableEntry } from '../tables/types.ts'
 import { timeId } from './backup.ts'
 import { BackupError, RestoreRefusal } from './errors.ts'
+import { migrationMismatch, migrationSet } from './migrations.ts'
 import { TableWriter, appendRows, encodeRow, insertPartSql, isRowLine, keyRows, linesAsArray, newDigest, maxIdSelect, partLines, sha256, snapshotSelect, tableColumns, toHex } from './format.ts'
 import { BackupManifestSchema, DeletionLogListSchema, RestoreRecordSchema, SnapshotManifestSchema } from './manifest.ts'
 import type { BackupManifest, RestoreRecord, TableManifest } from './manifest.ts'
@@ -227,10 +229,19 @@ async function checkParts(bucket: R2Bucket, manifest: BackupManifest, existing: 
   return { skip, overwrite }
 }
 
-async function targetMigration(target: D1Database): Promise<string | null> {
+/**
+ * The target's applied migrations against the backup's (#585), null when they match. A manifest with `migrations` needs
+ * the target's set equal to it, apply order aside; one without (taken before #585) keeps the old rule, the last row
+ * by id equal to its `migration`.
+ */
+async function migrationRefusal(target: D1Database, manifest: BackupManifest): Promise<string | null> {
   const has = await target.prepare("SELECT 1 AS one FROM sqlite_master WHERE type = 'table' AND name = 'd1_migrations'").first<{ one: number }>()
-  if (!has) return null
-  return (await target.prepare('SELECT name FROM d1_migrations ORDER BY id DESC LIMIT 1').first<{ name: string }>())?.name ?? null
+  if (manifest.migrations !== undefined) {
+    const names = has ? (await target.prepare('SELECT name FROM d1_migrations').all<{ name: string }>()).results.map(r => r.name) : []
+    return migrationMismatch(manifest.migrations, migrationSet(names))
+  }
+  const last = has ? (await target.prepare('SELECT name FROM d1_migrations ORDER BY id DESC LIMIT 1').first<{ name: string }>())?.name ?? null : null
+  return last === manifest.migration ? null : `backup ${manifest.migration}, target ${last ?? 'none'}`
 }
 
 /** Reads one table back with the backup's own reader and format: its row count and sha256. */
@@ -276,8 +287,8 @@ export async function restore(deps: RestoreDeps): Promise<RestoreRecord> {
     // 2. The backup, checked before any write.
     manifest = await loadManifest(bucket, backupId)
     if (manifest.format !== 1) throw new RestoreRefusal('format_unsupported', String(manifest.format))
-    const migration = await targetMigration(target)
-    if (migration !== manifest.migration) throw new RestoreRefusal('migration_mismatch', `backup ${manifest.migration}, target ${migration ?? 'none'}`)
+    const migrations = await migrationRefusal(target, manifest)
+    if (migrations !== null) throw new RestoreRefusal('migration_mismatch', migrations)
     let rules: TableRule[]
     let derived: DerivedTable[]
     try { ({ rules, derived } = await canonicalTables(target, registry)) } catch (err) {

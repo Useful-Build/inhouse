@@ -11,7 +11,7 @@
     "typecheck": "tsc --noEmit -p .",
     "test:node": "vitest run --project node",
     "test:workers": "vitest run --project workers",
-    "test": "vitest run --project node --project workers",
+    "test": "vitest run --project node --project workers --project workers-eval",
     "test:live": "vitest run --project live",
     "types": "wrangler types -c ../wrangler.hub.jsonc --strict-vars false worker-configuration.d.ts",
     "bundle": "wrangler deploy --dry-run --outdir \"$PWD/../dist-hub\" --metafile \"$PWD/../dist-hub/bundle-meta.json\" -c ../wrangler.hub.jsonc",

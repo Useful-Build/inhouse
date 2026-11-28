@@ -1,0 +1,32 @@
+{
+ "row": {
+  "caseId": "T07",
+  "cat": "choice",
+  "pair": "approval_request/notification_send",
+  "rep": 3,
+  "chat": 1,
+  "pass": true,
+  "checks": {
+   "forbidden": true,
+   "answer": true,
+   "answerNot": true
+  },
+  "called": [],
+  "toolSearches": 0,
+  "answer": "I can't refund here yet: no actions are switched on for this brand, so I can't m",
+  "costUsd": 0,
+  "runOk": true
+ },
+ "result": {
+  "runOk": true,
+  "usage": {
+   "inputTokens": 0,
+   "cacheCreationTokens": 0,
+   "cacheReadTokens": 0,
+   "outputTokens": 0
+  },
+  "costUsd": 0,
+  "answer": "I can't refund here yet: no actions are switched on for this brand, so I can't m",
+  "toolCalls": []
+ }
+}

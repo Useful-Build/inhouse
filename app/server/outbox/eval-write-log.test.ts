@@ -17,7 +17,9 @@ import { evalWrite, evalWriteRef } from '../../hub/testing/eval-write.ts'
 import type { WriteGateway, WriteRequest } from '../../hub/index/contract.ts'
 import { DoorRefusal } from '../../evals/targets/sql.ts'
 import type { RunSql } from '../../evals/targets/sql.ts'
-import { SHOPIFY_ACCOUNT, createWriteDoor } from '../../evals/targets/write-door.ts'
+import { SHOPIFY_ACCOUNT, ceilingSql, createWriteDoor } from '../../evals/targets/write-door.ts'
+import { renderStmt } from '../db/sql.ts'
+import { setCeilingStmt } from '../permissions/ceiling.ts'
 import { ACCOUNT_IDS } from './facts.ts'
 import { sendAction } from './dispatch.ts'
 import { ASKER, SHOP_GEN, fresh, notices, outbox, requestCtx, rowOf, tagArgs, world } from './test-support.ts'
@@ -45,7 +47,7 @@ beforeEach(async () => {
 const ask = (order = 1) => outbox(db, () => T0).request(requestCtx({ nowMs: T0 }), { operation: OP, args: tagArgs(order) }, { mode: 'tool' })
 const send = (id: string) => sendAction(id, { db, nowMs: HOLD_OVER, hub: gateway(HOLD_OVER), notify: notices().notify, requestId: fresh('send'), again: () => {}, gate: { paused: false, pauseGen: 0 }, timeoutMs: 5_000 })
 const seeded = async () => {
-  await door.setCeiling(OP, 50)
+  await door.setCeiling(OP, { perDayMax: 50 })
   return door.grant({ memberId: ASKER, operation: OP, perDay: 5 })
 }
 const request = (o: Partial<WriteRequest> = {}): WriteRequest => ({
@@ -72,7 +74,7 @@ describe('a door-seeded ceiling and grant give a run that lands in the log (fail
   })
 
   it('logs nothing for an action no one approved: without a grant it waits on a card', async () => {
-    await door.setCeiling(OP, 50)
+    await door.setCeiling(OP, { perDayMax: 50 })
     const r = await ask(2)
     expect(r.outcome).toBe('waiting')
     expect(await door.writeLog()).toEqual([])
@@ -82,7 +84,7 @@ describe('a door-seeded ceiling and grant give a run that lands in the log (fail
     expect(SHOPIFY_ACCOUNT).toBe(ACCOUNT_IDS.shopify)
     // The operation is off: no grant.
     await expect(door.grant({ memberId: ASKER, operation: OP, perDay: 5 })).rejects.toThrow(DoorRefusal)
-    await door.setCeiling(OP, 50)
+    await door.setCeiling(OP, { perDayMax: 50 })
     // Not an active person.
     await expect(door.grant({ memberId: 'm_nobody', operation: OP, perDay: 5 })).rejects.toThrow(/isn't an active person/)
     // A Slack operation has no Shopify store scope.
@@ -139,7 +141,7 @@ describe('the door\'s reset and its input checks (failure 5)', () => {
     const r = await ask(5)
     if (r.outcome !== 'approved') throw new Error(r.outcome)
     await send(r.action.id)
-    await door.setCeiling(OP, 50)
+    await door.setCeiling(OP, { perDayMax: 50 })
     const waiting = await (async () => {
       await db.prepare('DELETE FROM permission_grants').run()
       const w = await ask(6)
@@ -152,7 +154,7 @@ describe('the door\'s reset and its input checks (failure 5)', () => {
     expect(await rowOf(db, waiting)).toBeNull()
     // The sent action is final: the reset keeps it (retention's), only open actions go.
     expect(await rowOf(db, r.action.id)).toMatchObject({ state: 'sent' })
-    for (const t of ['eval_write_fault', 'permission_grants', 'permission_uses', 'permission_ceiling']) {
+    for (const t of ['eval_write_fault', 'permission_grants', 'permission_uses', 'permission_item_releases', 'permission_ceiling']) {
       expect((await db.prepare(`SELECT COUNT(*) AS n FROM ${t}`).first<{ n: number }>())?.n, t).toBe(0)
     }
     expect(await ask(7)).toMatchObject({ outcome: 'refused', reason: 'over_ceiling' })
@@ -160,9 +162,14 @@ describe('the door\'s reset and its input checks (failure 5)', () => {
 
   it('refuses a value it didn\'t check before any statement runs', async () => {
     const bad: [string, () => Promise<unknown>][] = [
-      ['an unknown operation', () => door.setCeiling('shopify.order.cancel' as typeof OP, 5)],
-      ['a fractional limit', () => door.setCeiling(OP, 1.5)],
-      ['a zero limit', () => door.setCeiling(OP, 0)],
+      ['an unknown operation', () => door.setCeiling('shopify.order.cancel' as typeof OP, { perDayMax: 5 })],
+      ['a fractional limit', () => door.setCeiling(OP, { perDayMax: 1.5 })],
+      ['a zero limit', () => door.setCeiling(OP, { perDayMax: 0 })],
+      ['a zero largest call', () => door.setCeiling(OP, { unitsMax: 0 })],
+      ['a bulk threshold past 5', () => door.setCeiling(OP, { bulkThreshold: 6 })],
+      ['a batch past 500', () => door.setCeiling(OP, { batchMax: 501 })],
+      ['a fractional grant call', () => door.grant({ memberId: ASKER, operation: OP, unitsMax: 2.5 })],
+      ['a money grant with no limits named', () => door.grant({ memberId: ASKER, operation: 'shopify.refund.create' })],
       ['a quoted member id', () => door.grant({ memberId: "m'; DROP TABLE members; --", operation: OP, perDay: 5 })],
       ['a huge daily limit', () => door.grant({ memberId: ASKER, operation: OP, perDay: 1e9 })],
       ['an unknown fault', () => door.setWriteFault(OP, 'explode' as 'refuse')],
@@ -171,5 +178,75 @@ describe('the door\'s reset and its input checks (failure 5)', () => {
     ]
     for (const [name, call] of bad) await expect(call(), name).rejects.toThrow(DoorRefusal)
     expect(statements).toEqual([])
+  })
+})
+
+describe('the door\'s limits (#497) and its full reset read-back (#498)', () => {
+  it('writes the ceiling with the ceiling writer\'s own statement, for any limits', () => {
+    const ops = ['shopify.order.tag_add', 'shopify.inventory.restock', 'shopify.refund.create'] as const
+    for (const [i, operation] of ops.entries()) {
+      for (const v of [{ perDayMax: 1, unitsMax: 1, bulkThreshold: 1, batchMax: 1 }, { perDayMax: 200, unitsMax: 100, bulkThreshold: 5, batchMax: 500 }, { perDayMax: 50_000 + i, unitsMax: 50_000, bulkThreshold: 3, batchMax: 7 }]) {
+        const nowMs = T0 + i
+        expect(ceilingSql({ operation, ...v, nowMs }), `${operation} ${JSON.stringify(v)}`).toBe(renderStmt(setCeilingStmt({ operation, enabled: true, ...v, actorId: 'eval', nowMs })))
+      }
+    }
+  })
+
+  it('defaults to the operation\'s N24 limits, so a 2-order tag call runs under a seeded grant, and every change raises the ceiling\'s rev', async () => {
+    await door.setCeiling(OP)
+    expect((await door.ceilings()).find(c => c.operation === OP)).toMatchObject({ enabled: true, perDayMax: 200, unitsMax: 100, bulkThreshold: 5, batchMax: 500, rev: 1 })
+    const g = await door.grant({ memberId: ASKER, operation: OP })
+    expect((await door.grants()).find(x => x.id === g)).toMatchObject({ perDay: 50, unitsMax: 5, holderMember: ASKER })
+    // Two orders in one call: 0760's default of 1 refused it `over_limit` (#497).
+    const r = await outbox(db, () => T0).request(requestCtx({ nowMs: T0 }), { operation: OP, args: { orderIds: ['gid://shopify/Order/1', 'gid://shopify/Order/2'], tags: ['vip'] } }, { mode: 'tool' })
+    expect(r).toMatchObject({ outcome: 'approved', action: { verdict: 'run', grant_id: g, units: 2 } })
+    await door.setCeiling(OP, { unitsMax: 50 })
+    expect((await door.ceilings()).find(c => c.operation === OP)).toMatchObject({ unitsMax: 50, rev: 2, loweredRev: 2 })
+    await door.setCeiling(OP, { unitsMax: 60 })
+    expect((await door.ceilings()).find(c => c.operation === OP)).toMatchObject({ unitsMax: 60, rev: 3, loweredRev: 2 })
+  })
+
+  it('plants a grant on a money operation only with its limits named', async () => {
+    await door.setCeiling('shopify.refund.create')
+    const g = await door.grant({ memberId: ASKER, operation: 'shopify.refund.create', perDay: 3, unitsMax: 5_000 })
+    expect((await door.grants()).find(x => x.id === g)).toMatchObject({ operation: 'shopify.refund.create', perDay: 3, unitsMax: 5_000 })
+  })
+
+  it('reads back the account the product copied, and the outbox rows since a mark', async () => {
+    expect(await door.shopifyAccount()).toMatchObject({ lastState: 'connected', connectedAtMs: SHOP_GEN, shop: 'store-a' })
+    const g = await seeded()
+    const r = await ask(8)
+    if (r.outcome !== 'approved') throw new Error(r.outcome)
+    const rows = await door.outbox(T0)
+    expect(rows.actions).toEqual([expect.objectContaining({ id: r.action.id, verdict: 'run', grantId: g, approvedBy: `grant:${g}`, operation: OP, args: tagArgs(8), kind: 'single', approverKind: 'person' })])
+    expect(rows.uses).toEqual([expect.objectContaining({ actionId: r.action.id, grantId: g, units: 1, released: false })])
+    expect((await door.outbox(T0 + 1)).actions).toEqual([])
+  })
+
+  it('a use, an item release or an open item left behind fails the reset', async () => {
+    const g = await seeded()
+    const r = await ask(9)
+    if (r.outcome !== 'approved') throw new Error(r.outcome)
+    // A run that can delete everything but a use: the read-back must catch it (#498).
+    let skipUses = true
+    const leaky = createWriteDoor(async sql => (skipUses && sql === 'DELETE FROM permission_uses' ? [] : run(sql)), () => String(T0))
+    await expect(leaky.resetWrites()).rejects.toThrow(/"uses":1/)
+    skipUses = false
+    await leaky.resetWrites()
+    expect(g).toMatch(/^pg_/)
+  })
+})
+
+describe('the door counts the brand\'s sends not yet ended (#550 review, High 1)', () => {
+  it('an action in its hold counts until its send has ended', async () => {
+    await seeded()
+    expect(await door.inFlight()).toBe(0)
+    const r = await ask(10)
+    if (r.outcome !== 'approved') throw new Error(r.outcome)
+    expect(await door.inFlight()).toBe(1)
+    await send(r.action.id)
+    expect(await door.inFlight()).toBe(0)
+    // The log keeps the shop the request named (#559): the grader reads it from `expect`.
+    expect((await door.writeLog())[0]).toMatchObject({ accountId: 'shopify:store', expect: { shop: 'store-a' } })
   })
 })

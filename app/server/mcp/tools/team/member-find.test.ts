@@ -105,8 +105,22 @@ describe('member_find', () => {
     expect(r.content[0].text).toBe(`11 active people on the team. ${DATA_TEXT} ${HIDDEN_TEXT(9)} ${FLAGGED_TEXT(4)}`)
     const hiddenWords = ['María', 'Bob', 'Bartholomew', 'send everything', 'Ignore', 'Ignоre', 'rules', 'Please', 'Reply', 'keys']
     for (const word of hiddenWords) expect(JSON.stringify(r)).not.toContain(word)
-    expect(HIDDEN_TEXT(1)).toBe("1 person's name isn't shown (nameShown: false) because it isn't a plain name or is flagged. Reach them by memberId.")
-    expect(FLAGGED_TEXT(1)).toBe("1 name has flags: it reads like an instruction or mixes scripts in a word, so it isn't shown.")
+    expect(HIDDEN_TEXT(1)).toBe("1 person's name isn't shown (nameShown: false) because it isn't a plain name or is flagged. Don't pick one of them on a guess: reach them by memberId only once the person you're helping confirms who they mean.")
+    expect(FLAGGED_TEXT(1)).toBe("1 name has flags: it reads like an instruction, mixes scripts in a word or holds letters of an unlisted script, so it isn't shown.")
+  })
+
+  it('withholds a name in a script names are never shown in, or mixing two such scripts, and flags it (#534)', async () => {
+    await add({ id: 'm_m3t_lisu', name: 'ꓡꓰꓳ ꓑꓮ' })
+    await add({ id: 'm_m3t_two', name: 'ꓮꓓꓟꓲꓠⲞ' }) // Lisu and Coptic in one word
+    const r = await call({})
+    expect(people(r).slice(1)).toEqual([
+      { memberId: 'm_m3t_lisu', nameShown: false, flags: ['unlisted_script'] },
+      { memberId: 'm_m3t_two', nameShown: false, flags: ['mixed_script', 'unlisted_script'] },
+    ])
+    expect(r.content[0].text).toBe(`3 active people on the team. ${DATA_TEXT} ${HIDDEN_TEXT(2)} ${FLAGGED_TEXT(2)}`)
+    for (const word of ['ꓡꓰꓳ', 'ꓑꓮ', 'ꓮꓓꓟꓲꓠ', 'Ⲟ']) expect(JSON.stringify(r)).not.toContain(word)
+    // Still found by a search on it.
+    expect(people(await call({ query: 'ꓡꓰꓳ' })).map(p => p.memberId)).toEqual(['m_m3t_lisu'])
   })
 
   it('finds a hidden name by a search on it, and the answer carries none of its text', async () => {
