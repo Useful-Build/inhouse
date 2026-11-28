@@ -1,4 +1,4 @@
-// TEMPORARY diagnostic for #607 (never merged), run 2. Passive: nothing here forces style between frames. A ResizeObserver
+// TEMPORARY diagnostic for #607 (never merged), run 3. Passive: nothing here forces style between frames. A ResizeObserver
 // on the steps list logs its height each time a frame changes it, with the opening animation's state, so a list that
 // stands at full height before it animates shows as a height that goes down (0, 231, 31, ...).
 import { fxFor, test } from './support/fx.js'
@@ -14,7 +14,14 @@ for (const copy of [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16]) test
     const content = () => document.querySelector<HTMLElement>('[data-answer] [data-steps] > [data-slot=trace-collapsible-content]')
     const d = { t0: 0, ro: [] as unknown[], ev: [] as unknown[] }
     ;(window as unknown as { __d3: typeof d }).__d3 = d
-    const anim = (c: HTMLElement) => { const a = c.getAnimations()[0]; return a ? [a.pending ? 'P' : a.playState[0], r1(a.currentTime), r1(a.startTime)] : ['-'] }
+    // Raw times (microseconds matter here): the animation's current time, its start time minus the clock, and whether its
+    // effect applies at all (progress is null in the before phase when nothing fills it).
+    const anim = (c: HTMLElement) => {
+      const a = c.getAnimations()[0]
+      if (!a) return ['-']
+      const t = a.effect!.getComputedTiming()
+      return [a.pending ? 'P' : a.playState[0], a.currentTime, a.startTime === null ? null : Number(a.startTime) - Number(document.timeline.currentTime), t.progress === null ? 'noeffect' : t.progress, getComputedStyle(c).animationFillMode]
+    }
     let ro: ResizeObserver | undefined
     window.addEventListener('click', e => {
       if (d.t0 || !(e.target as Element).closest?.('[data-slot=trace-collapsible-trigger]')) return
