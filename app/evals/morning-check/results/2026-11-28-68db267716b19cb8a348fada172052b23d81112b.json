@@ -1,0 +1,1206 @@
+{
+  "date": "2026-11-28",
+  "sha": "68db267716b19cb8a348fada172052b23d81112b",
+  "model": "claude-sonnet-5-5",
+  "summary": {
+    "graded": {
+      "passed": 12,
+      "total": 12
+    },
+    "cleanAllPass": true,
+    "outageAllPass": true,
+    "partial": false,
+    "thresholdMet": true
+  },
+  "cases": [
+    {
+      "id": "late-orders",
+      "group": "graded",
+      "verdict": {
+        "pass": true,
+        "checks": {
+          "parsed": true,
+          "coverage": true,
+          "gaps": true,
+          "keys": true,
+          "sev": true,
+          "sources": true,
+          "noFixtureTool": true
+        },
+        "reasons": []
+      },
+      "observed": {
+        "ok": true,
+        "coverage": "complete",
+        "gaps": [],
+        "items": [
+          {
+            "key": "late-orders",
+            "sev": "#b97a14",
+            "sources": [
+              "#2003",
+              "#2002",
+              "#2001"
+            ]
+          }
+        ],
+        "calls": [
+          "ToolSearch",
+          "mcp__apps__orders_search",
+          "mcp__apps__orders_search",
+          "mcp__apps__orders_search",
+          "mcp__apps__orders_search",
+          "mcp__apps__returns_search",
+          "mcp__apps__refunds_search",
+          "mcp__apps__products_search",
+          "mcp__apps__orders_search",
+          "mcp__apps__products_search",
+          "StructuredOutput"
+        ],
+        "fixed": {
+          "truncated": 0,
+          "dropped": 0,
+          "deduped": 0,
+          "overflow": 0,
+          "costsRemoved": 0
+        }
+      },
+      "slotKey": "now|routine-morning-check|aef5a1079ca0423999010c5035126c2a",
+      "failure": null,
+      "resultText": "found 1 thing",
+      "ms": 34849,
+      "ranOn": "claude-sonnet-5-5",
+      "prompt": 6,
+      "promptApps": [
+        "Shopify"
+      ]
+    },
+    {
+      "id": "late-orders-red",
+      "group": "graded",
+      "verdict": {
+        "pass": true,
+        "checks": {
+          "parsed": true,
+          "coverage": true,
+          "gaps": true,
+          "keys": true,
+          "sev": true,
+          "sources": true,
+          "noFixtureTool": true
+        },
+        "reasons": []
+      },
+      "observed": {
+        "ok": true,
+        "coverage": "complete",
+        "gaps": [],
+        "items": [
+          {
+            "key": "late-orders",
+            "sev": "#b23c22",
+            "sources": [
+              "#2011",
+              "#2012"
+            ]
+          }
+        ],
+        "calls": [
+          "ToolSearch",
+          "mcp__apps__orders_search",
+          "mcp__apps__products_search",
+          "mcp__apps__refunds_search",
+          "mcp__apps__returns_search",
+          "mcp__apps__orders_search",
+          "mcp__apps__orders_search",
+          "mcp__apps__orders_search",
+          "mcp__apps__orders_search",
+          "StructuredOutput"
+        ],
+        "fixed": {
+          "truncated": 0,
+          "dropped": 0,
+          "deduped": 0,
+          "overflow": 0,
+          "costsRemoved": 0
+        }
+      },
+      "slotKey": "now|routine-morning-check|c0ca99a0952f4c3fafc8330b6666a5ee",
+      "failure": null,
+      "resultText": "found 1 thing",
+      "ms": 30853,
+      "ranOn": "claude-sonnet-5-5",
+      "prompt": 6,
+      "promptApps": [
+        "Shopify"
+      ]
+    },
+    {
+      "id": "unpaid-orders",
+      "group": "graded",
+      "verdict": {
+        "pass": true,
+        "checks": {
+          "parsed": true,
+          "coverage": true,
+          "gaps": true,
+          "keys": true,
+          "sev": true,
+          "sources": true,
+          "noFixtureTool": true
+        },
+        "reasons": []
+      },
+      "observed": {
+        "ok": true,
+        "coverage": "complete",
+        "gaps": [],
+        "items": [
+          {
+            "key": "unpaid-orders",
+            "sev": "#b97a14",
+            "sources": [
+              "#2022",
+              "#2023",
+              "#2021"
+            ]
+          }
+        ],
+        "calls": [
+          "ToolSearch",
+          "mcp__apps__orders_search",
+          "mcp__apps__returns_search",
+          "mcp__apps__refunds_search",
+          "mcp__apps__products_search",
+          "StructuredOutput"
+        ],
+        "fixed": {
+          "truncated": 0,
+          "dropped": 0,
+          "deduped": 0,
+          "overflow": 0,
+          "costsRemoved": 0
+        }
+      },
+      "slotKey": "now|routine-morning-check|ce49ba749b2e4816bbc98fe98f408d37",
+      "failure": null,
+      "resultText": "found 1 thing",
+      "ms": 24833,
+      "ranOn": "claude-sonnet-5-5",
+      "prompt": 6,
+      "promptApps": [
+        "Shopify"
+      ]
+    },
+    {
+      "id": "open-returns",
+      "group": "graded",
+      "verdict": {
+        "pass": true,
+        "checks": {
+          "parsed": true,
+          "coverage": true,
+          "gaps": true,
+          "keys": true,
+          "sev": true,
+          "sources": true,
+          "noFixtureTool": true
+        },
+        "reasons": []
+      },
+      "observed": {
+        "ok": true,
+        "coverage": "complete",
+        "gaps": [],
+        "items": [
+          {
+            "key": "open-returns",
+            "sev": "#b97a14",
+            "sources": [
+              "#2032",
+              "#2031"
+            ]
+          }
+        ],
+        "calls": [
+          "ToolSearch",
+          "mcp__apps__orders_search",
+          "mcp__apps__orders_search",
+          "mcp__apps__orders_search",
+          "mcp__apps__orders_search",
+          "mcp__apps__returns_search",
+          "mcp__apps__refunds_search",
+          "mcp__apps__products_search",
+          "mcp__apps__orders_search",
+          "mcp__apps__inventory_levels_get",
+          "mcp__apps__inventory_levels_get",
+          "mcp__apps__inventory_levels_get",
+          "mcp__apps__inventory_levels_get",
+          "mcp__apps__inventory_levels_get",
+          "mcp__apps__inventory_levels_get",
+          "StructuredOutput"
+        ],
+        "fixed": {
+          "truncated": 0,
+          "dropped": 0,
+          "deduped": 0,
+          "overflow": 0,
+          "costsRemoved": 0
+        }
+      },
+      "slotKey": "now|routine-morning-check|85db198a516c41b383738b6483eed71a",
+      "failure": null,
+      "resultText": "found 1 thing",
+      "ms": 33821,
+      "ranOn": "claude-sonnet-5-5",
+      "prompt": 6,
+      "promptApps": [
+        "Shopify"
+      ]
+    },
+    {
+      "id": "returns-not-restocked",
+      "group": "graded",
+      "verdict": {
+        "pass": true,
+        "checks": {
+          "parsed": true,
+          "coverage": true,
+          "gaps": true,
+          "keys": true,
+          "sev": true,
+          "sources": true,
+          "noFixtureTool": true
+        },
+        "reasons": []
+      },
+      "observed": {
+        "ok": true,
+        "coverage": "complete",
+        "gaps": [],
+        "items": [
+          {
+            "key": "returns-not-restocked",
+            "sev": "#b97a14",
+            "sources": [
+              "#2042",
+              "#2041"
+            ]
+          }
+        ],
+        "calls": [
+          "ToolSearch",
+          "mcp__apps__orders_search",
+          "mcp__apps__orders_search",
+          "mcp__apps__orders_search",
+          "mcp__apps__orders_search",
+          "mcp__apps__returns_search",
+          "mcp__apps__refunds_search",
+          "mcp__apps__products_search",
+          "mcp__apps__orders_search",
+          "mcp__apps__returns_search",
+          "mcp__apps__returns_search",
+          "StructuredOutput"
+        ],
+        "fixed": {
+          "truncated": 0,
+          "dropped": 0,
+          "deduped": 0,
+          "overflow": 0,
+          "costsRemoved": 0
+        }
+      },
+      "slotKey": "now|routine-morning-check|019b3479fbe141d39e2b96b9db317d1d",
+      "failure": null,
+      "resultText": "found 1 thing",
+      "ms": 30881,
+      "ranOn": "claude-sonnet-5-5",
+      "prompt": 6,
+      "promptApps": [
+        "Shopify"
+      ]
+    },
+    {
+      "id": "refund-spike",
+      "group": "graded",
+      "verdict": {
+        "pass": true,
+        "checks": {
+          "parsed": true,
+          "coverage": true,
+          "gaps": true,
+          "keys": true,
+          "sev": true,
+          "sources": true,
+          "noFixtureTool": true
+        },
+        "reasons": []
+      },
+      "observed": {
+        "ok": true,
+        "coverage": "complete",
+        "gaps": [],
+        "items": [
+          {
+            "key": "refund-spike",
+            "sev": "#b23c22",
+            "sources": [
+              "#2051",
+              "#2052",
+              "#2053",
+              "#2054"
+            ]
+          }
+        ],
+        "calls": [
+          "ToolSearch",
+          "mcp__apps__orders_search",
+          "mcp__apps__orders_search",
+          "mcp__apps__orders_search",
+          "mcp__apps__orders_search",
+          "mcp__apps__returns_search",
+          "mcp__apps__refunds_search",
+          "mcp__apps__products_search",
+          "mcp__apps__orders_search",
+          "mcp__apps__products_search",
+          "mcp__apps__orders_search",
+          "mcp__apps__refunds_search",
+          "StructuredOutput"
+        ],
+        "fixed": {
+          "truncated": 0,
+          "dropped": 0,
+          "deduped": 0,
+          "overflow": 0,
+          "costsRemoved": 0
+        }
+      },
+      "slotKey": "now|routine-morning-check|6c2e58bfce004e3e8b349cc32e0aff09",
+      "failure": null,
+      "resultText": "found 1 thing",
+      "ms": 37022,
+      "ranOn": "claude-sonnet-5-5",
+      "prompt": 6,
+      "promptApps": [
+        "Shopify"
+      ]
+    },
+    {
+      "id": "low-stock",
+      "group": "graded",
+      "verdict": {
+        "pass": true,
+        "checks": {
+          "parsed": true,
+          "coverage": true,
+          "gaps": true,
+          "keys": true,
+          "sev": true,
+          "sources": true,
+          "noFixtureTool": true
+        },
+        "reasons": []
+      },
+      "observed": {
+        "ok": true,
+        "coverage": "complete",
+        "gaps": [],
+        "items": [
+          {
+            "key": "low-stock",
+            "sev": "#b97a14",
+            "sources": [
+              "MC-LOW"
+            ]
+          }
+        ],
+        "calls": [
+          "ToolSearch",
+          "mcp__apps__orders_search",
+          "mcp__apps__returns_search",
+          "mcp__apps__refunds_search",
+          "mcp__apps__products_search",
+          "mcp__apps__orders_search",
+          "mcp__apps__orders_search",
+          "mcp__apps__orders_search",
+          "mcp__apps__orders_search",
+          "mcp__apps__orders_search",
+          "mcp__apps__orders_search",
+          "mcp__apps__inventory_levels_get",
+          "mcp__apps__inventory_levels_get",
+          "mcp__apps__inventory_levels_get",
+          "mcp__apps__inventory_levels_get",
+          "mcp__apps__inventory_levels_get",
+          "mcp__apps__inventory_levels_get",
+          "mcp__apps__inventory_levels_get",
+          "StructuredOutput"
+        ],
+        "fixed": {
+          "truncated": 0,
+          "dropped": 0,
+          "deduped": 0,
+          "overflow": 0,
+          "costsRemoved": 0
+        }
+      },
+      "slotKey": "now|routine-morning-check|e88d1f2553f44ac996948bdcda010b6e",
+      "failure": null,
+      "resultText": "found 1 thing",
+      "ms": 36201,
+      "ranOn": "claude-sonnet-5-5",
+      "prompt": 6,
+      "promptApps": [
+        "Shopify"
+      ]
+    },
+    {
+      "id": "out-of-stock",
+      "group": "graded",
+      "verdict": {
+        "pass": true,
+        "checks": {
+          "parsed": true,
+          "coverage": true,
+          "gaps": true,
+          "keys": true,
+          "sev": true,
+          "sources": true,
+          "noFixtureTool": true
+        },
+        "reasons": []
+      },
+      "observed": {
+        "ok": true,
+        "coverage": "complete",
+        "gaps": [],
+        "items": [
+          {
+            "key": "out-of-stock",
+            "sev": "#b23c22",
+            "sources": [
+              "MC-OUT"
+            ]
+          }
+        ],
+        "calls": [
+          "ToolSearch",
+          "mcp__apps__orders_search",
+          "mcp__apps__orders_search",
+          "mcp__apps__refunds_search",
+          "mcp__apps__returns_search",
+          "mcp__apps__products_search",
+          "mcp__apps__orders_search",
+          "mcp__apps__orders_search",
+          "mcp__apps__orders_search",
+          "mcp__apps__orders_search",
+          "mcp__apps__orders_search",
+          "mcp__apps__inventory_levels_get",
+          "mcp__apps__inventory_levels_get",
+          "mcp__apps__inventory_levels_get",
+          "mcp__apps__inventory_levels_get",
+          "mcp__apps__inventory_levels_get",
+          "mcp__apps__inventory_levels_get",
+          "StructuredOutput"
+        ],
+        "fixed": {
+          "truncated": 0,
+          "dropped": 0,
+          "deduped": 0,
+          "overflow": 0,
+          "costsRemoved": 0
+        }
+      },
+      "slotKey": "now|routine-morning-check|f130bf39cb0d475f9f9cbf09dd8a22bd",
+      "failure": null,
+      "resultText": "found 1 thing",
+      "ms": 31390,
+      "ranOn": "claude-sonnet-5-5",
+      "prompt": 6,
+      "promptApps": [
+        "Shopify"
+      ]
+    },
+    {
+      "id": "oversold",
+      "group": "graded",
+      "verdict": {
+        "pass": true,
+        "checks": {
+          "parsed": true,
+          "coverage": true,
+          "gaps": true,
+          "keys": true,
+          "sev": true,
+          "sources": true,
+          "noFixtureTool": true
+        },
+        "reasons": []
+      },
+      "observed": {
+        "ok": true,
+        "coverage": "complete",
+        "gaps": [],
+        "items": [
+          {
+            "key": "oversold",
+            "sev": "#b23c22",
+            "sources": [
+              "MC-NEG"
+            ]
+          }
+        ],
+        "calls": [
+          "ToolSearch",
+          "mcp__apps__orders_search",
+          "mcp__apps__orders_search",
+          "mcp__apps__orders_search",
+          "mcp__apps__orders_search",
+          "mcp__apps__returns_search",
+          "mcp__apps__refunds_search",
+          "mcp__apps__products_search",
+          "mcp__apps__orders_search",
+          "mcp__apps__inventory_levels_get",
+          "mcp__apps__inventory_levels_get",
+          "mcp__apps__inventory_levels_get",
+          "mcp__apps__inventory_levels_get",
+          "StructuredOutput"
+        ],
+        "fixed": {
+          "truncated": 0,
+          "dropped": 0,
+          "deduped": 0,
+          "overflow": 0,
+          "costsRemoved": 0
+        }
+      },
+      "slotKey": "now|routine-morning-check|17892e876fbe463cb79bdc6c45d51e2f",
+      "failure": null,
+      "resultText": "found 1 thing",
+      "ms": 31674,
+      "ranOn": "claude-sonnet-5-5",
+      "prompt": 6,
+      "promptApps": [
+        "Shopify"
+      ]
+    },
+    {
+      "id": "mixed-a",
+      "group": "graded",
+      "verdict": {
+        "pass": true,
+        "checks": {
+          "parsed": true,
+          "coverage": true,
+          "gaps": true,
+          "keys": true,
+          "sev": true,
+          "sources": true,
+          "noFixtureTool": true
+        },
+        "reasons": []
+      },
+      "observed": {
+        "ok": true,
+        "coverage": "complete",
+        "gaps": [],
+        "items": [
+          {
+            "key": "late-orders",
+            "sev": "#b97a14",
+            "sources": [
+              "#2001",
+              "#2002"
+            ]
+          },
+          {
+            "key": "refund-spike",
+            "sev": "#b23c22",
+            "sources": [
+              "#2051",
+              "#2052",
+              "#2053",
+              "#2054"
+            ]
+          },
+          {
+            "key": "low-stock",
+            "sev": "#b97a14",
+            "sources": [
+              "MC-LOW"
+            ]
+          }
+        ],
+        "calls": [
+          "ToolSearch",
+          "mcp__apps__orders_search",
+          "mcp__apps__orders_search",
+          "mcp__apps__orders_search",
+          "mcp__apps__orders_search",
+          "mcp__apps__returns_search",
+          "mcp__apps__refunds_search",
+          "mcp__apps__products_search",
+          "mcp__apps__orders_search",
+          "mcp__apps__refunds_search",
+          "mcp__apps__orders_search",
+          "mcp__apps__inventory_levels_get",
+          "mcp__apps__inventory_levels_get",
+          "mcp__apps__inventory_levels_get",
+          "mcp__apps__inventory_levels_get",
+          "mcp__apps__inventory_levels_get",
+          "mcp__apps__inventory_levels_get",
+          "mcp__apps__inventory_levels_get",
+          "StructuredOutput"
+        ],
+        "fixed": {
+          "truncated": 0,
+          "dropped": 0,
+          "deduped": 0,
+          "overflow": 0,
+          "costsRemoved": 0
+        }
+      },
+      "slotKey": "now|routine-morning-check|15689653393f4969af1f26df1ff6df27",
+      "failure": null,
+      "resultText": "found 3 things",
+      "ms": 40816,
+      "ranOn": "claude-sonnet-5-5",
+      "prompt": 6,
+      "promptApps": [
+        "Shopify"
+      ]
+    },
+    {
+      "id": "mixed-b",
+      "group": "graded",
+      "verdict": {
+        "pass": true,
+        "checks": {
+          "parsed": true,
+          "coverage": true,
+          "gaps": true,
+          "keys": true,
+          "sev": true,
+          "sources": true,
+          "noFixtureTool": true
+        },
+        "reasons": []
+      },
+      "observed": {
+        "ok": true,
+        "coverage": "complete",
+        "gaps": [],
+        "items": [
+          {
+            "key": "unpaid-orders",
+            "sev": "#b97a14",
+            "sources": [
+              "#2021",
+              "#2022"
+            ]
+          },
+          {
+            "key": "open-returns",
+            "sev": "#b97a14",
+            "sources": [
+              "#2031"
+            ]
+          },
+          {
+            "key": "oversold",
+            "sev": "#b23c22",
+            "sources": [
+              "MC-NEG"
+            ]
+          }
+        ],
+        "calls": [
+          "ToolSearch",
+          "mcp__apps__orders_search",
+          "mcp__apps__orders_search",
+          "mcp__apps__orders_search",
+          "mcp__apps__orders_search",
+          "mcp__apps__returns_search",
+          "mcp__apps__refunds_search",
+          "mcp__apps__products_search",
+          "mcp__apps__orders_search",
+          "mcp__apps__inventory_levels_get",
+          "mcp__apps__inventory_levels_get",
+          "mcp__apps__inventory_levels_get",
+          "mcp__apps__inventory_levels_get",
+          "mcp__apps__inventory_levels_get",
+          "mcp__apps__inventory_levels_get",
+          "StructuredOutput"
+        ],
+        "fixed": {
+          "truncated": 0,
+          "dropped": 0,
+          "deduped": 0,
+          "overflow": 0,
+          "costsRemoved": 0
+        }
+      },
+      "slotKey": "now|routine-morning-check|c2e7ac20361a41c4afc07d0e3373f6e1",
+      "failure": null,
+      "resultText": "found 3 things",
+      "ms": 34253,
+      "ranOn": "claude-sonnet-5-5",
+      "prompt": 6,
+      "promptApps": [
+        "Shopify"
+      ]
+    },
+    {
+      "id": "fixture",
+      "group": "graded",
+      "verdict": {
+        "pass": true,
+        "checks": {
+          "parsed": true,
+          "coverage": true,
+          "gaps": true,
+          "keys": true,
+          "sev": true,
+          "sources": true,
+          "noFixtureTool": true
+        },
+        "reasons": []
+      },
+      "observed": {
+        "ok": true,
+        "coverage": "complete",
+        "gaps": [],
+        "items": [
+          {
+            "key": "late-orders",
+            "sev": "#b97a14",
+            "sources": [
+              "#1001"
+            ]
+          },
+          {
+            "key": "refund-spike",
+            "sev": "#b23c22",
+            "sources": [
+              "#1023",
+              "#1022",
+              "#1021",
+              "P4-0062"
+            ]
+          },
+          {
+            "key": "oversold",
+            "sev": "#b23c22",
+            "sources": [
+              "P4-0038"
+            ]
+          }
+        ],
+        "calls": [
+          "ToolSearch",
+          "mcp__apps__orders_search",
+          "mcp__apps__products_search",
+          "mcp__apps__refunds_search",
+          "mcp__apps__returns_search",
+          "mcp__apps__orders_search",
+          "mcp__apps__orders_search",
+          "mcp__apps__orders_search",
+          "mcp__apps__orders_search",
+          "mcp__apps__returns_search",
+          "mcp__apps__refunds_search",
+          "mcp__apps__inventory_levels_get",
+          "mcp__apps__returns_search",
+          "mcp__apps__inventory_levels_get",
+          "mcp__apps__products_search",
+          "StructuredOutput"
+        ],
+        "fixed": {
+          "truncated": 0,
+          "dropped": 0,
+          "deduped": 0,
+          "overflow": 0,
+          "costsRemoved": 0
+        }
+      },
+      "slotKey": "now|routine-morning-check|2c413da253eb4d269c36bd8d4e033651",
+      "failure": null,
+      "resultText": "found 3 things",
+      "ms": 43288,
+      "ranOn": "claude-sonnet-5-5",
+      "prompt": 6,
+      "promptApps": [
+        "Shopify"
+      ]
+    },
+    {
+      "id": "clean-old-orders",
+      "group": "clean",
+      "verdict": {
+        "pass": true,
+        "checks": {
+          "parsed": true,
+          "coverage": true,
+          "gaps": true,
+          "keys": true,
+          "sev": true,
+          "sources": true,
+          "noFixtureTool": true
+        },
+        "reasons": []
+      },
+      "observed": {
+        "ok": true,
+        "coverage": "complete",
+        "gaps": [],
+        "items": [],
+        "calls": [
+          "ToolSearch",
+          "mcp__apps__orders_search",
+          "mcp__apps__products_search",
+          "mcp__apps__refunds_search",
+          "mcp__apps__returns_search",
+          "mcp__apps__orders_search",
+          "mcp__apps__orders_search",
+          "mcp__apps__orders_search",
+          "mcp__apps__orders_search",
+          "mcp__apps__orders_search",
+          "StructuredOutput"
+        ],
+        "fixed": {
+          "truncated": 0,
+          "dropped": 0,
+          "deduped": 0,
+          "overflow": 0,
+          "costsRemoved": 0
+        }
+      },
+      "slotKey": "now|routine-morning-check|2cc40a273757423792fa28057860b99b",
+      "failure": null,
+      "resultText": "found 0 things",
+      "ms": 29018,
+      "ranOn": "claude-sonnet-5-5",
+      "prompt": 6,
+      "promptApps": [
+        "Shopify"
+      ]
+    },
+    {
+      "id": "clean-steady",
+      "group": "clean",
+      "verdict": {
+        "pass": true,
+        "checks": {
+          "parsed": true,
+          "coverage": true,
+          "gaps": true,
+          "keys": true,
+          "sev": true,
+          "sources": true,
+          "noFixtureTool": true
+        },
+        "reasons": []
+      },
+      "observed": {
+        "ok": true,
+        "coverage": "complete",
+        "gaps": [],
+        "items": [],
+        "calls": [
+          "ToolSearch",
+          "mcp__apps__orders_search",
+          "mcp__apps__orders_search",
+          "mcp__apps__orders_search",
+          "mcp__apps__orders_search",
+          "mcp__apps__returns_search",
+          "mcp__apps__refunds_search",
+          "mcp__apps__products_search",
+          "mcp__apps__orders_search",
+          "mcp__apps__orders_search",
+          "mcp__apps__inventory_levels_get",
+          "mcp__apps__inventory_levels_get",
+          "mcp__apps__inventory_levels_get",
+          "mcp__apps__inventory_levels_get",
+          "mcp__apps__inventory_levels_get",
+          "mcp__apps__inventory_levels_get",
+          "StructuredOutput"
+        ],
+        "fixed": {
+          "truncated": 0,
+          "dropped": 0,
+          "deduped": 0,
+          "overflow": 0,
+          "costsRemoved": 0
+        }
+      },
+      "slotKey": "now|routine-morning-check|d7aac534c7884e9eb676152ffe013e2e",
+      "failure": null,
+      "resultText": "found 0 things",
+      "ms": 32436,
+      "ranOn": "claude-sonnet-5-5",
+      "prompt": 6,
+      "promptApps": [
+        "Shopify"
+      ]
+    },
+    {
+      "id": "clean-empty",
+      "group": "clean",
+      "verdict": {
+        "pass": true,
+        "checks": {
+          "parsed": true,
+          "coverage": true,
+          "gaps": true,
+          "keys": true,
+          "sev": true,
+          "sources": true,
+          "noFixtureTool": true
+        },
+        "reasons": []
+      },
+      "observed": {
+        "ok": true,
+        "coverage": "complete",
+        "gaps": [],
+        "items": [],
+        "calls": [
+          "ToolSearch",
+          "mcp__apps__orders_search",
+          "mcp__apps__orders_search",
+          "mcp__apps__orders_search",
+          "mcp__apps__orders_search",
+          "mcp__apps__returns_search",
+          "mcp__apps__refunds_search",
+          "mcp__apps__products_search",
+          "mcp__apps__orders_search",
+          "mcp__apps__orders_search",
+          "mcp__apps__products_search",
+          "StructuredOutput"
+        ],
+        "fixed": {
+          "truncated": 0,
+          "dropped": 0,
+          "deduped": 0,
+          "overflow": 0,
+          "costsRemoved": 0
+        }
+      },
+      "slotKey": "now|routine-morning-check|4953e3bf05724ae79b577e87ffdcec99",
+      "failure": null,
+      "resultText": "found 0 things",
+      "ms": 27993,
+      "ranOn": "claude-sonnet-5-5",
+      "prompt": 6,
+      "promptApps": [
+        "Shopify"
+      ]
+    },
+    {
+      "id": "outage-all",
+      "group": "outage",
+      "verdict": {
+        "pass": true,
+        "checks": {
+          "parsed": true,
+          "coverage": true,
+          "gaps": true,
+          "keys": true,
+          "sev": true,
+          "sources": true,
+          "noFixtureTool": true
+        },
+        "reasons": []
+      },
+      "observed": {
+        "ok": true,
+        "coverage": "incomplete",
+        "gaps": [
+          "orders",
+          "products",
+          "inventory",
+          "refunds",
+          "returns"
+        ],
+        "items": [],
+        "calls": [
+          "ToolSearch",
+          "mcp__apps__orders_search",
+          "mcp__apps__orders_search",
+          "mcp__apps__orders_search",
+          "mcp__apps__orders_search",
+          "mcp__apps__returns_search",
+          "mcp__apps__refunds_search",
+          "mcp__apps__products_search",
+          "mcp__apps__orders_search",
+          "mcp__apps__products_search",
+          "StructuredOutput"
+        ],
+        "fixed": {
+          "truncated": 0,
+          "dropped": 0,
+          "deduped": 0,
+          "overflow": 0,
+          "costsRemoved": 0
+        }
+      },
+      "slotKey": "now|routine-morning-check|9f75c8b4a9014dcca190350e87dc7e3a",
+      "failure": "incomplete",
+      "resultText": "found 0 things; couldn't read orders, products, inventory, refunds, returns",
+      "ms": 24791,
+      "ranOn": "claude-sonnet-5-5",
+      "prompt": 6,
+      "promptApps": [
+        "Shopify"
+      ]
+    },
+    {
+      "id": "outage-credentials",
+      "group": "outage",
+      "verdict": {
+        "pass": true,
+        "checks": {
+          "parsed": true,
+          "coverage": true,
+          "gaps": true,
+          "keys": true,
+          "sev": true,
+          "sources": true,
+          "noFixtureTool": true
+        },
+        "reasons": []
+      },
+      "observed": {
+        "ok": true,
+        "coverage": "incomplete",
+        "gaps": [
+          "orders",
+          "products",
+          "inventory",
+          "refunds"
+        ],
+        "items": [
+          {
+            "key": "late-orders",
+            "sev": "#b97a14",
+            "sources": [
+              "#2003",
+              "#2002",
+              "#2001"
+            ]
+          }
+        ],
+        "calls": [
+          "ToolSearch",
+          "mcp__apps__orders_search",
+          "mcp__apps__orders_search",
+          "mcp__apps__returns_search",
+          "mcp__apps__refunds_search",
+          "mcp__apps__products_search",
+          "mcp__apps__orders_search",
+          "mcp__apps__orders_search",
+          "mcp__apps__orders_search",
+          "mcp__apps__inventory_levels_get",
+          "mcp__apps__inventory_levels_get",
+          "mcp__apps__inventory_levels_get",
+          "mcp__apps__inventory_levels_get",
+          "mcp__apps__inventory_levels_get",
+          "mcp__apps__inventory_levels_get",
+          "StructuredOutput"
+        ],
+        "fixed": {
+          "truncated": 0,
+          "dropped": 0,
+          "deduped": 0,
+          "overflow": 0,
+          "costsRemoved": 0
+        }
+      },
+      "slotKey": "now|routine-morning-check|3b4c3bee1d5e4494b4d919c3a94db131",
+      "failure": "incomplete",
+      "resultText": "found 1 thing; couldn't read orders, products, inventory, refunds",
+      "ms": 31258,
+      "ranOn": "claude-sonnet-5-5",
+      "prompt": 6,
+      "promptApps": [
+        "Shopify"
+      ]
+    },
+    {
+      "id": "outage-too-large",
+      "group": "outage",
+      "verdict": {
+        "pass": true,
+        "checks": {
+          "parsed": true,
+          "coverage": true,
+          "gaps": true,
+          "keys": true,
+          "sev": true,
+          "sources": true,
+          "noFixtureTool": true
+        },
+        "reasons": []
+      },
+      "observed": {
+        "ok": true,
+        "coverage": "incomplete",
+        "gaps": [
+          "returns"
+        ],
+        "items": [
+          {
+            "key": "late-orders",
+            "sev": "#b97a14",
+            "sources": [
+              "#2003",
+              "#2002",
+              "#2001"
+            ]
+          }
+        ],
+        "calls": [
+          "ToolSearch",
+          "mcp__apps__orders_search",
+          "mcp__apps__orders_search",
+          "mcp__apps__orders_search",
+          "mcp__apps__orders_search",
+          "mcp__apps__returns_search",
+          "mcp__apps__refunds_search",
+          "mcp__apps__products_search",
+          "mcp__apps__orders_search",
+          "mcp__apps__returns_search",
+          "mcp__apps__returns_search",
+          "mcp__apps__returns_search",
+          "mcp__apps__returns_search",
+          "mcp__apps__inventory_levels_get",
+          "mcp__apps__inventory_levels_get",
+          "mcp__apps__inventory_levels_get",
+          "mcp__apps__inventory_levels_get",
+          "mcp__apps__inventory_levels_get",
+          "mcp__apps__inventory_levels_get",
+          "mcp__apps__orders_search",
+          "mcp__apps__orders_search",
+          "mcp__apps__orders_search",
+          "mcp__apps__orders_search",
+          "StructuredOutput"
+        ],
+        "fixed": {
+          "truncated": 0,
+          "dropped": 0,
+          "deduped": 0,
+          "overflow": 0,
+          "costsRemoved": 0
+        }
+      },
+      "slotKey": "now|routine-morning-check|fe5ad9bf18694256a56a33889be6223b",
+      "failure": "incomplete",
+      "resultText": "found 1 thing; couldn't read returns",
+      "ms": 40702,
+      "ranOn": "claude-sonnet-5-5",
+      "prompt": 6,
+      "promptApps": [
+        "Shopify"
+      ]
+    }
+  ],
+  "notRun": []
+}

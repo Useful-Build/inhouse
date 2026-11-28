@@ -1,0 +1,44 @@
+{
+ "row": {
+  "caseId": "T01",
+  "cat": "choice",
+  "pair": "memory_save/brand",
+  "rep": 2,
+  "chat": 1,
+  "pass": true,
+  "checks": {
+   "tool": true,
+   "args": true,
+   "forbidden": true
+  },
+  "called": [
+   "memory_save"
+  ],
+  "toolSearches": 0,
+  "answer": "I've saved that your packaging supplier is Kraftwerk Boxes and that they ship fr",
+  "costUsd": 0.025,
+  "runOk": true,
+  "turnId": "t_45fbPzFOB1c7bhXGMhXZTQ",
+  "askedAs": "eval-46075278893-1-t01-r2"
+ },
+ "result": {
+  "runOk": true,
+  "usage": {
+   "inputTokens": 0,
+   "cacheCreationTokens": 0,
+   "cacheReadTokens": 0,
+   "outputTokens": 0
+  },
+  "costUsd": 0.025,
+  "answer": "I've saved that your packaging supplier is Kraftwerk Boxes and that they ship fr",
+  "toolCalls": [
+   {
+    "name": "mcp__inhouse__memory_save",
+    "inputSha256": "d3a67070c60d4b01643562dbb9b4134bf03f5e58e4126c545f8306bef1b358dd",
+    "inputExcerpt": "{\"scope\":\"brand\",\"fact\":\"Our packaging supplier is Kraftwerk Boxes, which ships ",
+    "resultExcerpt": "Saved (a new row in the brand's memory)",
+    "isError": false
+   }
+  ]
+ }
+}

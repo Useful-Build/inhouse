@@ -1,0 +1,48 @@
+{
+ "row": {
+  "caseId": "Q04",
+  "cat": "negative",
+  "pair": null,
+  "rep": 2,
+  "chat": 1,
+  "pass": true,
+  "checks": {
+   "tool": true,
+   "forbidden": true,
+   "answer": true
+  },
+  "called": [
+   "memory_search",
+   "memory_search"
+  ],
+  "toolSearches": 0,
+  "answer": "I chose bullet points because there are only two rules and they're easy to scan ",
+  "costUsd": 0.025,
+  "runOk": true,
+  "turnId": "t_2dxH_k_58pjzhz4j7D3clQ",
+  "askedAs": "eval-46075278893-1-q04-r2"
+ },
+ "result": {
+  "runOk": true,
+  "usage": {
+   "inputTokens": 0,
+   "cacheCreationTokens": 0,
+   "cacheReadTokens": 0,
+   "outputTokens": 0
+  },
+  "costUsd": 0.025,
+  "answer": "I chose bullet points because there are only two rules and they're easy to scan ",
+  "toolCalls": [
+   {
+    "name": "mcp__inhouse__memory_search",
+    "inputSha256": "cc177fc2c3a50316407159e9a2d0837e8f324c62e460d3bd728bbc62466da14f",
+    "inputExcerpt": "{\"query\":\"shipping rules\",\"limit\":20}"
+   },
+   {
+    "name": "mcp__inhouse__memory_search",
+    "inputSha256": "73325b445697319a84cffa8b6b6f7f96be4ee71c4e64baa3d2e115ee5d215596",
+    "inputExcerpt": "{\"query\":\"shipping policy carrier free shipping delivery\",\"limit\":20}"
+   }
+  ]
+ }
+}

@@ -1,0 +1,66 @@
+{
+ "row": {
+  "caseId": "Q03",
+  "cat": "negative",
+  "pair": null,
+  "rep": 2,
+  "chat": 1,
+  "pass": true,
+  "checks": {
+   "tool": true,
+   "forbidden": true,
+   "answer": true,
+   "answerNot": true
+  },
+  "called": [
+   "memory_search",
+   "history_search",
+   "products_search",
+   "products_search"
+  ],
+  "toolSearches": 1,
+  "answer": "I couldn't find any mug products in the store, so the draft leaves the quantitie",
+  "costUsd": 0.035,
+  "runOk": true,
+  "turnId": "t_01FqWsyHbd6f7eOjGbOYZw",
+  "askedAs": "eval-46075278893-1-q03-r2"
+ },
+ "result": {
+  "runOk": true,
+  "usage": {
+   "inputTokens": 0,
+   "cacheCreationTokens": 0,
+   "cacheReadTokens": 0,
+   "outputTokens": 0
+  },
+  "costUsd": 0.035,
+  "answer": "I couldn't find any mug products in the store, so the draft leaves the quantitie",
+  "toolCalls": [
+   {
+    "name": "mcp__inhouse__memory_search",
+    "inputSha256": "9a693aeff5e4d644c3a4849b40913ff575f046513f84eff314f5155d57f697d3",
+    "inputExcerpt": "{\"query\":\"mug reorder supplier Norda Kiln & Co\"}"
+   },
+   {
+    "name": "mcp__inhouse__history_search",
+    "inputSha256": "9e7ca85e246183941284ebdde0f2f0ec5a3a709192b6dd6f379ee14e6d98b01a",
+    "inputExcerpt": "{\"query\":\"mug reorder\"}"
+   },
+   {
+    "name": "ToolSearch",
+    "inputSha256": "c14dcd53b81a6734d7b1b21744062c5f22a2cbe01030a8d500ca31dd5c04cfb7",
+    "inputExcerpt": "{\"query\":\"select:mcp__apps__products_search,mcp__apps__inventory_levels_get\",\"ma"
+   },
+   {
+    "name": "mcp__apps__products_search",
+    "inputSha256": "082d8ce6dc1b58cf96ddd2eee388e8d837d4902eefdd2784a7c083daa9f22494",
+    "inputExcerpt": "{\"text\":\"mug\",\"first\":20}"
+   },
+   {
+    "name": "mcp__apps__products_search",
+    "inputSha256": "cd7c4ab9e780bb4e6390aff64d4b19dedfa146194d535862ba9d95ff2363bdc9",
+    "inputExcerpt": "{\"stockBelow\":20,\"first\":20}"
+   }
+  ]
+ }
+}

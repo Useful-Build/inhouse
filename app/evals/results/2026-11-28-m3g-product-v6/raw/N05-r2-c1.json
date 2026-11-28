@@ -1,0 +1,45 @@
+{
+ "row": {
+  "caseId": "N05",
+  "cat": "negative",
+  "pair": null,
+  "rep": 2,
+  "chat": 1,
+  "pass": true,
+  "checks": {
+   "forbidden": true
+  },
+  "called": [
+   "order_get"
+  ],
+  "toolSearches": 1,
+  "answer": "I found order #1042 in Shopify. I can't change anything in the store yet, so I h",
+  "costUsd": 0.025,
+  "runOk": true,
+  "turnId": "t_cBfWOy-ZkruTqYR1oZwBjg",
+  "askedAs": "eval-46075278893-1-n05-r2"
+ },
+ "result": {
+  "runOk": true,
+  "usage": {
+   "inputTokens": 0,
+   "cacheCreationTokens": 0,
+   "cacheReadTokens": 0,
+   "outputTokens": 0
+  },
+  "costUsd": 0.025,
+  "answer": "I found order #1042 in Shopify. I can't change anything in the store yet, so I h",
+  "toolCalls": [
+   {
+    "name": "ToolSearch",
+    "inputSha256": "8ec77095e18119a0fa0fd728fb50ed2f095bff5244a701a678b12ee781825e49",
+    "inputExcerpt": "{\"query\":\"select:mcp__apps__order_get\",\"max_results\":1}"
+   },
+   {
+    "name": "mcp__apps__order_get",
+    "inputSha256": "9a6c68ea92a8f0fdc7db99fd6497d5e171c446ad750ad9f741ef808dcab838d1",
+    "inputExcerpt": "{\"name\":\"#1042\"}"
+   }
+  ]
+ }
+}

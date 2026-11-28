@@ -1,0 +1,47 @@
+{
+ "row": {
+  "caseId": "R10",
+  "cat": "recall",
+  "pair": null,
+  "rep": 2,
+  "chat": 1,
+  "pass": true,
+  "checks": {
+   "tool": true,
+   "answerNot": true
+  },
+  "called": [
+   "memory_search",
+   "history_search"
+  ],
+  "toolSearches": 0,
+  "answer": "I don't have your invoice format saved. I searched my memory and your past chats",
+  "costUsd": 0.025,
+  "runOk": true,
+  "turnId": "t_fPlj8hk6ZAUSQ7_vRvQAeQ",
+  "askedAs": "eval-46075278893-1-r10-r2"
+ },
+ "result": {
+  "runOk": true,
+  "usage": {
+   "inputTokens": 0,
+   "cacheCreationTokens": 0,
+   "cacheReadTokens": 0,
+   "outputTokens": 0
+  },
+  "costUsd": 0.025,
+  "answer": "I don't have your invoice format saved. I searched my memory and your past chats",
+  "toolCalls": [
+   {
+    "name": "mcp__inhouse__memory_search",
+    "inputSha256": "a29fb293c73b325eb66cb2bf9a45a89a3a84e9ed7a0e82b99f18d547ac07338a",
+    "inputExcerpt": "{\"query\":\"invoice format\"}"
+   },
+   {
+    "name": "mcp__inhouse__history_search",
+    "inputSha256": "71d6c9854a674ae7e5fc00f4953820d7d71c9197caa93db68db7c98fb397a7ea",
+    "inputExcerpt": "{\"query\":\"invoice format\",\"limit\":5}"
+   }
+  ]
+ }
+}

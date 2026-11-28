@@ -1,0 +1,33 @@
+{
+ "row": {
+  "caseId": "R04",
+  "cat": "recall",
+  "pair": null,
+  "rep": 1,
+  "chat": 1,
+  "pass": false,
+  "checks": {
+   "tool": false,
+   "answer": true
+  },
+  "called": [],
+  "toolSearches": 0,
+  "answer": "The best option is a scheduled routine that checks inventory and sends Tom an al",
+  "costUsd": 0.025,
+  "runOk": true,
+  "turnId": "t_Zr-NMJK73Z1rq_pRnXFkHQ",
+  "askedAs": "eval-46075278893-1-r04-r1"
+ },
+ "result": {
+  "runOk": true,
+  "usage": {
+   "inputTokens": 0,
+   "cacheCreationTokens": 0,
+   "cacheReadTokens": 0,
+   "outputTokens": 0
+  },
+  "costUsd": 0.025,
+  "answer": "The best option is a scheduled routine that checks inventory and sends Tom an al",
+  "toolCalls": []
+ }
+}

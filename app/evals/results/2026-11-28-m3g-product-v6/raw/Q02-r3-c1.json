@@ -1,0 +1,42 @@
+{
+ "row": {
+  "caseId": "Q02",
+  "cat": "negative",
+  "pair": null,
+  "rep": 3,
+  "chat": 1,
+  "pass": true,
+  "checks": {
+   "tool": true,
+   "forbidden": true,
+   "answer": true
+  },
+  "called": [
+   "memory_search"
+  ],
+  "toolSearches": 0,
+  "answer": "**Reminder: our return window this holiday season**\n\nTeam, returns are accepted ",
+  "costUsd": 0.025,
+  "runOk": true,
+  "turnId": "t_Ch-MI6vIJ4AWKjj_WePAsQ",
+  "askedAs": "eval-46075278893-1-q02-r3"
+ },
+ "result": {
+  "runOk": true,
+  "usage": {
+   "inputTokens": 0,
+   "cacheCreationTokens": 0,
+   "cacheReadTokens": 0,
+   "outputTokens": 0
+  },
+  "costUsd": 0.025,
+  "answer": "**Reminder: our return window this holiday season**\n\nTeam, returns are accepted ",
+  "toolCalls": [
+   {
+    "name": "mcp__inhouse__memory_search",
+    "inputSha256": "acdc69888dcb80b4cb88c3627eec03606b74d2b5f5fe4e8e9a0d4b9cbdc520ec",
+    "inputExcerpt": "{\"query\":\"return window policy holiday\"}"
+   }
+  ]
+ }
+}

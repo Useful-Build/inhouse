@@ -1,0 +1,41 @@
+{
+ "row": {
+  "caseId": "R09",
+  "cat": "recall",
+  "pair": null,
+  "rep": 3,
+  "chat": 1,
+  "pass": true,
+  "checks": {
+   "tool": true,
+   "answer": true
+  },
+  "called": [
+   "memory_search"
+  ],
+  "toolSearches": 0,
+  "answer": "For the UK we use Royal Mail. This comes from a saved brand fact. DHL is the cou",
+  "costUsd": 0.025,
+  "runOk": true,
+  "turnId": "t_bkgWUqqH1VgKex9rPK9fXQ",
+  "askedAs": "eval-46075278893-1-r09-r3"
+ },
+ "result": {
+  "runOk": true,
+  "usage": {
+   "inputTokens": 0,
+   "cacheCreationTokens": 0,
+   "cacheReadTokens": 0,
+   "outputTokens": 0
+  },
+  "costUsd": 0.025,
+  "answer": "For the UK we use Royal Mail. This comes from a saved brand fact. DHL is the cou",
+  "toolCalls": [
+   {
+    "name": "mcp__inhouse__memory_search",
+    "inputSha256": "62e727999b161d114246f6880a755964de80a465ba22b4410d5fb4eefbd5d00a",
+    "inputExcerpt": "{\"query\":\"UK courier shipping carrier\"}"
+   }
+  ]
+ }
+}

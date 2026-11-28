@@ -1,0 +1,41 @@
+{
+ "row": {
+  "caseId": "T10",
+  "cat": "choice",
+  "pair": "question_ask/AskUserQuestion",
+  "rep": 1,
+  "chat": 1,
+  "pass": true,
+  "checks": {
+   "tool": true,
+   "forbidden": true
+  },
+  "called": [
+   "question_ask"
+  ],
+  "toolSearches": 0,
+  "answer": "Asked: Which supplier do you want to go with for the mug reorder?\nOptions: Norda",
+  "costUsd": 0.025,
+  "runOk": true,
+  "turnId": "t_U7CA3jyjtI7l8Qcw9NWAtw",
+  "askedAs": "eval-46075278893-1-t10-r1"
+ },
+ "result": {
+  "runOk": true,
+  "usage": {
+   "inputTokens": 0,
+   "cacheCreationTokens": 0,
+   "cacheReadTokens": 0,
+   "outputTokens": 0
+  },
+  "costUsd": 0.025,
+  "answer": "Asked: Which supplier do you want to go with for the mug reorder?\nOptions: Norda",
+  "toolCalls": [
+   {
+    "name": "mcp__inhouse__question_ask",
+    "inputSha256": "24235b5b76a67907db9743414d9bd1cacf2ebc81443ce0c19989a80f526243e9",
+    "inputExcerpt": "{\"question\":\"Which supplier do you want to go with for the mug reorder?\",\"option"
+   }
+  ]
+ }
+}

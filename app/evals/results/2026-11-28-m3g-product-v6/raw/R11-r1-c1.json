@@ -1,0 +1,59 @@
+{
+ "row": {
+  "caseId": "R11",
+  "cat": "recall",
+  "pair": null,
+  "rep": 1,
+  "chat": 1,
+  "pass": true,
+  "checks": {
+   "tool": true,
+   "answerNot": true
+  },
+  "called": [
+   "memory_search",
+   "history_search",
+   "products_search",
+   "products_search"
+  ],
+  "toolSearches": 0,
+  "answer": "I couldn't find a standard lead time for the cotton tote bags. I checked:\n\n- **S",
+  "costUsd": 0.035,
+  "runOk": true,
+  "turnId": "t_H50Mmz9151HT64Abwiy0Tg",
+  "askedAs": "eval-46075278893-1-r11-r1"
+ },
+ "result": {
+  "runOk": true,
+  "usage": {
+   "inputTokens": 0,
+   "cacheCreationTokens": 0,
+   "cacheReadTokens": 0,
+   "outputTokens": 0
+  },
+  "costUsd": 0.035,
+  "answer": "I couldn't find a standard lead time for the cotton tote bags. I checked:\n\n- **S",
+  "toolCalls": [
+   {
+    "name": "mcp__inhouse__memory_search",
+    "inputSha256": "da1af70ab01b956035c6f9045ecfc6fc21a4b55fbdf3ecccaaa95397cd1c64d5",
+    "inputExcerpt": "{\"query\":\"cotton tote bags lead time\"}"
+   },
+   {
+    "name": "mcp__inhouse__history_search",
+    "inputSha256": "53ca26754beba9cd471f8b5ebc3a8029ecfeb05f32d3fefa08b87952ac3b02d4",
+    "inputExcerpt": "{\"query\":\"cotton tote lead time\"}"
+   },
+   {
+    "name": "mcp__apps__products_search",
+    "inputSha256": "3a4a64644e6539a2807d47618f4da4ea098036d0bc2264d51e09e18c80c7146b",
+    "inputExcerpt": "{\"query\":\"tote\"}"
+   },
+   {
+    "name": "mcp__apps__products_search",
+    "inputSha256": "3d3a209ebf21a04071653297d8bf8077684947bad91412542f16ec1b8f9f9745",
+    "inputExcerpt": "{\"text\":\"tote\"}"
+   }
+  ]
+ }
+}

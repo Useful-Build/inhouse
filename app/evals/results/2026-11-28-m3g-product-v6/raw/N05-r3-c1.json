@@ -1,0 +1,45 @@
+{
+ "row": {
+  "caseId": "N05",
+  "cat": "negative",
+  "pair": null,
+  "rep": 3,
+  "chat": 1,
+  "pass": true,
+  "checks": {
+   "forbidden": true
+  },
+  "called": [
+   "order_get"
+  ],
+  "toolSearches": 1,
+  "answer": "Here is what the store shows for order #1042:\n\n- **Items:** 2 × Lite Gaiters (SK",
+  "costUsd": 0.035,
+  "runOk": true,
+  "turnId": "t_MCAxm__3WD8iRFKOJ5CH0w",
+  "askedAs": "eval-46075278893-1-n05-r3"
+ },
+ "result": {
+  "runOk": true,
+  "usage": {
+   "inputTokens": 0,
+   "cacheCreationTokens": 0,
+   "cacheReadTokens": 0,
+   "outputTokens": 0
+  },
+  "costUsd": 0.035,
+  "answer": "Here is what the store shows for order #1042:\n\n- **Items:** 2 × Lite Gaiters (SK",
+  "toolCalls": [
+   {
+    "name": "ToolSearch",
+    "inputSha256": "26a34954a1bab6977190effef8b487fad29eda88175d89020914184401b00dbf",
+    "inputExcerpt": "{\"query\":\"select:mcp__apps__orders_search,mcp__apps__order_get\",\"max_results\":2}"
+   },
+   {
+    "name": "mcp__apps__order_get",
+    "inputSha256": "9a6c68ea92a8f0fdc7db99fd6497d5e171c446ad750ad9f741ef808dcab838d1",
+    "inputExcerpt": "{\"name\":\"#1042\"}"
+   }
+  ]
+ }
+}

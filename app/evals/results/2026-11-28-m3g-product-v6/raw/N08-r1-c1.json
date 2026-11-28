@@ -1,0 +1,46 @@
+{
+ "row": {
+  "caseId": "N08",
+  "cat": "negative",
+  "pair": null,
+  "rep": 1,
+  "chat": 1,
+  "pass": true,
+  "checks": {
+   "noMcp": true
+  },
+  "called": [
+   "WebFetch"
+  ],
+  "toolSearches": 1,
+  "answer": "I can't give you the forecast for Berlin tomorrow (Saturday, 28 Nov 2026). Web a",
+  "costUsd": 0.025,
+  "runOk": true,
+  "turnId": "t_k86Z9blY_2A7vEv0Yy0V9Q",
+  "askedAs": "eval-46075278893-1-n08-r1"
+ },
+ "result": {
+  "runOk": true,
+  "usage": {
+   "inputTokens": 0,
+   "cacheCreationTokens": 0,
+   "cacheReadTokens": 0,
+   "outputTokens": 0
+  },
+  "costUsd": 0.025,
+  "answer": "I can't give you the forecast for Berlin tomorrow (Saturday, 28 Nov 2026). Web a",
+  "toolCalls": [
+   {
+    "name": "ToolSearch",
+    "inputSha256": "8ef779e67bdca8e575461dd26589aebda5b38994bca4aaa82150fd1def313770",
+    "inputExcerpt": "{\"query\":\"select:WebFetch\",\"max_results\":1}"
+   },
+   {
+    "name": "WebFetch",
+    "inputSha256": "1fab2521ae04aa5145c87be2bb5c019882be2f6c765e463b49ff4de2417d3547",
+    "inputExcerpt": "{\"url\":\"wttr.in [url 38afac897fe3]\",\"prompt\":\"Give the forecast for tomorrow (20",
+    "hookDenied": true
+   }
+  ]
+ }
+}
