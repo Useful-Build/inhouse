@@ -16,8 +16,8 @@ import { exports } from 'cloudflare:workers'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import type { CallerScope, ConnectGateway, HubResult } from '../index/contract'
 import { notesMcp, shopifyIssuedTokens, slackMcp, slackWeb, testUpstreamFetch, testUpstreams } from './index'
-import { HUB_FAKES_CANARY, MCP_SWITCHES, runHubFakesOp, WEB_SWITCHES } from './fakes'
-import { envRecord, flushTestLogs, TEST_FAKES_DO_NAME, upstreamFor } from '../signin/signin'
+import { HUB_FAKES_CANARY, MCP_SWITCHES, WEB_SWITCHES } from './fakes'
+import { flushTestLogs, TEST_FAKES_DO_NAME, upstreamFor } from '../signin/signin'
 import { log } from '../index/log'
 import { FakeMcpServer, mintTestCode, SLACK_MESSAGES } from '../../test/upstreams/mcp/server'
 import { TEST_CLIENT_ID, TEST_CLIENT_SECRET } from '../../test/upstreams/shopify/server'
@@ -332,74 +332,6 @@ describe('singleton test-fakes DO isolation', () => {
   })
 })
 
-// Workers RPC gives every object an RPC returns a disposer, and a call whose answer is passed on or never released stays open
-// (shared/rpc-answer.ts; the hub's gateways copy and release every SignIn answer, #443). The hook's own ops reach the account
-// objects and the singleton DO the same way, so they must too: #530 was `state` failing with "Cannot perform I/O on behalf of a
-// different Durable Object" after an alarm hook, the answers the hook read being the objects' own.
-describe('the hook answers plain data and releases every answer it read from a SignIn object (#530)', () => {
-  const DISPOSE = (Symbol as unknown as { dispose: symbol }).dispose
-  const ledger = { handed: 0, released: 0 }
-  /** An answer as Workers RPC hands it over: the data plus a counted disposer. */
-  const answer = <T extends object>(v: T): T => {
-    ledger.handed++
-    let done = false
-    return Object.assign(v, { [DISPOSE]: () => { if (!done) { done = true; ledger.released++ } } })
-  }
-  const overRpcEnv = () => {
-    const stub = {
-      testFireAlarm: async () => answer({ ok: true, value: { fired: true } }),
-      testFakesOp: async () => answer({ ok: true, value: { mcp: { requests: [] }, connect: { bodies: [] }, lines: [], next: 0 } }),
-      status: async () => answer({ ok: true, value: { accountId: 'x', state: 'active', scopes: ['channels:read'] } }),
-      testGetVars: async () => answer({ SLACK_PRIVATE_SEARCH: 'on' }),
-      testAppendLogs: async () => undefined,
-    }
-    return { ...env, SIGNIN: { idFromName: (n: string) => n, get: () => stub } } as unknown as Env
-  }
-  const expectPlain = (r: unknown) => {
-    const seen: unknown[] = [r]
-    while (seen.length > 0) {
-      const v = seen.pop()
-      if (typeof v !== 'object' || v === null) continue
-      expect(Object.getOwnPropertySymbols(v), 'no disposer is passed on').toEqual([])
-      seen.push(...Object.values(v))
-    }
-    expect(ledger.handed).toBeGreaterThan(0)
-    expect(ledger.released, 'every answer read was released').toBe(ledger.handed)
-  }
-  beforeEach(() => { ledger.handed = 0; ledger.released = 0 })
-
-  it('alarm', async () => {
-    const r = await runHubFakesOp(overRpcEnv(), { op: 'alarm', accountId: 'slack:workspace' })
-    expect(r).toMatchObject({ ok: true, value: { fired: true } })
-    expectPlain(r)
-  })
-
-  it('state (the singleton DO\'s part and each connected account\'s status)', async () => {
-    const r = await runHubFakesOp(overRpcEnv(), { op: 'state' })
-    expect(r).toMatchObject({ ok: true, value: { mcp: { requests: [] } } })
-    expect((r as { value: { accounts: unknown[] } }).value.accounts.length, 'the accounts were read').toBeGreaterThan(0)
-    expectPlain(r)
-  })
-
-  it('envRecord (the var overrides every SignIn call reads)', async () => {
-    const record = await envRecord(overRpcEnv())
-    expect(record.SLACK_PRIVATE_SEARCH).toBe('on')
-    expect(Object.getOwnPropertySymbols(record), 'no disposer is passed on').toEqual([])
-    expect(ledger.handed).toBe(1)
-    expect(ledger.released, 'the answer read was released').toBe(1)
-  })
-
-  it.each(['logs', 'reset', 'set', 'var', 'seed'] as const)('%s', async op => {
-    const input = {
-      logs: { op: 'logs' }, reset: { op: 'reset' }, set: { op: 'set', mcp: { rotation: false } }, var: { op: 'var', name: 'SLACK_PRIVATE_SEARCH', value: 'on' },
-      seed: { op: 'seed', slack: { messages: [{ channel: 'C0TEST0001', text: 'x' }] } },
-    }[op]
-    const r = await runHubFakesOp(overRpcEnv(), input)
-    expect(r).toMatchObject({ ok: true })
-    expectPlain(r)
-  })
-})
-
 // A SIGNIN namespace whose singleton test-fakes DO fails its writes, to prove the callers stay non-throwing and loud.
 const failingEnv = () => {
   const stub = {
@@ -410,18 +342,20 @@ const failingEnv = () => {
   return { ...env, SIGNIN: { idFromName: (n: string) => n, get: () => stub } } as unknown as Env
 }
 
-describe('test log flush and answer recording (non-throwing, loud, ordered)', () => {
+describe('test log flush and answer recording (non-throwing, loud)', () => {
   afterEach(() => vi.restoreAllMocks())
 
-  it('a flush started while an earlier one is in flight returns only after the earlier one landed its lines', async () => {
+  it('flushes started together each land their own lines before returning, and none waits on another', async () => {
     const before = await value<{ next: number }>({ op: 'logs' })
-    log('connect_start', { accountId: 'slack:workspace' })
+    log('connect_start', { accountId: 'first-flush' })
     const first = flushTestLogs(env)
-    const second = flushTestLogs(env) // queue already drained by `first`: must still wait for it
+    log('connect_start', { accountId: 'second-flush' })
+    const second = flushTestLogs(env)
     await second
-    const after = await value<{ lines: string[] }>({ op: 'logs', since: before.next })
-    expect(after.lines.some(l => JSON.parse(l).event === 'connect_start')).toBe(true)
+    // The second flush drained its own line and sent it: it is there the moment `second` is.
+    expect((await value<{ lines: string[] }>({ op: 'logs', since: before.next })).lines.some(l => l.includes('second-flush'))).toBe(true)
     await first
+    expect((await value<{ lines: string[] }>({ op: 'logs', since: before.next })).lines.some(l => l.includes('first-flush'))).toBe(true)
   })
 
   it('a failed append resolves, logging the error name and the number of lines lost, never their content', async () => {

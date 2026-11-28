@@ -80,20 +80,22 @@ export async function upstreamFor(env: HubEnv): Promise<Upstream> {
   return req => fetch(req)
 }
 
-/** Tail of this isolate's flush chain (test build only). Never rejects: every link catches its own failure. */
-let testLogFlushChain: Promise<void> = Promise.resolve()
-
 /**
- * Flushes this isolate's queued hub test log lines to the singleton test-fakes DO (test build only). Flushes chain per
- * isolate: each waits for the one before it, so when this returns, every line queued by any flush started earlier in
- * this isolate has reached the DO (a second request can't return while the first's lines are still in flight). Runs in
- * `finally` blocks, so it never throws; a failed append is logged loudly (error name and line count, never content).
+ * Flushes this isolate's queued hub test log lines to the singleton test-fakes DO (test build only). Each call drains the
+ * queue and awaits its own send, inside its own request or Durable Object context: it never waits on another call's promise.
+ * A promise kept at module level and chained on (as this once did) is shared by every request and every SignIn object in
+ * the isolate, and workerd runs a `.then` callback in the context that resolves its predecessor, so the callback's stub call
+ * was made on behalf of a different Durable Object or request ("Cannot perform I/O on behalf of a different ...") and the
+ * error left the `finally` of an alarm or a hub call (#530). Every caller awaits its own flush before it answers, so a line
+ * has landed by the time the call that made it returns; only a line of a call still running elsewhere can be missing from a
+ * read of `logs`. Runs in `finally` blocks, so it never throws; a failed append is logged loudly (error name and line count,
+ * never content).
  */
 export function flushTestLogs(env: HubEnv): Promise<void> {
   // The whole test path sits inside the `if`, never after an early return: the deployable build folds the flag to
   // `false` and drops the block, so no test-fakes name or call reaches dist-hub (check-hub-build.mjs proves it).
   if (__INHOUSE_HUB_TEST__ && env.INHOUSE_TEST_BUILD === '1') {
-    const mine = testLogFlushChain.then(async () => {
+    return (async () => {
       const lines = drainPendingTestLogs()
       if (lines.length === 0) return
       try {
@@ -101,9 +103,7 @@ export function flushTestLogs(env: HubEnv): Promise<void> {
       } catch (e) {
         console.error(`hub test logs: flushing ${lines.length} line${lines.length === 1 ? '' : 's'} failed and they are lost (${safeError(e)})`)
       }
-    })
-    testLogFlushChain = mine
-    return mine
+    })()
   }
   return Promise.resolve()
 }
@@ -113,7 +113,7 @@ export async function envRecord(env: HubEnv): Promise<Readonly<Record<string, un
   // The hub's TEST bundle only: the test-fakes hook's var overrides (hub/testing/fakes.ts, op `var`), held in the
   // singleton test-fakes DO's SQLite KV and cleared by its reset. The deployable bundle drops the branch (the define is "false").
   if (__INHOUSE_HUB_TEST__ && env.INHOUSE_TEST_BUILD === '1') {
-    const vars = await settledAnswer(env.SIGNIN.get(env.SIGNIN.idFromName(TEST_FAKES_DO_NAME)).testGetVars())
+    const vars = await env.SIGNIN.get(env.SIGNIN.idFromName(TEST_FAKES_DO_NAME)).testGetVars()
     if (Object.keys(vars).length > 0) return { ...(env as unknown as Record<string, unknown>), ...vars }
   }
   return env as unknown as Readonly<Record<string, unknown>>
