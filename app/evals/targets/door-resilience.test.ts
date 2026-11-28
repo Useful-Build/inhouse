@@ -6,7 +6,7 @@
 //  - the 120 s kill stops npx but not the wrangler under it, which lands its SQL after the lease went back;
 //  - a hangup, or a SIGKILL to the run's group, leaves npx and wrangler running with no deadline (#711);
 //  - two calls run at once, or a call outlives the run's exit (#712).
-import { spawn } from 'node:child_process'
+import { execFileSync, spawn } from 'node:child_process'
 import { EventEmitter } from 'node:events'
 import { chmodSync, mkdtempSync, readFileSync, readdirSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
@@ -195,6 +195,16 @@ describe('#690 and #711: the deadline kills npx and everything under it; nothing
   const gone = async (pid: number) => {
     const deadline = Date.now() + 5_000
     while (alive(pid) && Date.now() < deadline) await new Promise((r) => setTimeout(r, 20))
+    if (alive(pid)) {
+      // Diagnosis for Linux CI (TEMPORARY): is the process running, or a zombie no one reaps? And is there a `ps`?
+      let status = '(no /proc)'
+      try { status = readFileSync(`/proc/${pid}/status`, 'utf8').split('\n').filter((l) => /^(Name|State|PPid):/.test(l)).join(' | ') } catch (e) { status = `(no /proc/${pid}/status: ${(e as Error).message.split('\n')[0]})` }
+      let ps = ''
+      try { ps = execFileSync('ps', ['-A', '-o', 'pid=,ppid='], { encoding: 'utf8' }).split('\n').length + ' ps lines' } catch (e) { ps = `ps failed: ${(e as NodeJS.ErrnoException).code ?? (e as Error).message.split('\n')[0]}` }
+      let init = ''
+      try { init = readFileSync('/proc/1/cmdline', 'utf8').replaceAll('\0', ' ') } catch { init = '(unknown)' }
+      console.error(`DIAG pid ${pid} still there: ${status}; ${ps}; pid 1 is: ${init}`)
+    }
     return !alive(pid)
   }
   const childOf = (pidFile: string) => Number(readFileSync(pidFile, 'utf8'))
