@@ -41,3 +41,5 @@ export * from './permissions.ts'
 export * from './questions.ts'
 export * from './jobs.ts'
 export * from './ceiling.ts'
+// Stage 1 M4 (M4-A): connecting a tool by address.
+export * from './connections.ts'

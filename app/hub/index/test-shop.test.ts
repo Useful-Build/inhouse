@@ -43,4 +43,20 @@ describe('decideTestShop', () => {
       }
     }
   })
+
+  // Stage 1 M4 (M4-A): `propose` and `name` are in the contract before M4-K3 and M4-T build them. Until then a call that
+  // sends one is refused as an unknown option was, with or without a test shop, never run as if it hadn't sent it.
+  it('refuses the M4 options their owners have not built yet, in either build', () => {
+    const options = { ok: false, error: { code: 'invalid_args', message: 'invalid arguments: options' } }
+    for (const testBuild of [false, true]) {
+      for (const extra of [{ propose: true }, { propose: false }, { name: 'orders_search' }]) {
+        let asked = false
+        expect(decideTestShop(extra, testBuild, () => { asked = true; return true }), JSON.stringify(extra)).toEqual(options)
+        expect(decideTestShop({ testShopHost: HOST, ...extra }, testBuild, () => { asked = true; return true }), JSON.stringify(extra)).toEqual(options)
+        expect(asked).toBe(false)
+      }
+      // Control: the same call without them still reads as before.
+      expect(decideTestShop({ testShopHost: HOST }, true, only(HOST))).toEqual({ ok: true, value: { shop: 'example-mc-late-orders' } })
+    }
+  })
 })

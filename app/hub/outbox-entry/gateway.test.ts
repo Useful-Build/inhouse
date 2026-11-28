@@ -157,6 +157,22 @@ describe('WriteGateway schema & operation checks', () => {
     }
     expect(w.fake.requests).toEqual([])
   })
+
+  // #673: Stage 1 M4's write pins (generation, defHash, policyRev) are in the contract before any operation reads them.
+  // A request that carries them is refused as it was before M4-A, never sent with them unread. Control: the same
+  // request without them goes out.
+  it('refuses a write that carries the MCP pins, with invalid_args and sent: no, and sends nothing', async () => {
+    const w = shopifyWorld()
+    const pins = { generation: 3, defHash: 'a'.repeat(64), policyRev: 7 }
+    for (const extra of [pins, { generation: 3 }, { defHash: pins.defHash }, { policyRev: 7 }]) {
+      const req = { ...baseShopifyReq(), expect: { ...baseShopifyReq().expect, ...extra } }
+      const r = await runWriteAction(w.deps, req as WriteRequest)
+      expect(WriteResultSchema.safeParse(r).success).toBe(true)
+      expect(r, JSON.stringify(extra)).toMatchObject({ ok: false, error: { code: 'invalid_args' }, sent: 'no' })
+    }
+    expect(w.fake.requests).toEqual([])
+    expect(await runWriteAction(w.deps, baseShopifyReq())).toMatchObject({ ok: true })
+  })
 })
 
 describe('ReadGateway isolation', () => {

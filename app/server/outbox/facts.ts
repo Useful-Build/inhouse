@@ -92,6 +92,8 @@ export function outboxFacts(d: { db: D1Database; hubAccounts: () => Promise<read
           slack: accountFacts('slack', row(ACCOUNT_IDS.slack), hubOf(ACCOUNT_IDS.slack)),
         },
         listedChannels: channels.map(c => ({ id: c.channel_id, name: c.name })),
+        // Stage 1 M4 (N46): M4-W2 reads the runtime connections from the hub here; until then no operation writes to one.
+        connections: [],
       }
     },
 

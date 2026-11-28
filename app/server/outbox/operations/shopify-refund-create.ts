@@ -79,7 +79,7 @@ export const shopifyRefundCreate: OperationEntry<RefundArgs> & { key: 'shopify.r
   // Stage 1 M3 (card details): the order's name and customer, with the refund's own amount (never the order's total).
   facts: a => ({ orderIds: [a.orderId], variantIds: [] }),
   detail: (a, f) => detailOf([orderRow(f, a.orderId, { words: moneyWords(a.amount), currency: a.amount.currency })]),
-  effects: { money: true, customer: true, destructive: false, access: false },
+  effects: { money: true, customer: true, destructive: false, access: false, unreviewed: false },
   memberMay: false,
   reversible: false,
   idempotent: false,

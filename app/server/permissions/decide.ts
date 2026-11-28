@@ -22,8 +22,11 @@ import { NUDGE_AFTER, POLICY_REV } from './policy.ts'
 import type { Asker, CeilingFacts, DecideCtx, DecideFacts, GrantFacts, Guardrail, Resolved, Verdict } from './types.ts'
 import type { Effects } from '../outbox/operations/types.ts'
 
-/** The effect flags in the order they name a guardrail when several are set. */
-export const EFFECT_GUARDRAILS: readonly (keyof Effects & Guardrail)[] = ['money', 'customer', 'destructive', 'access']
+/**
+ * The effect flags in the order they name a guardrail when several are set. `unreviewed` (Stage 1 M4, N46) is never set
+ * beside another (its operation class forbids it). contract-coverage.test.ts checks this names every flag of `Effects`.
+ */
+export const EFFECT_GUARDRAILS: readonly (keyof Effects & Guardrail)[] = ['money', 'customer', 'destructive', 'access', 'unreviewed']
 
 const RANK = { member: 0, admin: 1 } as const
 

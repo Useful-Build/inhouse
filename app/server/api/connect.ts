@@ -6,7 +6,7 @@
 // - Route B is a GET (the AS redirects the browser), so P2's Origin check doesn't apply: the state's member binding at
 //   the hub is the CSRF guard. Stated residual: the platform's request logs may record B's URL with `code` and `state`;
 //   both are one-use, PKCE-bound and expire in 10 minutes.
-import type { ConnectGateway } from '../../hub/index/contract.ts'
+import type { CallerScope, ConnectGateway, ConnectReturn } from '../../hub/index/contract.ts'
 import { ConnectOutcomeSchema, ConnectorAccountIdSchema } from '../../shared/contract/audit.ts'
 import type { ConnectOutcome } from '../../shared/contract/audit.ts'
 import type { AgentErrorCode } from '../../shared/contract/index.ts'
@@ -17,8 +17,14 @@ import type { ApiCtx } from '../db/handler-kit.ts'
 import type { ConnectorLastState } from '../db/connector-accounts.ts'
 import type { HandlerEnv } from '../routes.ts'
 
-/** The ConnectGateway methods these routes call. */
-export type ConnectBinding = Pick<ConnectGateway, 'startConnect' | 'completeConnect' | 'failConnect' | 'listAccounts'>
+/**
+ * The ConnectGateway methods these routes call. Stage 1 M4 (#674): the return's `actorKind` and `iss` are required here,
+ * so the callback can't forget to forward them (`iss: null` when the return carried none).
+ */
+export type ConnectBinding = Pick<ConnectGateway, 'startConnect' | 'listAccounts'> & {
+  completeConnect(scope: CallerScope, req: Parameters<ConnectGateway['completeConnect']>[1] & ConnectReturn): ReturnType<ConnectGateway['completeConnect']>
+  failConnect(scope: CallerScope, req: Parameters<ConnectGateway['failConnect']>[1] & ConnectReturn): ReturnType<ConnectGateway['failConnect']>
+}
 /** The generated binding (`HUB_CONNECT: Service`, entrypoint ConnectGateway of inhouse-hub). */
 export type ConnectCtx = ApiCtx & { env: Pick<HandlerEnv, 'HUB_CONNECT'> }
 
@@ -83,8 +89,17 @@ export function stateAccountHint(state: string | null): string | null {
   }
 }
 
-/** Hub answers that don't prove the state was accepted, so the unverified prefix never becomes a D1 key on them. */
-const UNPROVEN: ReadonlySet<ConnectOutcome> = new Set(['state_invalid', 'invalid_args', 'internal'])
+/**
+ * Hub answers that prove it took the state's pending item (the hub answers each only after that check passed: the
+ * code exchange, its checks and the connect's own epoch), so the state's prefix names the account and may become a D1
+ * key. An allow-list (#676): any other answer, `state_invalid`, `invalid_args`, `internal` and every code added since
+ * (M4's `not_built`, `connections_off` and the rest) included, proves nothing, since a refusal that comes before the
+ * state check, or a forged state, could produce it.
+ */
+export const PROVEN: ReadonlySet<ConnectOutcome> = new Set<ConnectOutcome>([
+  'not_configured', 'key_unavailable', 'credentials_rejected', 'upstream_rejected', 'upstream_unavailable', 'rate_limited',
+  'connect_refused', 'workspace_mismatch', 'scope_mismatch', 'connect_stale',
+])
 
 /**
  * The hub's state for an account as the row's `last_state` (`listAccounts`); `failed` when the hub can't say, a thrown
@@ -120,13 +135,17 @@ export async function connectCallback(c: ConnectCtx): Promise<Response> {
   const state = q.get('state')
   const code = q.get('code')
   const error = q.get('error')
+  // Stage 1 M4 (N40, #674): every `iss` the return carried, in order (null for none), and who finished it (this route is
+  // the Inhouse team's). Forwarded as they are; M4-O1a's hub checks them.
+  const iss = q.getAll('iss')
+  const forwarded: ConnectReturn = { actorKind: 'inhouse', iss: iss.length > 0 ? iss : null }
   const hub = gateway(c)
 
   let outcome: ConnectOutcome
   let confirmed: string | null = null
   try {
     if (error !== null) {
-      const r = await hub.failConnect(scope(c), { state: state ?? '', memberId, error: error.slice(0, 512) })
+      const r = await hub.failConnect(scope(c), { state: state ?? '', memberId, error: error.slice(0, 512), ...forwarded })
       if (r.ok && r.value.accountId) {
         outcome = 'connect_refused'
         confirmed = r.value.accountId
@@ -134,12 +153,12 @@ export async function connectCallback(c: ConnectCtx): Promise<Response> {
     } else if (!state || !code) {
       outcome = 'state_invalid'
     } else {
-      const r = await hub.completeConnect(scope(c), { state, code, memberId })
+      const r = await hub.completeConnect(scope(c), { state, code, memberId, ...forwarded })
       outcome = r.ok ? 'ok' : asOutcome(r.error.code)
       if (r.ok) confirmed = r.value.accountId
       // Only an answer that proves the hub took the state's item (which names the prefix's account) makes the prefix
-      // a write key. `state_invalid`, `invalid_args` and `internal` prove nothing: a forged state could produce them.
-      else if (!UNPROVEN.has(outcome)) confirmed = stateAccountHint(state)
+      // a write key (`PROVEN`). Anything else proves nothing: a forged state, or a refusal before the check, gives it.
+      else if (PROVEN.has(outcome)) confirmed = stateAccountHint(state)
     }
   } catch {
     // A thrown RPC (the hub unreachable mid-call): the browser still gets a redirect, never a 500 page. Nothing written.

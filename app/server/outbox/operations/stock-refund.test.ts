@@ -23,6 +23,7 @@ const facts = (currency: string | null = 'USD'): ResolveFacts => ({
     slack: null,
   },
   listedChannels: [],
+  connections: [],
 })
 
 const ITEM = 'gid://shopify/InventoryItem/8001'

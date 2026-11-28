@@ -44,6 +44,9 @@ const EXPECTED = {
   'deploy-registry-testing': [1, /module hub\/registry\/testing\/fake-registry\.ts/],
   'deploy-test-module': [1, /module hub\/scope\/scope\.test\.ts/],
   'deploy-upstreams': [1, /module test\/upstreams\/shopify\/recorded\.ts/],
+  // Stage 1 M4-C1 (N36): the official MCP client's stdio entry and cross-spawn never reach the hub; its workerd graph may.
+  'deploy-sdk-stdio': [1, /FAIL {2}mcp sdk modules: the deployable.*\n.*the stdio entry: module .*stdio\.mjs\n.*cross-spawn: module/],
+  'deploy-sdk-workerd': [0, /ok {4}mcp sdk modules: clean in the deployable hub bundle\.\nok {4}mcp sdk modules: clean in the test hub bundle\./],
   'deploy-malformed-meta': [2, /isn't JSON/],
   'deploy-outputs-elsewhere': [2, /outputs aren't in .*\.\.\/dist-hub\/index\.js/],
   // Its output, from app/, lands outside app/; from app/hub/ it would be this folder's stale index.js.
@@ -108,6 +111,30 @@ for (const name of FAKES_NAMES) {
     }
   })
 }
+
+// M4-C1: part 3 holds for the test bundle too (it is built from the same sources): one carrying the Node shim, the AJV
+// validator, a validators entry, ajv or the official server fails, each named.
+test('a test bundle carrying an SDK module the hub must not have fails the scan', () => {
+  const tmp = mkdtempSync(join(tmpdir(), 'check-hub-build-sdk-'))
+  try {
+    const dir = join(tmp, 'test')
+    mkdirSync(dir)
+    writeFileSync(join(dir, 'index.js'), readFileSync(join(app, TEST, 'index.js'), 'utf8'))
+    const meta = JSON.parse(readFileSync(join(app, TEST, 'bundle-meta.json'), 'utf8'))
+    for (const m of ['client/dist/shimsNode.mjs', 'client/dist/ajvProvider-BIwGVY6G.mjs', 'client/dist/validators/ajv.mjs', 'server/dist/index.mjs']) {
+      meta.inputs[`hub/node_modules/@modelcontextprotocol/${m}`] = { bytes: 1, imports: [], format: 'esm' }
+    }
+    meta.inputs['hub/node_modules/ajv/dist/ajv.js'] = { bytes: 1, imports: [], format: 'esm' }
+    writeFileSync(join(dir, 'bundle-meta.json'), JSON.stringify({ ...meta, outputs: { [join(dir, 'index.js')]: { bytes: 1 } } }))
+    const r = run('--deploy', `${FIXTURES}/deploy-clean`, '--test', dir)
+    assert.equal(r.status, 1, r.out)
+    assert.match(r.out, /ok {4}mcp sdk modules: clean in the deployable hub bundle/)
+    assert.match(r.out, /FAIL {2}mcp sdk modules: the test hub bundle/)
+    for (const what of ['the Node shim', 'the AJV validator', 'a validators entry', 'the official server', 'ajv: module']) assert.ok(r.out.includes(what), `${what}\n${r.out}`)
+  } finally {
+    rmSync(tmp, { recursive: true, force: true })
+  }
+})
 
 // #588: the eval Slack canary in the test bundle's source map alone (tree-shaken from the script) fails the scan.
 test('the eval slack canary only in the test bundle\'s map, not its script: the scan fails', () => {

@@ -75,6 +75,14 @@ const sample: Record<AuditArgs['action'], AuditArgs> = {
   'question.answered': { action: 'question.answered', questionId: 'q_AAAAAAAAAAAAAAAAAAAAAA' },
   'question.expired': { action: 'question.expired', questionId: 'q_AAAAAAAAAAAAAAAAAAAAAA' },
   'ceiling.changed': { action: 'ceiling.changed', operation: 'shopify.order.tag_add', old: null, new: { enabled: true, perDayMax: 1200, unitsMax: 100, bulkThreshold: 5, batchMax: 500 } },
+  // Stage 1 M4 (M4-A)
+  'connection.prepared': { action: 'connection.prepared', accountId: 'mcp:helpdesk', transport: 'https', path: 'signin', generation: 1 },
+  'connection.changed': { action: 'connection.changed', accountId: 'mcp:helpdesk', changed: ['admin_may_sign_in'] },
+  'connection.trusted': { action: 'connection.trusted', accountId: 'mcp:helpdesk', trusted: true, policyRev: 4 },
+  'connection.credential': { action: 'connection.credential', accountId: 'mcp:helpdesk', kind: 'key', outcome: 'ok' },
+  'connection.tools_confirmed': { action: 'connection.tools_confirmed', accountId: 'mcp:helpdesk', generation: 1, policyRev: 3, read: 2, write: 1, off: 0 },
+  'connection.tool_changed': { action: 'connection.tool_changed', accountId: 'mcp:helpdesk', tool: 'helpdesk_search', defHash: 'a'.repeat(64), change: 'changed' },
+  'connection.removed': { action: 'connection.removed', accountId: 'mcp:helpdesk', revoked: false },
 }
 const names = (id: string) => ({ m_a: 'Ada Example' } as Record<string, string>)[id] ?? null
 
@@ -334,5 +342,30 @@ describe('Stage 1 M3 lines (N25, N26)', () => {
   })
   it('reads an answer the same with or without who could answer it', () => {
     expect(auditText({ action: 'action.answered', actionId: 'ac_AAAAAAAAAAAAAAAAAAAAAA', choice: 'always', permissionId: 'pg_AAAAAAAAAAAAAAAAAAAAAA', approverKind: 'admins' }, names)).toEqual(auditText(sample['action.answered'], names))
+  })
+})
+
+describe('Stage 1 M4 (M4-A): connection lines', () => {
+  it('name the connection by its slug and say what happened, with no hash, code or em dash', () => {
+    expect(auditText(sample['connection.prepared'], names)).toEqual({ what: 'prepared a tool to connect', detail: 'Connected tool helpdesk: a sign-in' })
+    expect(auditText({ action: 'connection.changed', accountId: 'mcp:helpdesk', changed: ['settings', 'name'] }, names)).toEqual({ what: 'changed a connected tool', detail: 'Connected tool helpdesk: name, settings' })
+    expect(auditText(sample['connection.trusted'], names)).toEqual({ what: 'trusted a connected tool', detail: 'Connected tool helpdesk' })
+    expect(auditText(sample['connection.credential'], names)).toEqual({ what: 'gave a connected tool its key', detail: 'Connected tool helpdesk' })
+    expect(auditText({ action: 'connection.credential', accountId: 'mcp:helpdesk', kind: 'client', outcome: 'client_fault' }, names))
+      .toEqual({ what: 'couldn’t give a connected tool its app', detail: 'Connected tool helpdesk: the login server refused Inhouse’s app' })
+    expect(auditText(sample['connection.tools_confirmed'], names)).toEqual({ what: 'reviewed a connected tool’s tools', detail: 'Connected tool helpdesk: 2 to read, 1 to write, 0 off' })
+    expect(auditText(sample['connection.tool_changed'], names)).toEqual({ what: 'a connected tool changed a tool', detail: 'Connected tool helpdesk: helpdesk_search' })
+    expect(auditText(sample['connection.removed'], names)).toEqual({
+      what: 'removed a connected tool', detail: 'Connected tool helpdesk: its login wasn’t removed on the tool’s side, so remove the app there too',
+    })
+    for (const action of ['connection.prepared', 'connection.changed', 'connection.trusted', 'connection.credential', 'connection.tools_confirmed', 'connection.tool_changed', 'connection.removed'] as const) {
+      const t = auditText(sample[action], names)
+      expect(`${t.what} ${t.detail}`, action).not.toMatch(/[0-9a-f]{16}|mcp:|—/)
+    }
+  })
+  it('say a sign-in or disconnect of a connection with its slug, as P5 lines do', () => {
+    expect(auditText({ action: 'tools.connect', accountId: 'mcp:helpdesk', outcome: 'ok' }, names)).toEqual({ what: 'connected a tool', detail: 'Connected tool helpdesk' })
+    expect(auditText({ action: 'tools.connect', accountId: 'mcp:helpdesk', outcome: 'client_fault' }, names))
+      .toEqual({ what: 'couldn’t connect a tool', detail: 'Connected tool helpdesk: the login server refused Inhouse’s app' })
   })
 })
