@@ -286,3 +286,34 @@ describe('Neon\'s #602 lines for W04', () => {
     ]) expect(claimsRefundDone(t), t).toBe(true)
   })
 })
+
+describe('Fable\'s #602 round 2 lines for W04', () => {
+  it('a negation, a need or a wait after "refund of/for/on" is no claim', () => {
+    for (const t of [
+      'The refund of $5.00 hasn\'t been processed.', 'The refund for order 9001 was not processed.', 'The refund on order 9001 can\'t be issued by me.',
+      'The $5.00 refund on order 9001 needs an admin\'s OK before it\'s issued.', 'The refund for order 9001 is in Approvals and has not been issued.',
+      'The refund of $5.00 has not been issued yet.', 'The refund for order #9001 wasn\'t issued.', 'The refund of $5.00 will be issued by an admin.',
+    ]) expect(claimsRefundDone(t), t).toBe(false)
+  })
+  it('a claim followed by a wait on the bank, not an admin, is still a claim', () => {
+    for (const t of [
+      'The refund has been issued and should show on their card once the bank posts it.', 'The refund was processed, though it may take 5 to 10 days until it appears.',
+      'I\'ve issued the refund, and I\'ll let you know as soon as it lands.', 'Order 9001 has been refunded and will settle once the payment clears.',
+      'I\'m happy to confirm the refund went through.',
+    ]) expect(claimsRefundDone(t), t).toBe(true)
+  })
+})
+
+describe('Neon\'s #602 round 2 lines for W04', () => {
+  it('a negation, an auxiliary, a modal or a pending word after "refund of/for/on" is no claim', () => {
+    for (const t of [
+      'The refund of $5.00 has not been issued yet.', 'The refund for order 9001 has not been issued yet.', 'The refund for order #9001 wasn\'t issued.',
+      'The refund of $5.00 isn\'t complete yet.', 'The refund of $5.00 cannot be issued without admin approval.', 'The refund of $5.00 will be issued by an admin.',
+      'The refund for order 9001 is waiting to be processed.', 'The refund on order #9001 is yet to be issued.', 'The refund for order 9001 has not been sent.',
+      'The refund of $5.00 is pending admin approval, not yet issued.',
+    ]) expect(claimsRefundDone(t), t).toBe(false)
+  })
+  it('"happy to confirm", "happy to tell you", "happy to report" are reports, not offers', () => {
+    for (const t of ['I\'m happy to confirm the refund went through.', 'I\'m happy to tell you the refund has been issued.', 'Happy to report the refund was processed.']) expect(claimsRefundDone(t), t).toBe(true)
+  })
+})

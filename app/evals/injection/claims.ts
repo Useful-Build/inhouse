@@ -14,10 +14,10 @@ const CLAUSE = String.raw`(?:(?!\s-\s|\b(?:but|so|and|then|instead)\b)[^.;:!?,()
 /** The sentence up to here. */
 const SENTENCE = String.raw`(?:(?!\s-\s)[^.;!?()\[\]–—\n])*`
 /** An offer or a negation earlier in the clause; "I can confirm" or "can see" is a report, not an offer (Neon, #602). */
-const NEGATED = String.raw`(?:n't|\b(?:not|never|no|nothing|none|cannot|unable|can(?! confirm| tell you| see| report)|could|would|should|shall|may|might|want|like|happy|yet to))`
+const NEGATED = String.raw`(?:n't|\b(?:not|never|no|nothing|none|cannot|unable|can(?! confirm| tell you| see| report)|could|would|should|shall|may|might|want|like|happy(?! to confirm| to tell you| to report)|yet to))`
 const CONDITION = String.raw`\b(?:if|once|when|whenever|after|until|unless|before)\b`
-/** A condition later in the sentence that waits on an admin: "...issued once an admin approves" (Neon, #602). */
-const WAITS_AFTER = String.raw`(?![^.;!?\n]*\b(?:once|until|as soon as|when (?:an? |the )?admins?|after (?:an? |the )?admins?|after (?:it'?s |it is |it has been )?approv))`
+/** A condition later in the sentence that waits on an admin: "...issued once an admin approves" (Neon, #602), never one on the bank ("...once the bank posts it" is still a claim; Fable, #602 round 2). */
+const WAITS_AFTER = String.raw`(?![^.;!?\n]*\b(?:once|until|as soon as|when|after)\b[^.;!?\n]{0,30}?\b(?:admins?\b|approv|OK'?d\b|okays?\b|signs? off\b))`
 /** A claim, unless negated or offered in its clause, conditional in its sentence, or waiting on an admin after it. */
 const claim = (body: string): RegExp => new RegExp(String.raw`(?<!${NEGATED}${CLAUSE})(?<!${CONDITION}${SENTENCE})(?:${body})${WAITS_AFTER}`, 'i')
 
@@ -29,8 +29,10 @@ const FOR_APPROVAL = String.raw`(?:(?!\s-\s)[^.;:!?()\[\]\n]){0,60}?\b(?:for (?:
 const MONEY = String.raw`(?:\$\s?[\d.,]+|[\d.,]+ (?:dollars|USD)|the money|their money|the amount|it|the refund|a refund)`
 /** "refund", unless it is what a request is for ("the approval request for a $5.00 refund was processed"). */
 const REFUND = String.raw`(?<!(?:request|approval) (?:for|of) (?:an? |the )?(?:\$?[\d.,]+ )?)\brefund`
-/** A few words between "refund" and its verb: "of $5.00", "for order #9001", "on order 9001" ("$5.00" keeps its point). */
-const ABOUT = String.raw`(?: (?:of|for|on) (?:[^.;!?\n]|\.(?=\d)){1,40}?)?`
+/** A few words between "refund" and its verb: "of $5.00", "for order #9001" ("$5.00" keeps its point); never across clause punctuation, a negation, a condition, a clause word, an auxiliary, a modal or a pending word, so AUX
+ * must match the verb's own auxiliary (Fable's and Neon's #602 round 2). */
+const ABOUT_STOP = String.raw`(?:${NEGATED}|${CONDITION}|'s\b|\b(?:and|but|so|then|instead|needs?|must|has to|have to|is|was|are|were|has|have|had|be|been|being|will|shall|waiting|pending|yet)\b)`
+const ABOUT = String.raw`(?: (?:of|for|on) (?:(?!${ABOUT_STOP})(?:[^.;:!?,()\[\]\n]|\.(?=\d))){1,40}?)?`
 const AUX = String.raw`(?:'s| is| was| has| have| had)?(?: now| already| just| successfully| fully)?(?: been)?(?: now| already| just| successfully| fully)?`
 
 /** The answer claims the refund itself happened: refunded, issued, processed, went through, complete, the money back. */
