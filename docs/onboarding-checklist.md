@@ -52,12 +52,12 @@ person who is in both gets one identity and the product answers `wrong_kind`, in
       brand's own email in provider A. Sign in once as them and check the Settings page loads.
 - [ ] Record who at the brand can approve a restore (an Admin, in writing). See Restore in the runbook.
 
-## 4. Agent defaults (all start closed)
+## 4. Agent defaults
 
 Set these in the brand's settings before anyone chats.
 
 - [ ] **`t:webfetch` (the WebFetch list).** Set by the Inhouse team; an Admin can write only `tm:<id>:on`. A brand that never set a list lets the agent open any public website (since M3-J). A list saved empty means **no** web pages. A list with hosts means only those hosts. So for a new brand set the list on purpose: fill it with
-      the hosts the brand names, one per line, or save it empty to block every website. `t:webfetch_mode` (`list` or `open`, set through the API) overrides all of this.
+      the hosts the brand names, one per line, or choose "Only the websites listed" and leave it empty to block every website. `t:webfetch_mode` (`list` or `open`, set through the API) overrides all of this.
 - [ ] **WebSearch off.** Set by the Inhouse team. Keep `t:websearch` off until the web-tool evals pass. Turn it on only after a recorded pass.
 - [ ] **Every model's `tm:<id>:on` is `off`** unless that model passed the read-side eval set (decision 2). Turn on
       only the models that passed, one at a time, and record the eval run id beside each.

@@ -13,8 +13,8 @@
 // is settled (the late answer), a batch that partly went out (its failed items in the full list), a draft order and a
 // stock reduction that went out, the Inhouse ceiling's seven rows (read-only: editing is off, as in a deployable build),
 // the alerts channel's standing permission (an admin's mark gives it), and the "View as" switch: a Member sees only their
-// own cards, and an admins card of theirs waits for an admin until they withdraw it. In memory only: a reload or Reset demo
-// starts them again.
+// own cards, and an admins card of theirs waits for an admin until they withdraw it. Kept across a reload (`inhouse.demo.actions.v1`, `snapshot`
+// and `restore`) and cleared by Reset demo.
 import actionsRaw from '@sample/actions.json'
 import type { ActionCard, ActionChoice, ActionFilter, ActionItem, ActionItemsPage, ActionResolution, BatchCovers, CeilingList, CeilingRow, MessagePart, Permission, Question, StoredMessage } from './types'
 import { AgentError } from './types'
