@@ -7,11 +7,20 @@ import { instantOf } from '../lib/format'
 import { AgentError } from './types'
 import { NOT_FOUND } from '../../shared/contract/error-codes'
 
+export interface EndedJobRecord {
+  outcome: JobOutcome
+  endedAt: Instant
+  cost: { minor: number; currency: string }
+}
+
 export interface JobsHost {
   session: string
   now: () => number
   shown: () => boolean
   at: (sampleTime: string) => Instant
+  endedRecords: () => Readonly<Record<string, EndedJobRecord>>
+  chatEnded: (chatId: string) => boolean
+  onJobEnded: (job: Job) => void
   onChanged: () => void
 }
 
@@ -67,6 +76,7 @@ const cloneJob = (raw: RawSeedJob, at: (s: string) => Instant): Job => ({
 export class MockJobs {
   private readonly h: JobsHost
   private seeded = new Map<string, Job>()
+  private seededIds = new Set<string>()
   private live = new Map<string, Job>()
   private abortByJob = new Map<string, AbortController>()
   private notices: AgentNotification[] = []
@@ -77,10 +87,47 @@ export class MockJobs {
     this.seedInitial()
   }
 
+  private applyPersisted(job: Job, ended: Readonly<Record<string, EndedJobRecord>>): Job {
+    const saved = ended[job.jobId]
+    if (saved) {
+      return {
+        ...job,
+        state: 'ended',
+        outcome: saved.outcome,
+        endedAt: saved.endedAt,
+        progress: null,
+        cost: { ...saved.cost },
+      }
+    }
+    if (job.state !== 'ended' && this.h.chatEnded(job.chatId)) {
+      return {
+        ...job,
+        state: 'ended',
+        outcome: 'cancelled',
+        endedAt: instantOf(this.h.now()),
+        progress: null,
+        cost: job.cost ?? { minor: 120, currency: 'USD' },
+      }
+    }
+    return job
+  }
+
   private seedInitial() {
     this.seeded.clear()
+    this.seededIds.clear()
+    const ended = this.h.endedRecords()
     for (const [chatId, entry] of Object.entries(CHATS)) {
-      if (entry.job) this.seeded.set(chatId, cloneJob(entry.job, this.h.at))
+      if (!entry.job) continue
+      const job = cloneJob(entry.job, this.h.at)
+      this.seededIds.add(job.jobId)
+      this.seeded.set(chatId, this.applyPersisted(job, ended))
+    }
+  }
+
+  syncEnded() {
+    const ended = this.h.endedRecords()
+    for (const [chatId, job] of this.seeded.entries()) {
+      this.seeded.set(chatId, this.applyPersisted(job, ended))
     }
   }
 
@@ -192,6 +239,7 @@ export class MockJobs {
     if (this.live.has(chatId)) this.live.set(chatId, updated)
     else this.seeded.set(chatId, updated)
     this.abortByJob.delete(jobId)
+    if (this.seededIds.has(jobId)) this.h.onJobEnded(updated)
     if (opts?.notify !== false) this.recordNotice(updated)
     this.h.onChanged()
     return updated

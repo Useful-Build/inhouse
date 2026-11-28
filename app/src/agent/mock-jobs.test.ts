@@ -33,6 +33,26 @@ async function load() {
   return { store, mock: agent as unknown as MockAgent, ui: () => store.useUi.getState() }
 }
 
+async function loadCold() {
+  vi.resetModules()
+  const store = await import('../state/store')
+  const { agent } = await import('./index')
+  await import('../screens/chat/run')
+  return { store, mock: agent as unknown as MockAgent, ui: () => store.useUi.getState() }
+}
+
+async function reloadWithStorage(warm = false) {
+  const savedStorage = new Map(storage)
+  vi.resetModules()
+  storage = savedStorage
+  const store = await import('../state/store')
+  const { agent } = await import('./index')
+  await import('../screens/chat/run')
+  const mock = agent as unknown as MockAgent
+  if (warm) await mock.preload()
+  return { store, mock, ui: () => store.useUi.getState() }
+}
+
 const settle = () => vi.advanceTimersByTimeAsync(0)
 const run = (ms: number) => vi.advanceTimersByTimeAsync(ms)
 
@@ -66,6 +86,10 @@ describe('demo seeded long jobs and bell notices (J2, J3, J4)', () => {
     // Issue 637: marking the live job notice read flips unread to false.
     await l.mock.markNoticesRead([notices[0].id])
     expect(l.mock.listNotifications().find(n => n.id === notices[0].id)?.unread).toBe(false)
+
+    // Cancelling the seeded job persists across reload.
+    const reloaded = await reloadWithStorage()
+    expect(await reloaded.mock.job('catalog-audit')).toMatchObject({ state: 'ended', outcome: 'cancelled', progress: null })
   })
 
   test('seasonal-restock ran 2 h 14 min and ad-spend-audit stopped at its budget; both seed quiet bell notices', async () => {
@@ -232,7 +256,7 @@ describe('typed long tasks, Follow-up during running job, and Job budget (J1, J5
     expect(events.some(e => e.type === 'part' && e.turnId === queuedCont!.turnId)).toBe(false)
   })
 
-  test('deleting a chat during a live job aborts the job without done or a bell notice', async () => {
+  test('deleting a chat during a live job aborts the job without done and adds a stopped bell notice', async () => {
     const l = await load()
     for (const [chatId, delayMs] of [['del-between', 5_000], ['del-mid-step', 12_000]] as const) {
       const beforeNotices = l.mock.listNotifications().length
@@ -247,7 +271,8 @@ describe('typed long tasks, Follow-up during running job, and Job budget (J1, J5
 
       expect(events.find(e => e.type === 'job.ended')?.outcome).not.toBe('done')
       expect(events.some(e => e.type === 'run.finished')).toBe(true)
-      expect(l.mock.listNotifications().length).toBe(beforeNotices)
+      expect(l.mock.listNotifications()).toHaveLength(beforeNotices + 1)
+      expect(l.mock.listNotifications()[0]).toMatchObject({ icon: 'error', text: 'A long job stopped', unread: true, link: { to: 'chat', id: chatId } })
     }
   })
 
@@ -371,35 +396,53 @@ describe('helper traces and web switches (J6, J7, J8)', () => {
 })
 
 describe('round 3 parity and plant regression tests (H1, H2, issue 707)', () => {
-  test('Pause ends the seeded catalog-audit job too, whether jobs were loaded first or not (H1)', async () => {
-    const cold = await load()
+  test('Pause ends the seeded catalog-audit job on both cold and warm stores and persists across reload (H1, issue 759)', async () => {
+    const cold = await loadCold()
+    expect(cold.mock.loadedJobs()).toBeNull()
     await cold.mock.pause()
+    expect(cold.mock.loadedJobs()).not.toBeNull()
     expect(await cold.mock.job('catalog-audit')).toMatchObject({ state: 'ended', outcome: 'cancelled', progress: null })
     expect(cold.mock.listNotifications()[0]).toMatchObject({ icon: 'error', text: 'A long job stopped', unread: true, link: { to: 'chat', id: 'catalog-audit' } })
     await cold.mock.resume()
     expect(await cold.mock.job('catalog-audit')).toMatchObject({ state: 'ended', outcome: 'cancelled' })
+
+    // Reloading after Pause keeps catalog-audit ended instead of resurrecting it as running.
+    const reloaded = await reloadWithStorage()
+    expect(await reloaded.mock.job('catalog-audit')).toMatchObject({ state: 'ended', outcome: 'cancelled', progress: null })
+    reloaded.mock.reset()
+    expect(await reloaded.mock.job('catalog-audit')).toMatchObject({ state: 'running', outcome: null })
 
     const warm = await load()
     expect(await warm.mock.job('catalog-audit')).toMatchObject({ state: 'running', outcome: null })
     await warm.mock.pause()
     expect(await warm.mock.job('catalog-audit')).toMatchObject({ state: 'ended', outcome: 'cancelled', progress: null })
     expect(warm.mock.listNotifications()[0]).toMatchObject({ icon: 'error', text: 'A long job stopped', unread: true, link: { to: 'chat', id: 'catalog-audit' } })
+    const warmReloaded = await reloadWithStorage()
+    expect(await warmReloaded.mock.job('catalog-audit')).toMatchObject({ state: 'ended', outcome: 'cancelled', progress: null })
   })
 
-  test('Delete then Undo ends catalog-audit cancelled without resurrecting a running job (H1)', async () => {
-    for (const warmFirst of [false, true]) {
-      const l = await load()
-      if (warmFirst) expect(await l.mock.job('catalog-audit')).toMatchObject({ state: 'running' })
+  test('Delete then Undo ends catalog-audit cancelled, notifies the bell, and persists across reload (H1, issue 759)', async () => {
+    for (const coldFirst of [true, false]) {
+      storage.clear()
+      const l = coldFirst ? await loadCold() : await load()
+      if (coldFirst) expect(l.mock.loadedJobs()).toBeNull()
+      else expect(await l.mock.job('catalog-audit')).toMatchObject({ state: 'running' })
       const before = l.mock.listNotifications().length
       await l.mock.deleteChats(['catalog-audit'])
+      if (coldFirst) expect(l.mock.loadedJobs()).not.toBeNull()
       await l.mock.restoreChats(['catalog-audit'])
       expect(await l.mock.job('catalog-audit')).toMatchObject({ state: 'ended', outcome: 'cancelled', progress: null })
-      expect(l.mock.listNotifications().length).toBe(before)
+      expect(l.mock.listNotifications()).toHaveLength(before + 1)
+      expect(l.mock.listNotifications()[0]).toMatchObject({ icon: 'error', text: 'A long job stopped', unread: true, link: { to: 'chat', id: 'catalog-audit' } })
+
+      const reloaded = await reloadWithStorage()
+      expect(await reloaded.mock.job('catalog-audit')).toMatchObject({ state: 'ended', outcome: 'cancelled', progress: null })
     }
   })
 
   test('Pause ends a live long job both mid-step and in the first 4s, with one notice and nothing after (issue 707)', async () => {
     for (const [chatId, pauseAtMs] of [['pause-live-mid', 12_000], ['pause-live-gap', 4_000]] as const) {
+      storage.clear()
       const l = await load()
       const events: RunEvent[] = []
       const beforeNotices = l.mock.listNotifications().length
@@ -572,22 +615,16 @@ describe('round 2 parity fixes (issues 677, 678, 681, 682, 683, 684)', () => {
     await first.mock.send('reload-job', { clientTurnKey: 'reload-job-key1', text: 'Run a full catalog audit across every SKU', model: 'opus' })
     await run(60_000)
     const j1 = await first.mock.job('reload-job')
-    const audit1 = await first.mock.job('catalog-audit')
-    await first.mock.cancelJob(audit1!.jobId)
+    await first.mock.createChat({ id: 'reload-cancel', title: 'Reload cancel' })
+    await first.mock.send('reload-cancel', { clientTurnKey: 'reload-cancel-k', text: 'Run a full catalog audit across every SKU', model: 'opus' })
+    await run(5_000)
+    const cancel1 = await first.mock.job('reload-cancel')
+    await first.mock.cancelJob(cancel1!.jobId)
     const firstNotices = first.mock.listNotifications().filter(n => n.id.startsWith('job_'))
     expect(firstNotices.length).toBeGreaterThanOrEqual(2)
     await first.mock.markNoticesRead(firstNotices.map(n => n.id))
 
-    // Reload: preserve localStorage Map across load(), with fresh SESSION and memory state.
-    const savedStorage = new Map(storage)
-    vi.resetModules()
-    storage = savedStorage
-    const store = await import('../state/store')
-    const { agent } = await import('./index')
-    await import('../screens/chat/run')
-    const second = agent as unknown as MockAgent
-    await second.preload()
-    void store
+    const { mock: second } = await reloadWithStorage(true)
 
     await second.createChat({ id: 'reload-job-2', title: 'Reload job 2' })
     await second.send('reload-job-2', { clientTurnKey: 'reload-job-key2', text: 'Run a full catalog audit across every SKU', model: 'opus' })

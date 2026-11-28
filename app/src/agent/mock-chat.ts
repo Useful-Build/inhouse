@@ -472,7 +472,7 @@ export class ChatEngine {
           gapRemaining = Math.max(0, gapRemaining - (Date.now() - t0))
           if (isReset()) return
           if (fencedAs() === 'deleted' || this.h.state.chatDeleted[run.chatId]) {
-            const ended = jobs.endJob(run.chatId, job.jobId, 'cancelled', 20, { notify: false })
+            const ended = jobs.endJob(run.chatId, job.jobId, 'cancelled', 20)
             if (ended) this.emit(run, { type: 'job.ended', jobId: job.jobId, outcome: 'cancelled', durationMs: 0, cost: ended.cost ?? { minor: 0, currency: 'USD' } })
             return
           }
@@ -486,7 +486,7 @@ export class ChatEngine {
             await drainNow()
             if (isReset()) return
             if (fencedAs() === 'deleted' || this.h.state.chatDeleted[run.chatId]) {
-              const ended = jobs.endJob(run.chatId, job.jobId, 'cancelled', 20, { notify: false })
+              const ended = jobs.endJob(run.chatId, job.jobId, 'cancelled', 20)
               if (ended) this.emit(run, { type: 'job.ended', jobId: job.jobId, outcome: 'cancelled', durationMs: Math.max(0, ended.endedAt!.ms - ended.startedAt.ms), cost: ended.cost ?? { minor: 0, currency: 'USD' } })
               return
             }
@@ -543,7 +543,7 @@ export class ChatEngine {
         if (fencedAs() === 'deleted' || this.h.state.chatDeleted[run.chatId]) {
           if (contTurn.state === 'live') this.finish(run, contTurn, 'stopped')
           this.project(run, contTurn, [], { trace: plan.trace }, model, true)
-          const ended = jobs.endJob(run.chatId, job.jobId, 'cancelled', 40, { notify: false })
+          const ended = jobs.endJob(run.chatId, job.jobId, 'cancelled', 40)
           if (ended) this.emit(run, { type: 'job.ended', jobId: job.jobId, outcome: 'cancelled', durationMs: Math.max(0, ended.endedAt!.ms - ended.startedAt.ms), cost: ended.cost ?? { minor: 0, currency: 'USD' } })
           return
         }
@@ -566,7 +566,7 @@ export class ChatEngine {
             await drainNow()
             if (isReset()) return
             if (fencedAs() === 'deleted' || this.h.state.chatDeleted[run.chatId]) {
-              const ended = jobs.endJob(run.chatId, job.jobId, 'cancelled', 40, { notify: false })
+              const ended = jobs.endJob(run.chatId, job.jobId, 'cancelled', 40)
               if (ended) this.emit(run, { type: 'job.ended', jobId: job.jobId, outcome: 'cancelled', durationMs: Math.max(0, ended.endedAt!.ms - ended.startedAt.ms), cost: ended.cost ?? { minor: 0, currency: 'USD' } })
               return
             }

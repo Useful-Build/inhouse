@@ -34,7 +34,7 @@ import type { MockJobs } from './mock-jobs'
 import type { Permission } from '../../shared/contract/permissions'
 import type { CeilingList, CeilingRow } from '../../shared/contract/ceiling'
 import type { Question } from '../../shared/contract/questions'
-import type { Job } from '../../shared/contract/jobs'
+import type { Job, JobOutcome } from '../../shared/contract/jobs'
 import { MEMBER_ID_PATTERN, meetsRule, settingRow } from '../../shared/contract/settings-table'
 import { pendingIds, visibleProblems } from '../state/derive'
 
@@ -381,6 +381,11 @@ const recConv = <T,>(v: unknown, conv: (x: unknown) => T | null, onDrop: (key: s
 
 /** A support grant as saved: `live` and `rev` are worked out when it is read. */
 type StoredGrant = Omit<SupportGrant, 'live' | 'rev'>
+type EndedJobRecord = { outcome: JobOutcome; endedAt: Instant; cost: { minor: number; currency: string } }
+const JOB_OUTCOMES: readonly JobOutcome[] = ['done', 'budget', 'cancelled', 'failed']
+const isEndedJobRecord = (x: unknown): x is EndedJobRecord =>
+  isRec(x) && JOB_OUTCOMES.includes(x.outcome as JobOutcome) && isInstant(x.endedAt)
+  && isRec(x.cost) && typeof x.cost.minor === 'number' && Number.isFinite(x.cost.minor) && str(x.cost.currency)
 /**
  * The mock's stand-in for the Worker's tables, saved beside the state. Roles, photos, removals, invitations and the grant
  * moved out of `AgentState.settings` (`p:`, `photo:`, `d:support`): the contract no longer lets a setting hold them.
@@ -477,6 +482,8 @@ interface Loaded {
   started: boolean
   /** Whether the upgrade filled in a value from the clock now (a team request saved before C1 has no `at`). */
   filledFromNow: boolean
+  /** Seeded jobs ended by Pause, Delete or Cancel, saved beside the state so reload keeps them stopped without changing Server/read(). */
+  endedJobs: Record<string, EndedJobRecord>
 }
 
 /**
@@ -484,7 +491,7 @@ interface Loaded {
  * in one console warning; an entry that names a routine that no longer exists is dropped on purpose, without one.
  */
 const sanitize = (raw: unknown): Loaded => {
-  if (!isRec(raw)) { const startedAt = Date.now(); return { state: initialState(), server: defaultServer(startedAt), startedAt, started: false, filledFromNow: false } }
+  if (!isRec(raw)) { const startedAt = Date.now(); return { state: initialState(), server: defaultServer(startedAt), startedAt, started: false, filledFromNow: false, endedJobs: {} } }
   const started = typeof raw.demoStartedAt === 'number' && Number.isFinite(raw.demoStartedAt)
   const demoStartedAt = started ? raw.demoStartedAt as number : Date.now()
   const dropped: string[] = []
@@ -569,7 +576,8 @@ const sanitize = (raw: unknown): Loaded => {
   if (dropped.length) console.warn(`Inhouse demo: dropped saved entries it could not read: ${dropped.join(', ')}.`)
   // Only a request saved without its time gets `now` itself.
   const filledFromNow = state.teamRequests.some(r => r.at === now)
-  return { state, server, startedAt: demoStartedAt, started, filledFromNow }
+  const endedJobs = recOf(raw.endedJobs, isEndedJobRecord)
+  return { state, server, startedAt: demoStartedAt, started, filledFromNow, endedJobs }
 }
 
 
@@ -637,6 +645,8 @@ export class MockAgent implements AgentClient {
   /** When this demo started (epoch ms): set at first load and by Reset demo. The demo clock counts from it. Saved with the
    *  state under the same key, as it always was, but not part of `AgentState`: the real agent has no demo start. */
   private startedAt: number
+  /** Seeded jobs ended by Pause, Delete or Cancel, saved beside the state so `read()` object identity never changes. */
+  private endedJobs: Record<string, EndedJobRecord>
   private listeners = new Set<() => void>()
   /** The sample skills' instructions once `loadSkill` has loaded them (by skill name), and the load while it runs. */
   private skillBodies: Record<string, string> | null = null
@@ -662,10 +672,11 @@ export class MockAgent implements AgentClient {
   private demo: DemoContext = { stage: 'Act', scenario: 'Normal' }
 
   constructor() {
-    const { state, server, startedAt, started, filledFromNow } = this.loadSaved()
+    const { state, server, startedAt, started, filledFromNow, endedJobs } = this.loadSaved()
     this.state = state
     this.server = server
     this.startedAt = startedAt
+    this.endedJobs = endedJobs
     // The demo clock counts from the first load: save that moment now, so a reload before any other write doesn't
     // start the clock again at 8:00 AM while the app already shows later times. An upgrade that filled in a value from
     // the clock now (a team request saved before C1 has no `at`) is saved too, so the next load doesn't set it again.
@@ -690,12 +701,19 @@ export class MockAgent implements AgentClient {
     } catch (e) {
       console.warn('Inhouse demo: could not read saved state, starting fresh.', e)
       const startedAt = Date.now()
-      return { state: initialState(), server: defaultServer(startedAt), startedAt, started: false, filledFromNow: false }
+      return { state: initialState(), server: defaultServer(startedAt), startedAt, started: false, filledFromNow: false, endedJobs: {} }
     }
   }
 
   /** What is saved under STORAGE_KEY: the state with the demo's start, in the shape it always had. */
-  private saved(): string { return JSON.stringify({ ...this.state, demoStartedAt: this.startedAt, server: this.server }) }
+  private saved(): string {
+    return JSON.stringify({
+      ...this.state,
+      demoStartedAt: this.startedAt,
+      server: this.server,
+      ...(Object.keys(this.endedJobs).length ? { endedJobs: this.endedJobs } : {}),
+    })
+  }
 
   /** DemoControls (demo-controls.ts): when this demo started, as epoch ms. The demo clock counts from it. */
   demoStartedAt(): number { return this.startedAt }
@@ -740,18 +758,20 @@ export class MockAgent implements AgentClient {
    */
   private syncFromStorage() {
     const wasSent = this.state.sent
-    const { state, server, startedAt } = this.loadSaved()
+    const { state, server, startedAt, endedJobs } = this.loadSaved()
     this.state = state
     this.server = server
     // Another tab's changes are taken as read: this client's next write is against what it now shows.
     this.seen = {}
     this.startedAt = startedAt
+    this.endedJobs = endedJobs
     for (const id of Object.keys(this.holdTimers)) {
       if (this.state.approved[id] && !this.state.sent[id]) continue
       clearTimeout(this.holdTimers[id])
       delete this.holdTimers[id]
     }
     this.resumeHolds()
+    this.jobsInstance?.syncEnded()
     this.listeners.forEach(l => l())
     for (const id of Object.keys(this.state.sent)) {
       const rec = this.state.approved[id]
@@ -887,6 +907,13 @@ export class MockAgent implements AgentClient {
     // A demo whose actions or jobs loaded starts them again; one that never read them has nothing to reset.
     this.jobsResetEpoch++
     void this.demoActionsLoad?.then(a => a.reset())
+    try { localStorage.removeItem(RUNS_KEY) } catch (e) { console.warn('Inhouse demo: could not clear saved runs.', e) }
+    try { localStorage.removeItem(DATA_OVERRIDE_KEY) } catch (e) { console.warn('Inhouse demo: could not clear the data override.', e) }
+    this.startedAt = Date.now()
+    this.seen = {}
+    this.failed = {}
+    this.endedJobs = {}
+    this.commit(initialState(), false, defaultServer(this.startedAt))
     if (this.jobsInstance) {
       this.jobsInstance.reset()
       this.jobRev++
@@ -894,12 +921,6 @@ export class MockAgent implements AgentClient {
       this.jobRev++
       void this.demoJobsLoad.then(j => j.reset())
     }
-    try { localStorage.removeItem(RUNS_KEY) } catch (e) { console.warn('Inhouse demo: could not clear saved runs.', e) }
-    try { localStorage.removeItem(DATA_OVERRIDE_KEY) } catch (e) { console.warn('Inhouse demo: could not clear the data override.', e) }
-    this.startedAt = Date.now()
-    this.seen = {}
-    this.failed = {}
-    this.commit(initialState(), false, defaultServer(this.startedAt))
   }
 
   // ----- approvals -----
@@ -1057,6 +1078,8 @@ export class MockAgent implements AgentClient {
   private jobsInstance: MockJobs | null = null
   private jobRev = 0
   private jobsResetEpoch = 0
+  /** Defers `chatEnded` auto-ending while a cold `endUnboundJobs` constructs MockJobs so `endWhere` notifies once. */
+  private deferChatEnded = 0
   private demoJobs(): Promise<MockJobs> {
     return this.demoJobsLoad ??= import('./mock-jobs').then(m => {
       const j = new m.MockJobs({
@@ -1064,6 +1087,17 @@ export class MockAgent implements AgentClient {
         now: () => demoNow(this.startedAt).getTime(),
         shown: () => !isNoData(this.demo.scenario),
         at: sampleTime => sampleAt('a job', sampleTime),
+        endedRecords: () => this.endedJobs,
+        chatEnded: chatId => this.deferChatEnded === 0 && (this.state.paused !== null || Boolean(this.state.chatDeleted[chatId])),
+        onJobEnded: job => {
+          if (!job.outcome || !job.endedAt) return
+          this.endedJobs = {
+            ...this.endedJobs,
+            [job.jobId]: { outcome: job.outcome, endedAt: job.endedAt, cost: job.cost ?? { minor: 0, currency: 'USD' } },
+          }
+          try { localStorage.setItem(STORAGE_KEY, this.saved()) }
+          catch (e) { console.warn('Inhouse demo: could not save state.', e); this.notify({ type: 'save.failed', text: SAVE_FAILED }) }
+        },
         onChanged: () => { this.jobRev++; this.listeners.forEach(l => l()) },
       })
       this.jobsInstance = j
@@ -1079,10 +1113,11 @@ export class MockAgent implements AgentClient {
       return null
     }
     const epoch = this.jobsResetEpoch
+    this.deferChatEnded++
     return this.demoJobs().then(j => {
       if (this.jobsResetEpoch !== epoch) return
       j.endWhere(chatIds, 'cancelled', { notify, excludeChatIds: excluded })
-    })
+    }).finally(() => { this.deferChatEnded-- })
   }
   async job(chatId: string): Promise<Job | null> { return (await this.demoJobs()).job(chatId) }
   async cancelJob(jobId: string): Promise<Job> {
@@ -1679,7 +1714,7 @@ export class MockAgent implements AgentClient {
     // Their queued turns are cancelled and their live/seeded jobs ended, once the delete is saved.
     if (this.state.chatDeleted === chatDeleted) {
       this.engine?.fence(run => ids.includes(run.chatId), 'deleted')
-      const pending = this.endUnboundJobs(ids, false)
+      const pending = this.endUnboundJobs(ids, true)
       if (pending) return pending.then(() => done)
     }
     return done

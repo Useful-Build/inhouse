@@ -199,15 +199,22 @@ test('competitor prices shows web steps and sources, and web switches change liv
   await expect(fullTrace).toContainText('Reading a web page')
 })
 
-test('Pause and Delete+Undo both end the seeded catalog-audit job (H1)', async ({ page }) => {
+test('Pause ends the seeded catalog-audit job and keeps it ended after reload (H1)', async ({ page }) => {
   await start(page, '#/settings/team-spend')
   await page.locator('main').getByRole('button', { name: 'Pause Inhouse agent', exact: true }).click()
   await expect(page.locator('main').getByRole('button', { name: 'Resume Inhouse agent', exact: true })).toBeVisible()
-  await page.evaluate(() => { location.hash = '#/chats' })
+  await page.evaluate(() => { location.hash = '#/chats/catalog-audit' })
   await expect(page.getByRole('banner')).toContainText('Full catalog margin review')
   await expect(page.locator('main')).not.toContainText('Working on a long job')
   await expect(page.locator('[data-job-status="ended"]').getByRole('heading', { name: 'Long job stopped' })).toBeVisible()
 
+  await page.reload()
+  await expect(page.getByRole('banner')).toContainText('Full catalog margin review')
+  await expect(page.locator('main')).not.toContainText('Working on a long job')
+  await expect(page.locator('[data-job-status="ended"]').getByRole('heading', { name: 'Long job stopped' })).toBeVisible()
+})
+
+test('Delete+Undo ends the seeded catalog-audit job, notifies the bell, and keeps it ended after reload (H1)', async ({ page }) => {
   await start(page, '#/chats/catalog-audit')
   await page.getByRole('banner').getByRole('button', { name: 'Chat actions' }).click()
   await page.getByRole('menu', { name: 'Chat actions' }).getByRole('menuitem', { name: 'Delete' }).click()
@@ -217,6 +224,17 @@ test('Pause and Delete+Undo both end the seeded catalog-audit job (H1)', async (
   const catalogChat = page.getByRole('complementary', { name: 'Sidebar' }).getByRole('button', { name: 'Full catalog margin review', exact: true })
   await expect(catalogChat).toBeVisible()
   await catalogChat.click()
+  await expect(page.locator('main')).not.toContainText('Working on a long job')
+  await expect(page.locator('[data-job-status="ended"]').getByRole('heading', { name: 'Long job stopped' })).toBeVisible()
+
+  // Bell receives a stopped notice on Delete (matching product core.ts + jobs/engine.ts).
+  await page.getByRole('button', { name: /^Notifications/ }).click()
+  const bell = page.getByRole('dialog', { name: 'Notifications' })
+  await expect(bell.getByText('A long job stopped', { exact: true })).toHaveCount(2)
+  await page.keyboard.press('Escape')
+
+  await page.reload()
+  await expect(page.getByRole('banner')).toContainText('Full catalog margin review')
   await expect(page.locator('main')).not.toContainText('Working on a long job')
   await expect(page.locator('[data-job-status="ended"]').getByRole('heading', { name: 'Long job stopped' })).toBeVisible()
 })
