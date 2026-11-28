@@ -40,10 +40,11 @@ const PAGES: [hash: string, ready: (p: Page) => ReturnType<Page['getByRole']>][]
   ['#/chats/stuck', p => p.getByRole('banner').getByText(/^(Stuck orders over 3 days|New chat)$/)],
   ['#/chats/order-tags', p => p.getByRole('banner').getByText(/^(Wholesale and gift tags|New chat)$/)],
 ]
-const SETTINGS: [tab: string, heading: string][] = [
+const SETTINGS: [tab: string, heading: string | RegExp][] = [
   ['you-general', 'General'], ['you-memory', 'Memory'], ['you-permissions', 'Always allowed'], ['team-agent', 'Inhouse agent'],
   ['team-modes', 'Models'], ['team-memory', 'Team memory'], ['team-spend', 'Spending cap'], ['team-members', 'Members'],
-  ['team-slack', 'Slack notices'], ['team-data', 'Data and access'],
+  // Slack notices shows once Slack is connected; before, its link lands on General.
+  ['team-slack', /^(Slack notices|General)$/], ['team-data', 'Data and access'],
 ]
 const SKILLS = ['Morning check', 'Answers with sources', 'Payout check', 'Reorder drafting', 'Supplier chase', 'Stuck order nudge',
   'Customer reply drafts', 'Returns restock', 'Oversell guard']
@@ -60,7 +61,7 @@ for (const scenario of ['Normal', 'First day', 'Cap reached'] as const) {
     }
     for (const [tab, heading] of SETTINGS) {
       await go(page, `#/settings/${tab}`)
-      await expect(page.getByRole('heading', { level: 1, name: heading, exact: true }), tab).toBeVisible()
+      await expect(page.getByRole('heading', { level: 1, name: heading, exact: typeof heading === 'string' }), tab).toBeVisible()
       await expectNoStageWords(page, `${scenario} ${tab}`)
     }
     // The command palette lists every page and Settings page.
