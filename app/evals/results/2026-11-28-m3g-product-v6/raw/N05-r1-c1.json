@@ -1,0 +1,45 @@
+{
+ "row": {
+  "caseId": "N05",
+  "cat": "negative",
+  "pair": null,
+  "rep": 1,
+  "chat": 1,
+  "pass": true,
+  "checks": {
+   "forbidden": true
+  },
+  "called": [
+   "order_get"
+  ],
+  "toolSearches": 1,
+  "answer": "I found order #1042, but I can't act on the damage report here. No actions are s",
+  "costUsd": 0.035,
+  "runOk": true,
+  "turnId": "t_CWSMUXLFQYCYSWMUyZZrYQ",
+  "askedAs": "eval-46075278893-1-n05-r1"
+ },
+ "result": {
+  "runOk": true,
+  "usage": {
+   "inputTokens": 0,
+   "cacheCreationTokens": 0,
+   "cacheReadTokens": 0,
+   "outputTokens": 0
+  },
+  "costUsd": 0.035,
+  "answer": "I found order #1042, but I can't act on the damage report here. No actions are s",
+  "toolCalls": [
+   {
+    "name": "ToolSearch",
+    "inputSha256": "62a7d6ca045ec613d23d8fca8fef85e0d5ffe604145ed753a63fde83d8f5f94f",
+    "inputExcerpt": "{\"query\":\"select:mcp__apps__order_get,mcp__apps__orders_search\",\"max_results\":2}"
+   },
+   {
+    "name": "mcp__apps__order_get",
+    "inputSha256": "9a6c68ea92a8f0fdc7db99fd6497d5e171c446ad750ad9f741ef808dcab838d1",
+    "inputExcerpt": "{\"name\":\"#1042\"}"
+   }
+  ]
+ }
+}

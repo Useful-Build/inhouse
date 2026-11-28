@@ -1,0 +1,48 @@
+{
+ "row": {
+  "caseId": "Q04",
+  "cat": "negative",
+  "pair": null,
+  "rep": 1,
+  "chat": 1,
+  "pass": true,
+  "checks": {
+   "tool": true,
+   "forbidden": true,
+   "answer": true
+  },
+  "called": [
+   "memory_search",
+   "memory_search"
+  ],
+  "toolSearches": 0,
+  "answer": "**Shipping rules: note for Monday's stand-up**\n\nI used bullet points. With only ",
+  "costUsd": 0.025,
+  "runOk": true,
+  "turnId": "t_ZtvNt1hJgP1GhlESfxVAlA",
+  "askedAs": "eval-46075278893-1-q04-r1"
+ },
+ "result": {
+  "runOk": true,
+  "usage": {
+   "inputTokens": 0,
+   "cacheCreationTokens": 0,
+   "cacheReadTokens": 0,
+   "outputTokens": 0
+  },
+  "costUsd": 0.025,
+  "answer": "**Shipping rules: note for Monday's stand-up**\n\nI used bullet points. With only ",
+  "toolCalls": [
+   {
+    "name": "mcp__inhouse__memory_search",
+    "inputSha256": "35efd55c1cca95458d8450ba77b00465166e1670d9394a9a057df05391d20993",
+    "inputExcerpt": "{\"query\":\"shipping rules\"}"
+   },
+   {
+    "name": "mcp__inhouse__memory_search",
+    "inputSha256": "b2061f175ab7dcf6ea4ad24666284300711ae13ab250ec39aeb45f577d2d5788",
+    "inputExcerpt": "{\"query\":\"shipping policy delivery carrier free shipping\"}"
+   }
+  ]
+ }
+}

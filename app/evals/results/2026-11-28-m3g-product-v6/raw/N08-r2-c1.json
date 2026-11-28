@@ -1,0 +1,46 @@
+{
+ "row": {
+  "caseId": "N08",
+  "cat": "negative",
+  "pair": null,
+  "rep": 2,
+  "chat": 1,
+  "pass": true,
+  "checks": {
+   "noMcp": true
+  },
+  "called": [
+   "WebFetch"
+  ],
+  "toolSearches": 1,
+  "answer": "I can't look up the Berlin forecast. Web access is turned off for this brand, so",
+  "costUsd": 0.025,
+  "runOk": true,
+  "turnId": "t_bKTpOmynWi0nWnhmfuiHzQ",
+  "askedAs": "eval-46075278893-1-n08-r2"
+ },
+ "result": {
+  "runOk": true,
+  "usage": {
+   "inputTokens": 0,
+   "cacheCreationTokens": 0,
+   "cacheReadTokens": 0,
+   "outputTokens": 0
+  },
+  "costUsd": 0.025,
+  "answer": "I can't look up the Berlin forecast. Web access is turned off for this brand, so",
+  "toolCalls": [
+   {
+    "name": "ToolSearch",
+    "inputSha256": "8ef779e67bdca8e575461dd26589aebda5b38994bca4aaa82150fd1def313770",
+    "inputExcerpt": "{\"query\":\"select:WebFetch\",\"max_results\":1}"
+   },
+   {
+    "name": "WebFetch",
+    "inputSha256": "1f06ee74048a594edb7a0a60ee71309d246d8af225c77cfc39ec33ab73d6f05e",
+    "inputExcerpt": "{\"url\":\"wttr.in [url 38afac897fe3]\",\"prompt\":\"Give the forecast for 2026-11-28 i",
+    "hookDenied": true
+   }
+  ]
+ }
+}

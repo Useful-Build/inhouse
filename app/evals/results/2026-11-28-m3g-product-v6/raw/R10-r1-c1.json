@@ -1,0 +1,53 @@
+{
+ "row": {
+  "caseId": "R10",
+  "cat": "recall",
+  "pair": null,
+  "rep": 1,
+  "chat": 1,
+  "pass": true,
+  "checks": {
+   "tool": true,
+   "answerNot": true
+  },
+  "called": [
+   "memory_search",
+   "memory_search",
+   "history_search"
+  ],
+  "toolSearches": 0,
+  "answer": "I don't have your invoice format saved anywhere. I searched my memory and your p",
+  "costUsd": 0.025,
+  "runOk": true,
+  "turnId": "t_KCervVCq8jQ0Oynar2yECA",
+  "askedAs": "eval-46075278893-1-r10-r1"
+ },
+ "result": {
+  "runOk": true,
+  "usage": {
+   "inputTokens": 0,
+   "cacheCreationTokens": 0,
+   "cacheReadTokens": 0,
+   "outputTokens": 0
+  },
+  "costUsd": 0.025,
+  "answer": "I don't have your invoice format saved anywhere. I searched my memory and your p",
+  "toolCalls": [
+   {
+    "name": "mcp__inhouse__memory_search",
+    "inputSha256": "a29fb293c73b325eb66cb2bf9a45a89a3a84e9ed7a0e82b99f18d547ac07338a",
+    "inputExcerpt": "{\"query\":\"invoice format\"}"
+   },
+   {
+    "name": "mcp__inhouse__memory_search",
+    "inputSha256": "100d28662559e78e8986ca4a120acd48c86a6b2686700f146cf3e8d3a6d81ff5",
+    "inputExcerpt": "{\"query\":\"invoices PDF preference\"}"
+   },
+   {
+    "name": "mcp__inhouse__history_search",
+    "inputSha256": "89ddf1a82ff6cba555133dd239bc69e1de1eb1d7d59d9d09ba33778e925b26d5",
+    "inputExcerpt": "{\"query\":\"invoice\"}"
+   }
+  ]
+ }
+}
