@@ -1381,6 +1381,574 @@
           "detail": "Sent to Chats"
         }
       ]
+    },
+    "catalog-audit-start": {
+      "title": "Audit gross margin across every SKU",
+      "durationSeconds": 11.4,
+      "cost": { "minor": 6, "currency": "USD" },
+      "tokens": "24.6k",
+      "steps": [
+        {
+          "label": "Inhouse agent",
+          "kind": "root",
+          "startSeconds": 0,
+          "endSeconds": 11.4,
+          "depth": 0,
+          "detail": "Question in Chats"
+        },
+        {
+          "label": "Planned catalog margin checks",
+          "kind": "model",
+          "startSeconds": 0,
+          "endSeconds": 1.6,
+          "depth": 1,
+          "detail": "Opus 5.5 · split into apparel, drinkware and packs"
+        },
+        {
+          "label": "Shopify · active SKUs and unit costs",
+          "kind": "tool",
+          "startSeconds": 1.7,
+          "endSeconds": 5.4,
+          "depth": 1,
+          "detail": "Output: 216 variants across 48 products"
+        },
+        {
+          "label": "ShipBob · 60-day fulfillment postage by SKU",
+          "kind": "tool",
+          "startSeconds": 5.5,
+          "endSeconds": 8.2,
+          "depth": 1,
+          "detail": "Output: average pick, pack and zone postage"
+        },
+        {
+          "label": "Opened long job with two helpers",
+          "kind": "model",
+          "startSeconds": 8.3,
+          "endSeconds": 11.2,
+          "depth": 1,
+          "detail": "Opus 5.5 · starting apparel pass first"
+        },
+        {
+          "label": "Answer",
+          "kind": "answer",
+          "startSeconds": 11.2,
+          "endSeconds": 11.4,
+          "depth": 1,
+          "detail": "Sent to Chats"
+        }
+      ]
+    },
+    "catalog-audit-progress": {
+      "title": "Apparel and outerwear margin pass",
+      "durationSeconds": 16.8,
+      "cost": { "minor": 14, "currency": "USD" },
+      "tokens": "48.2k",
+      "steps": [
+        {
+          "label": "Inhouse agent",
+          "kind": "root",
+          "startSeconds": 0,
+          "endSeconds": 16.8,
+          "depth": 0,
+          "detail": "Long job continuation"
+        },
+        {
+          "label": "Asking a helper",
+          "kind": "handoff",
+          "startSeconds": 0.4,
+          "endSeconds": 0.7,
+          "depth": 1,
+          "detail": "Analyst · calculate net margin after returns"
+        },
+        {
+          "label": "Analyst · size-level exchange cost table",
+          "kind": "agent",
+          "startSeconds": 0.7,
+          "endSeconds": 12.6,
+          "depth": 1,
+          "detail": "Checked 84 outerwear and fleece variants"
+        },
+        {
+          "label": "Shopify · apparel orders and refunds",
+          "kind": "tool",
+          "startSeconds": 1.2,
+          "endSeconds": 5.1,
+          "depth": 2,
+          "detail": "Output: 642 orders and 49 return exchanges"
+        },
+        {
+          "label": "Gorgias · exchange postage tickets",
+          "kind": "tool",
+          "startSeconds": 5.2,
+          "endSeconds": 8.8,
+          "depth": 2,
+          "detail": "Output: average return label $11.40"
+        },
+        {
+          "label": "Built size-level margin breakdown",
+          "kind": "model",
+          "startSeconds": 8.9,
+          "endSeconds": 12.5,
+          "depth": 2,
+          "detail": "Sonnet 5.5 · ranked lowest variants"
+        },
+        {
+          "label": "Summarized apparel findings",
+          "kind": "model",
+          "startSeconds": 12.7,
+          "endSeconds": 16.6,
+          "depth": 1,
+          "detail": "Opus 5.5 · flagged 2 variants under 35%"
+        },
+        {
+          "label": "Answer",
+          "kind": "answer",
+          "startSeconds": 16.6,
+          "endSeconds": 16.8,
+          "depth": 1,
+          "detail": "Sent to Chats"
+        }
+      ]
+    },
+    "restock-plan-part1": {
+      "title": "Pull stock on hand across stores",
+      "durationSeconds": 10.2,
+      "cost": { "minor": 5, "currency": "USD" },
+      "tokens": "19.8k",
+      "steps": [
+        {
+          "label": "Inhouse agent",
+          "kind": "root",
+          "startSeconds": 0,
+          "endSeconds": 10.2,
+          "depth": 0,
+          "detail": "Question in Chats"
+        },
+        {
+          "label": "Shopify · sellable inventory across 48 SKUs",
+          "kind": "tool",
+          "startSeconds": 0.4,
+          "endSeconds": 3.8,
+          "depth": 1,
+          "detail": "Output: 9 SKUs below 30 days of cover"
+        },
+        {
+          "label": "ShipBob · warehouse stock and open receipts",
+          "kind": "tool",
+          "startSeconds": 3.9,
+          "endSeconds": 7.1,
+          "depth": 1,
+          "detail": "Output: PO-1187 waiting at receiving"
+        },
+        {
+          "label": "Started long job with supplier checks",
+          "kind": "model",
+          "startSeconds": 7.2,
+          "endSeconds": 10,
+          "depth": 1,
+          "detail": "Opus 5.5 · passing lead-time analysis to helpers"
+        },
+        {
+          "label": "Answer",
+          "kind": "answer",
+          "startSeconds": 10,
+          "endSeconds": 10.2,
+          "depth": 1,
+          "detail": "Sent to Chats"
+        }
+      ]
+    },
+    "restock-plan-part2": {
+      "title": "Check Kestrel transit and peak demand",
+      "durationSeconds": 15.6,
+      "cost": { "minor": 11, "currency": "USD" },
+      "tokens": "38.4k",
+      "steps": [
+        {
+          "label": "Inhouse agent",
+          "kind": "root",
+          "startSeconds": 0,
+          "endSeconds": 15.6,
+          "depth": 0,
+          "detail": "Long job continuation"
+        },
+        {
+          "label": "Asking a helper",
+          "kind": "handoff",
+          "startSeconds": 0.3,
+          "endSeconds": 0.6,
+          "depth": 1,
+          "detail": "Researcher · review supplier lead-time history"
+        },
+        {
+          "label": "Researcher · Kestrel PO transit windows",
+          "kind": "agent",
+          "startSeconds": 0.6,
+          "endSeconds": 11.4,
+          "depth": 1,
+          "detail": "Checked 8 prior purchase orders and customs notes"
+        },
+        {
+          "label": "Memory · Kestrel delivery reliability",
+          "kind": "tool",
+          "startSeconds": 0.9,
+          "endSeconds": 3.4,
+          "depth": 2,
+          "detail": "Output: 13 to 16 days transit, Mei Chen confirms ETAs"
+        },
+        {
+          "label": "Shopify · daily run rates by SKU",
+          "kind": "tool",
+          "startSeconds": 3.5,
+          "endSeconds": 7.6,
+          "depth": 2,
+          "detail": "Output: Ridge 30L sells 21 a day"
+        },
+        {
+          "label": "Modeled late-November sell-through",
+          "kind": "model",
+          "startSeconds": 7.7,
+          "endSeconds": 11.3,
+          "depth": 2,
+          "detail": "Sonnet 5.5 · buffer 4 days for customs"
+        },
+        {
+          "label": "Summarized lead-time checks",
+          "kind": "model",
+          "startSeconds": 11.5,
+          "endSeconds": 15.4,
+          "depth": 1,
+          "detail": "Opus 5.5 · preparing final order table"
+        },
+        {
+          "label": "Answer",
+          "kind": "answer",
+          "startSeconds": 15.4,
+          "endSeconds": 15.6,
+          "depth": 1,
+          "detail": "Sent to Chats"
+        }
+      ]
+    },
+    "restock-plan-final": {
+      "title": "Finalize Q4 restock quantities",
+      "durationSeconds": 12.8,
+      "cost": { "minor": 8, "currency": "USD" },
+      "tokens": "29.1k",
+      "steps": [
+        {
+          "label": "Inhouse agent",
+          "kind": "root",
+          "startSeconds": 0,
+          "endSeconds": 12.8,
+          "depth": 0,
+          "detail": "Long job continuation"
+        },
+        {
+          "label": "Shopify · current stock levels",
+          "kind": "tool",
+          "startSeconds": 0.4,
+          "endSeconds": 4.2,
+          "depth": 1,
+          "detail": "Output: confirmed latest balances before cutoff"
+        },
+        {
+          "label": "ShipBob · open orders and safety stock",
+          "kind": "tool",
+          "startSeconds": 4.3,
+          "endSeconds": 7.8,
+          "depth": 1,
+          "detail": "Output: matched open warehouse queues"
+        },
+        {
+          "label": "Wrote final reorder schedule",
+          "kind": "model",
+          "startSeconds": 7.9,
+          "endSeconds": 12.6,
+          "depth": 1,
+          "detail": "Opus 5.5 · 2 sources cited"
+        },
+        {
+          "label": "Answer",
+          "kind": "answer",
+          "startSeconds": 12.6,
+          "endSeconds": 12.8,
+          "depth": 1,
+          "detail": "Sent to Chats with a table and 2 sources"
+        }
+      ]
+    },
+    "ad-audit-part1": {
+      "title": "Audit 90-day Meta Ads contribution margin",
+      "durationSeconds": 11.9,
+      "cost": { "minor": 7, "currency": "USD" },
+      "tokens": "27.0k",
+      "steps": [
+        {
+          "label": "Inhouse agent",
+          "kind": "root",
+          "startSeconds": 0,
+          "endSeconds": 11.9,
+          "depth": 0,
+          "detail": "Question in Chats"
+        },
+        {
+          "label": "Meta Ads · 90-day spend across 14 ad sets",
+          "kind": "tool",
+          "startSeconds": 0.5,
+          "endSeconds": 4.8,
+          "depth": 1,
+          "detail": "Output: campaign spend and attributed revenue"
+        },
+        {
+          "label": "Gorgias · refund and return reasons by SKU",
+          "kind": "tool",
+          "startSeconds": 4.9,
+          "endSeconds": 8.4,
+          "depth": 1,
+          "detail": "Output: matched 90-day return rates"
+        },
+        {
+          "label": "Planned cohort margin tables",
+          "kind": "model",
+          "startSeconds": 8.5,
+          "endSeconds": 11.7,
+          "depth": 1,
+          "detail": "Fable 5.2 · building net return rows"
+        },
+        {
+          "label": "Answer",
+          "kind": "answer",
+          "startSeconds": 11.7,
+          "endSeconds": 11.9,
+          "depth": 1,
+          "detail": "Sent to Chats"
+        }
+      ]
+    },
+    "ad-audit-part2": {
+      "title": "Join ad cohorts with return shipping",
+      "durationSeconds": 14.2,
+      "cost": { "minor": 12, "currency": "USD" },
+      "tokens": "41.5k",
+      "steps": [
+        {
+          "label": "Inhouse agent",
+          "kind": "root",
+          "startSeconds": 0,
+          "endSeconds": 14.2,
+          "depth": 0,
+          "detail": "Long job continuation"
+        },
+        {
+          "label": "Meta Ads · prospecting vs retargeting cohorts",
+          "kind": "tool",
+          "startSeconds": 0.5,
+          "endSeconds": 6.4,
+          "depth": 1,
+          "detail": "Output: Ridge 30L Autumn at 2.8 net"
+        },
+        {
+          "label": "Reached single-job spend budget",
+          "kind": "model",
+          "startSeconds": 6.5,
+          "endSeconds": 14,
+          "depth": 1,
+          "detail": "Fable 5.2 · summarized completed cohorts before stopping"
+        },
+        {
+          "label": "Answer",
+          "kind": "answer",
+          "startSeconds": 14,
+          "endSeconds": 14.2,
+          "depth": 1,
+          "detail": "Sent to Chats"
+        }
+      ]
+    },
+    "web-bottles": {
+      "title": "Compare competitor prices for 750ml insulated bottles",
+      "durationSeconds": 13.5,
+      "cost": { "minor": 7, "currency": "USD" },
+      "tokens": "26.3k",
+      "steps": [
+        {
+          "label": "Inhouse agent",
+          "kind": "root",
+          "startSeconds": 0,
+          "endSeconds": 13.5,
+          "depth": 0,
+          "detail": "Question in Chats"
+        },
+        {
+          "label": "Asking a helper",
+          "kind": "handoff",
+          "startSeconds": 0.3,
+          "endSeconds": 0.6,
+          "depth": 1,
+          "detail": "Researcher · check competitor drinkware pages"
+        },
+        {
+          "label": "Researcher · web price lookup",
+          "kind": "agent",
+          "startSeconds": 0.6,
+          "endSeconds": 9.4,
+          "depth": 1,
+          "detail": "Searched outdoor drinkware pricing"
+        },
+        {
+          "label": "Searching the web",
+          "kind": "tool",
+          "startSeconds": 0.9,
+          "endSeconds": 3.8,
+          "depth": 2,
+          "detail": "WebSearch · 750ml insulated outdoor bottle price"
+        },
+        {
+          "label": "Reading a web page",
+          "kind": "tool",
+          "startSeconds": 3.9,
+          "endSeconds": 6.7,
+          "depth": 2,
+          "detail": "WebFetch · trailgear.example.test/bottles"
+        },
+        {
+          "label": "Reading a web page",
+          "kind": "tool",
+          "startSeconds": 6.8,
+          "endSeconds": 9.3,
+          "depth": 2,
+          "detail": "WebFetch · peaksupply.example.test/drinkware"
+        },
+        {
+          "label": "Wrote pricing comparison",
+          "kind": "model",
+          "startSeconds": 9.5,
+          "endSeconds": 13.3,
+          "depth": 1,
+          "detail": "Opus 5.5 · compared with Cairn Insulated Bottle ($34)"
+        },
+        {
+          "label": "Answer",
+          "kind": "answer",
+          "startSeconds": 13.3,
+          "endSeconds": 13.5,
+          "depth": 1,
+          "detail": "Sent to Chats"
+        }
+      ]
+    },
+    "web-lookup": {
+      "title": "Web pricing check",
+      "durationSeconds": 8.6,
+      "cost": { "minor": 4, "currency": "USD" },
+      "tokens": "14.2k",
+      "steps": [
+        {
+          "label": "Inhouse agent",
+          "kind": "root",
+          "startSeconds": 0,
+          "endSeconds": 8.6,
+          "depth": 0,
+          "detail": "Question in Chats"
+        },
+        {
+          "label": "Searching the web",
+          "kind": "tool",
+          "startSeconds": 0.4,
+          "endSeconds": 3.2,
+          "depth": 1,
+          "detail": "WebSearch · competitor retail prices"
+        },
+        {
+          "label": "Reading a web page",
+          "kind": "tool",
+          "startSeconds": 3.3,
+          "endSeconds": 5.9,
+          "depth": 1,
+          "detail": "WebFetch · checked listed storefront pages"
+        },
+        {
+          "label": "Wrote the answer",
+          "kind": "model",
+          "startSeconds": 6,
+          "endSeconds": 8.4,
+          "depth": 1,
+          "detail": "Opus 5.5"
+        },
+        {
+          "label": "Answer",
+          "kind": "answer",
+          "startSeconds": 8.4,
+          "endSeconds": 8.6,
+          "depth": 1,
+          "detail": "Sent to Chats"
+        }
+      ]
+    },
+    "long-job-run": {
+      "title": "Long job continuation",
+      "durationSeconds": 14.4,
+      "cost": { "minor": 10, "currency": "USD" },
+      "tokens": "34.8k",
+      "steps": [
+        {
+          "label": "Inhouse agent",
+          "kind": "root",
+          "startSeconds": 0,
+          "endSeconds": 14.4,
+          "depth": 0,
+          "detail": "Long job continuation"
+        },
+        {
+          "label": "Asking a helper",
+          "kind": "handoff",
+          "startSeconds": 0.3,
+          "endSeconds": 0.6,
+          "depth": 1,
+          "detail": "Analyst · cross-check full catalog totals"
+        },
+        {
+          "label": "Analyst · SKU-level margin and stock join",
+          "kind": "agent",
+          "startSeconds": 0.6,
+          "endSeconds": 10.2,
+          "depth": 1,
+          "detail": "Checked remaining SKUs across channels"
+        },
+        {
+          "label": "Shopify · catalog and sales history",
+          "kind": "tool",
+          "startSeconds": 1,
+          "endSeconds": 5.4,
+          "depth": 2,
+          "detail": "Output: full variant totals"
+        },
+        {
+          "label": "ShipBob · warehouse counts",
+          "kind": "tool",
+          "startSeconds": 5.5,
+          "endSeconds": 9.8,
+          "depth": 2,
+          "detail": "Output: fulfillment cost per SKU"
+        },
+        {
+          "label": "Wrote final answer",
+          "kind": "model",
+          "startSeconds": 10.3,
+          "endSeconds": 14.2,
+          "depth": 1,
+          "detail": "Opus 5.5"
+        },
+        {
+          "label": "Answer",
+          "kind": "answer",
+          "startSeconds": 14.2,
+          "endSeconds": 14.4,
+          "depth": 1,
+          "detail": "Sent to Chats"
+        }
+      ]
     }
   }
 }

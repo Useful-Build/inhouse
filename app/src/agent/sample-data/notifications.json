@@ -28,6 +28,20 @@
       "opens": "chat: numbers"
     },
     {
+      "text": "A long job finished",
+      "who": "Your Inhouse agent",
+      "at": "-3d 15:30",
+      "unread": false,
+      "opens": "chat: seasonal-restock"
+    },
+    {
+      "text": "A long job stopped",
+      "who": "Your Inhouse agent",
+      "at": "-3d 15:25",
+      "unread": false,
+      "opens": "chat: ad-spend-audit"
+    },
+    {
       "text": "Dana Kim approved the reorder of 300 Summit Fleece.",
       "who": "Dana Kim",
       "at": "-4d 10:14",

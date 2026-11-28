@@ -30,6 +30,7 @@ import type { InviteInput } from '../../shared/contract/members'
 import type { AvailableChannels, NotifyChannelList, PutNotifyChannels } from '../../shared/contract/notify-slack'
 import type { ActionCard, ActionChoice, ActionFilter, ActionItemsPage } from '../../shared/contract/actions'
 import type { MockActions } from './mock-actions'
+import type { MockJobs } from './mock-jobs'
 import type { Permission } from '../../shared/contract/permissions'
 import type { CeilingList, CeilingRow } from '../../shared/contract/ceiling'
 import type { Question } from '../../shared/contract/questions'
@@ -574,7 +575,14 @@ const sanitize = (raw: unknown): Loaded => {
 
 // ---------- the mock ----------
 
-export type Script = { thinking: string[]; delayMs: number; parts: MessagePart[]; trace: TraceKey; after?: (info: RunInfo, replaces?: string) => void }
+export type Script = {
+  thinking: string[]
+  delayMs: number
+  parts: MessagePart[]
+  trace: TraceKey
+  after?: (info: RunInfo, replaces?: string) => void
+  longJob?: { label: string; progressLabel: string; helpers: number; carryOnText: string; trace: TraceKey }
+}
 
 /** What a run replayed and made: its recorded trace, and the routine or skill it created (Regenerate updates those in place).
  *  `kept` is a routine an earlier run made that this failed run left standing: the next answer updates it in place, so it
@@ -876,8 +884,15 @@ export class MockAgent implements AgentClient {
     this.mockRuns.clear(); this.history.clear(); this.engine?.clear(); this.scripted = null; this.sendDelayMs = 0
     this.created.clear(); this.createdInfo.clear()
     this.runInfo.clear()
-    // A demo whose actions loaded starts them again; one that never read them has nothing to reset.
+    // A demo whose actions or jobs loaded starts them again; one that never read them has nothing to reset.
     void this.demoActionsLoad?.then(a => a.reset())
+    if (this.jobsInstance) {
+      this.jobsInstance.reset()
+      this.jobRev++
+    } else if (this.demoJobsLoad) {
+      this.jobRev++
+      void this.demoJobsLoad.then(j => j.reset())
+    }
     try { localStorage.removeItem(RUNS_KEY) } catch (e) { console.warn('Inhouse demo: could not clear saved runs.', e) }
     try { localStorage.removeItem(DATA_OVERRIDE_KEY) } catch (e) { console.warn('Inhouse demo: could not clear the data override.', e) }
     this.startedAt = Date.now()
@@ -1031,9 +1046,37 @@ export class MockAgent implements AgentClient {
   removePermission(): Promise<Permission[]> { return this.rejected(NOT_FOUND, NO_M2_RECORD, false) }
   questions(): Promise<Question[]> { return Promise.resolve([]) }
   answerQuestion(): Promise<Question> { return this.rejected(NOT_FOUND, NO_M2_RECORD, false) }
-  // Stage 1 M1-D (N3): the demo runs no long jobs. A chat has none, and a Cancel names nothing it has.
-  job(_chatId: string): Promise<Job | null> { return Promise.resolve(null) }
-  cancelJob(_jobId: string): Promise<Job> { return this.rejected(NOT_FOUND, NO_M2_RECORD, false) }
+  // Stage 1 PR 2 (J1 to J6): the demo's long jobs live in mock-jobs.ts + sample-data/jobs.json, loaded lazily on
+  // first job read or long-task run so none of its sample data sits on Today's first load.
+  private demoJobsLoad: Promise<MockJobs> | null = null
+  private jobsInstance: MockJobs | null = null
+  private jobRev = 0
+  private demoJobs(): Promise<MockJobs> {
+    return this.demoJobsLoad ??= import('./mock-jobs').then(m => {
+      const j = new m.MockJobs({
+        now: () => demoNow(this.startedAt).getTime(),
+        shown: () => !isNoData(this.demo.scenario),
+        at: sampleTime => sampleAt('a job', sampleTime),
+        onChanged: () => { this.jobRev++; this.listeners.forEach(l => l()) },
+      })
+      this.jobsInstance = j
+      return j
+    })
+  }
+  loadJobs(): Promise<MockJobs> { return this.demoJobs() }
+  loadedJobs(): MockJobs | null { return this.jobsInstance }
+  async job(chatId: string): Promise<Job | null> { return (await this.demoJobs()).job(chatId) }
+  async cancelJob(jobId: string): Promise<Job> {
+    const jobs = await this.demoJobs()
+    try {
+      const ended = jobs.cancelJob(jobId)
+      this.engine?.cancelJobRun(ended)
+      return ended
+    } catch (e) {
+      if (!(e instanceof AgentError)) throw e
+      return this.rejected(e.code, e.message, false, { ...(e.reason ? { reason: e.reason } : {}), ...(e.current ? { current: e.current } : {}) })
+    }
+  }
   // Stage 1 M3-C (N26): the demo has no ceiling (its page is the product's only, menu.ts), so a read or a change names
   // nothing it has, refused like the M2 answers above (the same words, so Today's first load barely grows).
   ceiling(): Promise<CeilingList> { return this.rejected(NOT_FOUND, NO_M2_RECORD, false) }
@@ -1149,14 +1192,14 @@ export class MockAgent implements AgentClient {
 
   // ----- notifications -----
 
-  private notesFor: [AgentState, Stage, Scenario] | null = null
+  private notesFor: [AgentState, Stage, Scenario, number] | null = null
   private notes: AgentNotification[] = []
-  /** Rebuilt only when state, stage or scenario change, so React sees the same array until then. */
+  /** Rebuilt only when state, stage, scenario or job notices change, so React sees the same array until then. */
   listNotifications = (): AgentNotification[] => {
     const { stage, scenario } = this.demo
     const f = this.notesFor
-    if (f && f[0] === this.state && f[1] === stage && f[2] === scenario) return this.notes
-    this.notesFor = [this.state, stage, scenario]
+    if (f && f[0] === this.state && f[1] === stage && f[2] === scenario && f[3] === this.jobRev) return this.notes
+    this.notesFor = [this.state, stage, scenario, this.jobRev]
     this.notes = this.buildNotifications(stage, scenario)
     return this.notes
   }
@@ -1170,7 +1213,7 @@ export class MockAgent implements AgentClient {
     const ctx = { S, agent: st, data }
     // The same counts as Today: what's waiting in Act and Run, what Today lists in Watch.
     const nNeed = S >= 1 ? pendingIds(ctx).length : visibleProblems(ctx).length
-    const out: AgentNotification[] = []
+    const out: AgentNotification[] = [...(this.jobsInstance?.notifications() ?? [])]
     for (const n of notifications.notifications as RawNotification[]) {
       if (typeof n.text !== 'string') {
         // The waiting line. Its id carries the count, so a higher count arrives unread again; a count that fell (a draft
@@ -1550,8 +1593,8 @@ export class MockAgent implements AgentClient {
     }
     return this.engine
   }
-  /** Waits for the engine. The app asks at start, so a first send isn't waiting on its chunk; the tests wait for it too. */
-  preload(): Promise<void> { return this.loadEngine().then(() => undefined) }
+  /** Waits for the engine and lazy demo stores (for tests under fake clocks). */
+  preload(): Promise<void> { return Promise.all([this.loadEngine(), this.demoJobs()]).then(() => undefined) }
   async listChats(opts: { cursor?: string; limit?: number; deleted?: boolean } = {}): Promise<ChatList> { return (await this.loadEngine()).listChats(opts) }
   async getChat(id: string, cursor?: string): Promise<ChatPage> { return (await this.loadEngine()).getChat(id, cursor) }
   async resetSession(chatId: string): Promise<void> { return (await this.loadEngine()).resetSession(chatId) }

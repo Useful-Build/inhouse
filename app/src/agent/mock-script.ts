@@ -309,6 +309,114 @@ export function seeded(h: ScriptHost, q: string, chatId: string): Script | null 
   return null
 }
 
+/** Asked for a web lookup or URL check: respects Settings > Inhouse agent (`t:websearch`, `t:webfetch_on`, `t:webfetch`). */
+const WEB_ASK = /\b(?:search\b.*\bweb|web search|look up online|competitor prices?)\b/i
+const URL_ASK = /https?:\/\/([a-z0-9.-]+)/i
+const LONG_TASK_ASK = /\b(long job|full catalog|deep (?:research|audit|analysis)|audit (?:all|every)|across every sku)\b/i
+
+const webScript = (h: ScriptHost, q: string): Script | null => {
+  const urlMatch = URL_ASK.exec(q)
+  const webAsk = WEB_ASK.test(q)
+  if (!urlMatch && !webAsk) return null
+  const searchOn = h.state.toggles['t:websearch'] === true
+  const fetchOn = h.state.toggles['t:webfetch_on'] !== false
+  const allowed = (h.state.settings['t:webfetch'] ?? '')
+    .split('\n')
+    .map(x => x.trim().toLowerCase())
+    .filter(Boolean)
+
+  if (urlMatch) {
+    const host = urlMatch[1]!.toLowerCase()
+    if (!fetchOn) {
+      return {
+        thinking: ['Checking web settings…'],
+        delayMs: 800,
+        trace: 'generic',
+        parts: [{ type: 'text', text: "Read web pages is turned off in Settings, so I can't open that page. Turn on Read web pages under Settings > Inhouse agent and ask again." }],
+      }
+    }
+    if (!allowed.includes(host)) {
+      return {
+        thinking: ['Checking allowed websites…'],
+        delayMs: 800,
+        trace: 'generic',
+        parts: [{ type: 'text', text: `That website (${host}) isn't in Websites it may open under Settings > Inhouse agent, so I can't open it.` }],
+      }
+    }
+    return {
+      thinking: ['Reading a web page…', 'Writing the answer…'],
+      delayMs: 1200,
+      trace: h.k.traceKey('web-lookup'),
+      parts: [
+        {
+          type: 'table',
+          table: {
+            title: `Notes from ${host}`,
+            summary: '1 web page checked',
+            icon: 'search',
+            rows: [{ order: 'CB-750', age: '$34', why: `Checked ${urlMatch[0]} against our catalog price`, value: 'Aligned' }],
+            sources: [`Web · ${host}`, 'Shopify · Products'],
+          },
+        },
+        {
+          type: 'text',
+          text: `Checked [${host}](${urlMatch[0]}). Our Cairn Insulated Bottle ($34) sits right in line with their insulated 750ml listings.`,
+        },
+      ],
+    }
+  }
+
+  if (!searchOn) {
+    return {
+      thinking: ['Checking web settings…'],
+      delayMs: 800,
+      trace: 'generic',
+      parts: [{ type: 'text', text: "Search the web is turned off in Settings, so I can't search the web right now. Turn on Search the web under Settings > Inhouse agent and ask again." }],
+    }
+  }
+
+  if (!fetchOn || allowed.length === 0) {
+    const reason = !fetchOn ? 'Read web pages is turned off' : 'Websites it may open is empty'
+    return {
+      thinking: ['Searching the web…', 'Checking snippet results…'],
+      delayMs: 1200,
+      trace: h.k.traceKey('web-lookup'),
+      parts: [{
+        type: 'text',
+        text: `Searched the web for 750ml insulated bottles. Search results show $32 to $38 against our $34 Cairn Insulated Bottle, and I skipped opening full pages because ${reason} in Settings > Inhouse agent.`,
+      }],
+    }
+  }
+
+  const links = allowed.slice(0, 3).map(host => `- [${host}](https://${host}/)`).join('\n')
+  return {
+    thinking: ['Searching the web…', 'Reading a web page…', 'Writing the answer…'],
+    delayMs: 1600,
+    trace: h.k.traceKey('web-lookup'),
+    parts: [
+      {
+        type: 'table',
+        table: {
+          title: 'Competitor web check',
+          summary: `${allowed.length} allowed ${allowed.length === 1 ? 'website' : 'websites'} checked`,
+          icon: 'search',
+          rows: allowed.slice(0, 3).map((host, i) => ({
+            order: `Web ${i + 1}`,
+            age: i === 0 ? '$38' : '$32',
+            why: `${host} insulated bottle listing vs our $34`,
+            value: i === 0 ? '+$4' : '-$2',
+          })),
+          sources: [...allowed.slice(0, 3).map(host => `Web · ${host}`), 'Shopify · Products'],
+        },
+      },
+      {
+        type: 'text',
+        text: `Checked the allowed websites:\n\n${links}\n\nOur $34 Cairn Insulated Bottle stays competitive without a discount.`,
+      },
+    ],
+  }
+}
+
 export function buildScript(h: ScriptHost, q: string, chatId: string): Script {
   const S = stageIndex(h.demo.stage)
   const sc = chatScript.scripted
@@ -331,9 +439,26 @@ export function buildScript(h: ScriptHost, q: string, chatId: string): Script {
   if (h.demo.scenario === 'Tool disconnected' && new RegExp(disc.match, 'i').test(q)) {
     return { thinking: fb.thinking, delayMs: fb.delayMs, parts: [{ type: 'error', text: disc.reply[0].text, retryQuestion: q }], trace: h.k.traceKey(disc.trace) }
   }
+  const web = webScript(h, q)
+  if (web) return web
   // A question a chat already asked gets that chat's own answer (Regenerate on a seeded chat, the suggestions).
   const own = seeded(h, q, chatId)
   if (own) return own
+  if (LONG_TASK_ASK.test(q)) {
+    return {
+      thinking: ['Checking catalog scope…', 'Planning helper tasks…'],
+      delayMs: fb.delayMs,
+      trace: h.k.traceKey('catalog-audit-start'),
+      parts: [{ type: 'text', text: "This needs a full check across every SKU and fulfillment cost. I'm starting a long job with helpers and will post each section as it finishes." }],
+      longJob: {
+        label: 'Checking full catalog and variant margins',
+        progressLabel: 'Checking variant margins on Shopify',
+        helpers: 2,
+        carryOnText: 'Finished checking every SKU across Shopify and ShipBob. Two variants dropped below 35% net margin after return postage: Trail Shell Jacket (Olive, M) at 33% and Summit Fleece (Slate, S) at 34%.',
+        trace: h.k.traceKey('long-job-run'),
+      },
+    }
+  }
   const more = /^Tell me more about: (.+)$/i.exec(q.trim())
   const p = more && problems.find(x => x.title === more[1].trim())
   if (p) {

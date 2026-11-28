@@ -7,14 +7,18 @@ import type {
   ActiveRun, ChatList, ChatPage, ChatSendInput, Instant, MessagePart, RunFrame, SendTurnResult, StoredMessage, TurnFailure, AgentErrorCode,
 } from './types'
 import type { ErrorReason } from '../../shared/contract/common'
+import type { TraceKey } from './data'
+import type { Job, JobOutcome } from '../../shared/contract/jobs'
 import { CONFLICT, FORBIDDEN, INVALID, NOT_FOUND, RATE_LIMITED, REASON } from '../../shared/contract/error-codes'
 import { FAIL, NOTICE } from '../../shared/contract/chat-codes'
+import { JOB_CARRIED_ON_TEXT } from '../../shared/server-turn-text'
 import { demoNow } from './demo-clock'
 import { instantOf, moneyOf } from '../lib/format'
 import { dollarsIn } from '../state/derive'
 import { buildScript } from './mock-script'
 import type { ScriptHost } from './mock-script'
-import type { MockRun, MockTurn, RunInfo, ScriptedTurn } from './mock'
+import type { MockJobs } from './mock-jobs'
+import type { MockRun, MockTurn, RunInfo, Script, ScriptedTurn } from './mock'
 
 export type { ScriptedTurn }
 
@@ -47,6 +51,8 @@ export interface Host {
   saveRoutine(part: Extract<MessagePart, { type: 'routine' }>, replaces: string | undefined, info: RunInfo): MessagePart
   takeBack(replaced: string, info: RunInfo): void
   traceOf(id: string): import('./types').Trace | null
+  loadJobs(): Promise<MockJobs>
+  loadedJobs(): MockJobs | null
 }
 
 export class ChatEngine {
@@ -57,9 +63,16 @@ export class ChatEngine {
   private sendKeys = new Map<string, { hash: string; result: SendTurnResult }>()
   private damaged = new Set<string>()
   private idSeq = 0
+  private activeJobRuns = new Map<string, { run: MockRun; controller: AbortController; contTurn?: MockTurn }>()
 
   /** Reset demo: forget every turn, key and damaged session. */
-  clear() { this.turnsById.clear(); this.sendKeys.clear(); this.damaged.clear() }
+  clear() {
+    this.turnsById.clear()
+    this.sendKeys.clear()
+    this.damaged.clear()
+    this.activeJobRuns.forEach(j => j.controller.abort())
+    this.activeJobRuns.clear()
+  }
 
   listChats(opts: { cursor?: string; limit?: number; deleted?: boolean } = {}): Promise<ChatList> {
     const limit = opts.limit ?? 50
@@ -99,11 +112,16 @@ export class ChatEngine {
     })
     return out
   }
-  allMessages(id: string): StoredMessage[] { return [...this.seedMessages(id), ...(this.h.history.get(id) ?? [])] }
+  allMessages(id: string): StoredMessage[] {
+    return [...this.seedMessages(id), ...(this.h.loadedJobs()?.messages(id) ?? []), ...(this.h.history.get(id) ?? [])]
+  }
 
-  getChat(id: string, cursor?: string): Promise<ChatPage> {
+  async getChat(id: string, cursor?: string): Promise<ChatPage> {
     const base = this.h.chatBase(id) ?? this.h.read().chat.chats.find(c => c.id === id)
     if (!base) return this.h.rejected(NOT_FOUND, "That chat isn't available. It may have been deleted.", true)
+    if (!this.h.loadedJobs() && this.h.k.chats.find(c => c.id === id)?.turns.length === 0) {
+      await this.h.loadJobs()
+    }
     const all = this.allMessages(id)
     let below = all.length
     if (cursor !== undefined) {
@@ -118,7 +136,7 @@ export class ChatEngine {
     const runs: ActiveRun[] = [...this.h.mockRuns.values()].filter(r => r.live && r.chatId === id).map(r => ({ runId: r.runId, chatId: r.chatId, lastSeq: r.frames.length, live: true }))
     const chat = this.h.summary(base)
     this.h.seen[`chat:${id}`] = chat.rev
-    return Promise.resolve({ chat, messages: page, nextCursor: first && first.pos > 0 ? this.h.cursorOf(`p${first.pos}`) : null, runs })
+    return { chat, messages: page, nextCursor: first && first.pos > 0 ? this.h.cursorOf(`p${first.pos}`) : null, runs }
   }
 
   resetSession(chatId: string): Promise<void> {
@@ -217,10 +235,10 @@ export class ChatEngine {
     }
   }
 
-  /** Waits `ms` of demo time, or until the turn is ended early. */
-  pause_(ms: number, turn: MockTurn): Promise<void> {
+  /** Waits `ms` of demo time, or until the turn (or an extra abort signal) ends early. */
+  pause_(ms: number, turn: MockTurn, extra?: AbortSignal): Promise<void> {
     return new Promise<void>(resolve => {
-      const signals = [turn.interrupt.signal, turn.hard.signal]
+      const signals = extra ? [turn.interrupt.signal, turn.hard.signal, extra] : [turn.interrupt.signal, turn.hard.signal]
       if (signals.some(x => x.aborted)) { resolve(); return }
       let t: ReturnType<typeof setTimeout> | undefined = undefined
       const done = () => { clearTimeout(t); signals.forEach(x => x.removeEventListener('abort', done)); resolve() }
@@ -234,15 +252,30 @@ export class ChatEngine {
     this.emit(run, { type: 'turn.finished', turnId: turn.turnId, outcome, ...(reason ? { reason } : {}) })
   }
 
-  /** What the server stores once the turn ends (D1): the question and the parts that were written. */
-  project(run: MockRun, turn: MockTurn, parts: { messageId: string; part: MessagePart; at: Instant }[], info: RunInfo, model: string) {
-    const list = this.h.history.get(turn.chatId) ?? []
-    let pos = this.seedMessages(turn.chatId).length + list.length
-    const atts = turn.input.attachments?.map(a => ({ name: a.name, meta: '', icon: 'description', fileId: a.fileId }))
-    const user: StoredMessage = {
-      id: `${turn.turnId}.u`, role: 'user', text: turn.input.text, ...(turn.input.quote !== undefined ? { quote: turn.input.quote } : {}), ...(atts?.length ? { atts } : {}),
-      turnId: turn.turnId, runId: run.runId, pos: pos++, at: turn.queuedAt,
+  /** Ends a running live job run immediately when the user clicks Cancel job. */
+  cancelJobRun(ended: Job) {
+    const entry = this.activeJobRuns.get(ended.jobId)
+    if (!entry) return
+    this.activeJobRuns.delete(ended.jobId)
+    entry.controller.abort()
+    if (entry.contTurn && entry.contTurn.state === 'live') {
+      this.finish(entry.run, entry.contTurn, 'stopped')
     }
+    const durationMs = ended.endedAt ? Math.max(0, ended.endedAt.ms - ended.startedAt.ms) : 0
+    this.emit(entry.run, { type: 'job.ended', jobId: ended.jobId, outcome: ended.outcome ?? ('cancelled' as JobOutcome), durationMs, cost: ended.cost ?? { minor: 0, currency: 'USD' } })
+  }
+
+  /** What the server stores once the turn ends (D1): the question (or server carry-on note) and the parts that were written. */
+  project(run: MockRun, turn: MockTurn, parts: { messageId: string; part: MessagePart; at: Instant }[], info: RunInfo, model: string, asEvent = false) {
+    const list = this.h.history.get(turn.chatId) ?? []
+    let pos = this.seedMessages(turn.chatId).length + (this.h.loadedJobs()?.messages(turn.chatId).length ?? 0) + list.length
+    const atts = turn.input.attachments?.map(a => ({ name: a.name, meta: '', icon: 'description', fileId: a.fileId }))
+    const user: StoredMessage = asEvent
+      ? { id: `${turn.turnId}.u`, role: 'event', text: turn.input.text, turnId: turn.turnId, runId: run.runId, pos: pos++, at: turn.queuedAt }
+      : {
+          id: `${turn.turnId}.u`, role: 'user', text: turn.input.text, ...(turn.input.quote !== undefined ? { quote: turn.input.quote } : {}), ...(atts?.length ? { atts } : {}),
+          turnId: turn.turnId, runId: run.runId, pos: pos++, at: turn.queuedAt,
+        }
     const answers = parts.map((p): StoredMessage => ({ id: p.messageId, role: 'agent', part: p.part, trace: turn.turnId, model, at: p.at, turnId: turn.turnId, runId: run.runId, pos: pos++ }))
     this.h.history.set(turn.chatId, [...list, user, ...answers])
     void info
@@ -259,6 +292,9 @@ export class ChatEngine {
     const atCap = usage.capReached !== undefined && usage.cap.minor === cap.minor ? usage.capReached : usage.total.minor >= cap.minor
     const forced = atCap ? 'capReached' : this.h.scripted
     this.h.scripted = null
+    if (!this.h.loadedJobs() && this.h.k.chats.find(c => c.id === turn.chatId)?.turns.length === 0) {
+      await this.h.loadJobs()
+    }
     if (forced === 'capReached') {
       this.emit(run, { type: 'notice', code: NOTICE.capReached })
       this.finish(run, turn, 'failed', FAIL.capReached)
@@ -274,7 +310,12 @@ export class ChatEngine {
     }
     turn.state = 'live'
     this.emit(run, { type: 'turn.started', turnId: turn.turnId, model: input.model })
-    const s = buildScript(this.h as unknown as ScriptHost, input.text.trim(), turn.chatId)
+    const jobs = this.h.loadedJobs()
+    const runningJob = jobs?.job(turn.chatId)
+    const seededFollowUp = runningJob && runningJob.state !== 'ended' ? jobs?.seededReply(turn.chatId, input.text.trim()) : null
+    const s: Script = seededFollowUp
+      ? { thinking: ['Checking audit progress…'], delayMs: this.h.k.THINKING_STEP_MS, trace: this.h.k.traceKey(seededFollowUp.trace), parts: [{ type: 'text', text: seededFollowUp.text }] }
+      : buildScript(this.h as unknown as ScriptHost, input.text.trim(), turn.chatId)
     let info: RunInfo = { trace: s.trace }
     this.h.saveRunInfo(turn.turnId, info)
     let stepN = 0
@@ -290,11 +331,13 @@ export class ChatEngine {
       if (elapsed < s.delayMs) step(s.thinking[Math.min(i++, s.thinking.length - 1)])
     }
     const written: { messageId: string; part: MessagePart; at: Instant }[] = []
+    let carryOn: { label: string; progressLabel: string; helpers: number; carryOnText: string; trace: TraceKey } | null = null
     if (!ended()) {
       if (forced === 'crash') { this.finish(run, turn, 'failed', FAIL.sessionCrashed); this.project(run, turn, written, info, input.model); return true }
       const replaces = input.replacesRun
+      const promoted = forced === 'turnBudget' || forced === 'maxTurns'
       // A routine or skill the answer makes is saved as its card appears, so its id comes from what is saved at that moment.
-      const chosen = forced === 'turnBudget' || forced === 'maxTurns' ? s.parts.slice(0, 1) : s.parts
+      const chosen = promoted ? s.parts.slice(0, 1) : s.parts
       let n = 0
       for (const part of chosen) {
         const out = part.type === 'routine' && part.routine.id === '' ? this.h.saveRoutine(part, replaces, info) : part
@@ -302,7 +345,7 @@ export class ChatEngine {
         written.push({ messageId: `${turn.turnId}.${n++}`, part: out, at })
         this.emit(run, { type: 'part', turnId: turn.turnId, messageId: `${turn.turnId}.${n - 1}`, part: out, model: input.model, at })
       }
-      if (forced !== 'turnBudget' && forced !== 'maxTurns') s.after?.(info, replaces)
+      if (!promoted) s.after?.(info, replaces)
       const failed = s.parts.some(x => x.type === 'error')
       // An answer that failed replaces nothing: what the earlier run made stays, and this run carries it on, so the next
       // answer in the chain (Try again, or Regenerate of the error) updates it instead of making a second.
@@ -315,12 +358,105 @@ export class ChatEngine {
       else if (forced === 'maxTurns') this.finish(run, turn, 'failed', FAIL.maxTurns)
       else this.finish(run, turn, 'done')
       if (forced === 'sessionDamaged') { this.damaged.add(turn.chatId); this.emit(run, { type: 'notice', code: NOTICE.sessionDamaged }) }
+      if (promoted) {
+        carryOn = {
+          label: 'Carrying on as a long job',
+          progressLabel: 'Analyzing orders and SKU fulfillment across Shopify and ShipBob',
+          helpers: 2,
+          carryOnText: 'Finished checking every SKU and fulfillment log across the remaining orders. Nothing else exceeded the 3-day threshold.',
+          trace: this.h.k.traceKey('long-job-run'),
+        }
+      } else if (!forced && !runningJob && s.longJob) {
+        carryOn = { ...s.longJob, label: s.longJob.label }
+      }
     } else {
       this.finish(run, turn, turn.hard.signal.aborted ? 'stopped' : 'interrupted')
     }
     this.project(run, turn, written, info, input.model)
+    if (runningJob && runningJob.state !== 'ended' && !ended()) {
+      this.emit(run, {
+        type: 'job.progress', jobId: runningJob.jobId,
+        label: runningJob.progress?.label ?? 'Working on a long job', helpers: runningJob.progress?.helpers ?? 0,
+      })
+    }
+    if (carryOn && !ended() && this.h.state.paused === null) {
+      await this.driveLongJob(run, turn, carryOn, input.model)
+    }
     info = { trace: info.trace }
     return true
+  }
+
+  private async driveLongJob(
+    run: MockRun,
+    rootTurn: MockTurn,
+    plan: { label: string; progressLabel: string; helpers: number; carryOnText: string; trace: TraceKey },
+    model: string,
+  ) {
+    const jobs = await this.h.loadJobs()
+    if (rootTurn.hard.signal.aborted || rootTurn.interrupt.signal.aborted || this.h.state.paused !== null) return
+    const { job, controller } = jobs.startJob(run.chatId, rootTurn.turnId, plan.progressLabel, plan.helpers)
+    const active = { run, controller, contTurn: undefined as MockTurn | undefined }
+    this.activeJobRuns.set(job.jobId, active)
+    this.emit(run, { type: 'job.started', jobId: job.jobId, rootTurnId: rootTurn.turnId })
+    this.emit(run, { type: 'job.progress', jobId: job.jobId, label: plan.progressLabel, helpers: plan.helpers })
+    await this.pause_(1200, rootTurn, controller.signal)
+    if (controller.signal.aborted) { this.activeJobRuns.delete(job.jobId); return }
+    if (rootTurn.hard.signal.aborted || this.h.state.paused !== null) {
+      this.activeJobRuns.delete(job.jobId)
+      const ended = jobs.endJob(run.chatId, job.jobId, 'cancelled', 20)
+      if (ended) this.emit(run, { type: 'job.ended', jobId: job.jobId, outcome: 'cancelled', durationMs: 0, cost: ended.cost ?? { minor: 0, currency: 'USD' } })
+      return
+    }
+    const contTurnId = this.id22('t')
+    const contTurn: MockTurn = {
+      turnId: contTurnId, runId: run.runId, chatId: run.chatId,
+      input: { clientTurnKey: `job-${contTurnId.slice(2, 16)}`, text: JOB_CARRIED_ON_TEXT, model, priority: 'next' },
+      ord: ++this.idSeq, queuedAt: this.nowInstant(), state: 'live',
+      interrupt: new AbortController(), hard: new AbortController(),
+    }
+    active.contTurn = contTurn
+    this.turnsById.set(contTurnId, contTurn)
+    run.turns.push(contTurn)
+    this.h.saveRunInfo(contTurnId, { trace: plan.trace })
+    this.emit(run, {
+      type: 'turn.queued', turnId: contTurnId, messageId: `${contTurnId}.u`, text: JOB_CARRIED_ON_TEXT,
+      attachments: [], priority: 'next', by: this.h.k.ME_ID, source: 'job',
+    })
+    this.emit(run, { type: 'turn.started', turnId: contTurnId, model })
+    let sN = 0
+    const step = (label: string) => this.emit(run, { type: 'step', turnId: contTurnId, stepId: `${contTurnId}.s${sN++}`, label })
+    step('Asking a helper')
+    step(plan.progressLabel)
+    await this.pause_(1200, contTurn, controller.signal)
+    this.activeJobRuns.delete(job.jobId)
+    if (controller.signal.aborted) {
+      // cancelJobRun already finished contTurn (if live) and emitted job.ended; project the carry-on note cleanly.
+      if (contTurn.state === 'ended') this.project(run, contTurn, [], { trace: plan.trace }, model, true)
+      return
+    }
+    if (contTurn.hard.signal.aborted || this.h.state.paused !== null) {
+      this.finish(run, contTurn, 'stopped')
+      this.project(run, contTurn, [], { trace: plan.trace }, model, true)
+      const ended = jobs.endJob(run.chatId, job.jobId, 'cancelled', 40)
+      if (ended) this.emit(run, { type: 'job.ended', jobId: job.jobId, outcome: 'cancelled', durationMs: Math.max(0, ended.endedAt!.ms - ended.startedAt.ms), cost: ended.cost ?? { minor: 0, currency: 'USD' } })
+      return
+    }
+    const jobCapDollars = dollarsIn(this.h.state.settings['s:job_cap'])
+    if (jobCapDollars !== null && jobCapDollars <= 1) {
+      this.finish(run, contTurn, 'done')
+      this.project(run, contTurn, [], { trace: plan.trace }, model, true)
+      const ended = jobs.endJob(run.chatId, job.jobId, 'budget', Math.round(jobCapDollars * 100))
+      if (ended) this.emit(run, { type: 'job.ended', jobId: job.jobId, outcome: 'budget', durationMs: Math.max(0, ended.endedAt!.ms - ended.startedAt.ms), cost: ended.cost ?? { minor: 0, currency: 'USD' } })
+      return
+    }
+    const at = this.nowInstant()
+    const part: MessagePart = { type: 'text', text: plan.carryOnText }
+    const msgId = `${contTurnId}.0`
+    this.emit(run, { type: 'part', turnId: contTurnId, messageId: msgId, part, model, at })
+    this.finish(run, contTurn, 'done')
+    this.project(run, contTurn, [{ messageId: msgId, part, at }], { trace: plan.trace }, model, true)
+    const ended = jobs.endJob(run.chatId, job.jobId, 'done', 145)
+    if (ended) this.emit(run, { type: 'job.ended', jobId: job.jobId, outcome: 'done', durationMs: Math.max(0, ended.endedAt!.ms - ended.startedAt.ms), cost: ended.cost ?? { minor: 0, currency: 'USD' } })
   }
 
   interrupt(turnId: string): Promise<void> { return this.endTurn(turnId, 'interrupt') }

@@ -287,8 +287,8 @@ test('the C1 formatters write exactly the golden strings for every time, amount,
   vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout', 'setInterval', 'clearInterval', 'Date'] })
   try {
     const out = await capture()
-    // 693: the 12 strings of the demo's batch chat and its trace (Stage 1 M3-U) joined the 681 captured before C1.
-    expect(Object.keys(out).length).toBe(693)
+    // 804: added the 4 job/web chats (8), 2 job bell notices (2) and 10 job/helper/web traces (101) to the 693 prior strings.
+    expect(Object.keys(out).length).toBe(804)
     expect(out).toEqual(golden)
   } finally {
     vi.useRealTimers()

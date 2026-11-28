@@ -221,7 +221,9 @@ test('Chats: every seeded answer has its steps line and, opened, its model and s
   const modes = json('models.json').modes as { id: string; label: string; model: string }[]
   const secs = (x: number) => (x < 60 ? `${Math.round(x * 10) / 10}s` : `${Math.floor(x / 60)}m ${Math.round(x % 60)}s`)
   type Turn = { user?: string; stage?: string; trace?: string; model?: string }
+  type LazyMsg = { role: string; trace?: string; model?: string }
   const seed = json('chat-script.json').seedThread.turns as Turn[]
+  const jobsChats = json('jobs.json').chats as Record<string, { messages: LazyMsg[] }>
   const chats = json('chats.json').chats as { id: string; turns: 'seedThread' | Turn[] }[]
   await start(fx)
   for (const c of chats) {
@@ -229,7 +231,12 @@ test('Chats: every seeded answer has its steps line and, opened, its model and s
     const expected: string[] = []
     const expectedMeta: string[] = []
     let inAnswer = false
-    for (const t of typeof c.turns === 'string' ? seed : c.turns) {
+    const turnsList: Turn[] = typeof c.turns === 'string'
+      ? seed
+      : c.turns.length > 0
+        ? c.turns
+        : (jobsChats[c.id]?.messages ?? []).map(m => (m.role === 'agent' ? { trace: m.trace, model: m.model } : { user: m.role }))
+    for (const t of turnsList) {
       if (t.user) { inAnswer = false; continue }
       const tr = traces[t.trace!.split(' ')[0]]
       // Its model is the mode (models.json) whose model its trace's last model step names, so the line and the steps agree.
@@ -437,7 +444,15 @@ test("Data: every seeded answer names its own trace, and its steps and seconds a
   type Turn = { trace?: string; agent?: { type: string }[] }
   const chats = json('chats.json').chats as { id: string; at: string; turns: 'seedThread' | Turn[] }[]
   const seed = json('chat-script.json').seedThread.turns as Turn[]
-  const answers = chats.flatMap(c => (typeof c.turns === 'string' ? seed : c.turns).map(t => ({ chat: c.id, ...t }))).filter(t => t.agent)
+  const jobsChats = json('jobs.json').chats as Record<string, { messages: { role: string; trace?: string; part?: { type: string } }[] }>
+  const answers = chats.flatMap(c => {
+    if (typeof c.turns === 'string' || c.turns.length > 0) {
+      return (typeof c.turns === 'string' ? seed : c.turns).filter(t => t.agent).map(t => ({ chat: c.id, trace: t.trace, types: t.agent!.map(p => p.type) }))
+    }
+    return (jobsChats[c.id]?.messages ?? [])
+      .filter(m => m.role === 'agent')
+      .map(m => ({ chat: c.id, trace: m.trace, types: m.part ? [m.part.type] : [] }))
+  })
   const used = new Map<string, string>()
   for (const a of answers) {
     const key = (a.trace ?? '').split(' ')[0]
@@ -448,7 +463,7 @@ test("Data: every seeded answer names its own trace, and its steps and seconds a
     expect(owner === undefined || owner === a.chat, `trace "${key}" is used by ${owner} and ${a.chat}`).toBe(true)
     used.set(key, a.chat)
     // The answer's footer is its one link to the steps: no work row repeats it with its own time.
-    expect(a.agent!.filter(p => p.type === 'workRow'), `${a.chat}: a work row`).toEqual([])
+    expect(a.types.filter(t => t === 'workRow'), `${a.chat}: a work row`).toEqual([])
     const t = traces[key]
     expect(t.steps[0].kind).toBe('root')
     expect(t.steps[0].endSeconds).toBe(t.durationSeconds)
@@ -514,7 +529,12 @@ test('Data: the bell is newest first, no denied text anywhere a person reads, no
   // (The stuck chat's turns are the seed thread in chat-script.json, named here by a string, and it's dated today, after every tool was connected.)
   for (const c of json('chats.json').chats as { id: string; at: string; turns: { trace?: string }[] | string }[]) {
     const day = dayOf(c.at)
-    for (const key of (Array.isArray(c.turns) ? c.turns : []).flatMap(t => (t.trace ? [t.trace.split(' ')[0]] : []))) {
+    const turnTraces = Array.isArray(c.turns) && c.turns.length > 0
+      ? c.turns.flatMap(t => (t.trace ? [t.trace.split(' ')[0]] : []))
+      : Array.isArray(c.turns)
+        ? (json('jobs.json').chats[c.id]?.messages ?? []).flatMap((m: { trace?: string }) => (m.trace ? [m.trace.split(' ')[0]] : []))
+        : []
+    for (const key of turnTraces) {
       for (const s of traces[key]?.steps ?? []) {
         const on = s.kind === 'tool' ? since.get(s.label.split(' · ')[0]) : undefined
         if (on !== undefined && on > day) late.push(`${c.id} (${c.at}) reads ${s.label} before it was connected`)

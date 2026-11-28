@@ -220,6 +220,30 @@
       ]
     },
     {
+      "id": "catalog-audit",
+      "title": "Full catalog margin review",
+      "at": "-3d 15:35",
+      "turns": []
+    },
+    {
+      "id": "seasonal-restock",
+      "title": "Winter restock plan across stores",
+      "at": "-3d 15:30",
+      "turns": []
+    },
+    {
+      "id": "ad-spend-audit",
+      "title": "Multi-channel ad spend audit",
+      "at": "-3d 15:25",
+      "turns": []
+    },
+    {
+      "id": "competitor-prices",
+      "title": "Competitor bottle pricing",
+      "at": "-3d 15:20",
+      "turns": []
+    },
+    {
       "id": "meta",
       "title": "Meta Ads on low-stock products",
       "at": "-3d 15:10",
