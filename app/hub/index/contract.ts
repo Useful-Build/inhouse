@@ -157,13 +157,16 @@ export interface ServerGateway {
 export interface ConnectGateway {
   startConnect(scope: CallerScope, req: { accountId: string; memberId: string }): Promise<HubResult<{ authorizeUrl: string; expiresAt: Instant }>>
   /**
-   * Stage 1 M4 (N40; M4-O1b sends, M4-O1a checks): `actorKind`, who finished the sign-in (the pending item binds it), and
-   * `iss`, every `iss` value the return carried, in order (none: absent or empty; two: a doubled `iss`, refused). The hub
-   * compares a present `iss` with the issuer it recorded, on success and on error, before it trusts anything else.
+   * Stage 1 M4 (N40; #674): `actorKind`, who finished the sign-in (the pending item binds it), and `iss`, every `iss`
+   * value the return carried, in order, or null when it carried none (two: a doubled `iss`, refused). M4-O1a checks
+   * them (a present `iss` against the issuer it recorded, on success and on error, before anything else is trusted) and
+   * makes both required here; until then the hub reads neither, as it read no `iss` before M4. They are optional here
+   * only because the hub's own test callers live under `app/hub/testing/` (Lane 4); the product's caller is held to
+   * `ConnectReturn` (server/api/connect.ts `ConnectBinding`), and the hub parses them with `ConnectReturnSchema`.
    */
-  completeConnect(scope: CallerScope, req: { state: string; code: string; memberId: string; actorKind?: ConnectionActorKind; iss?: string[] }): Promise<HubResult<{ accountId: string }>>
+  completeConnect(scope: CallerScope, req: { state: string; code: string; memberId: string } & Partial<ConnectReturn>): Promise<HubResult<{ accountId: string }>>
   /** The AS answered `?error=`: consume the state and record it. The error value is never echoed. `actorKind`, `iss`: as `completeConnect`'s. */
-  failConnect(scope: CallerScope, req: { state: string; memberId: string; error: string; actorKind?: ConnectionActorKind; iss?: string[] }): Promise<HubResult<{ accountId: string | null }>>
+  failConnect(scope: CallerScope, req: { state: string; memberId: string; error: string } & Partial<ConnectReturn>): Promise<HubResult<{ accountId: string | null }>>
   disconnect(scope: CallerScope, accountId: string): Promise<HubResult<{ revoked: boolean }>>
   setPaused(scope: CallerScope, accountId: string, paused: boolean): Promise<HubResult<{ paused: boolean }>>
   /**
@@ -230,6 +233,12 @@ export interface ConnectGateway {
 
 /** Stage 1 M4 (N35): the caps. */
 export const CONNECTION_CAPS = { perBrand: 20, snapshotTools: 200, confirmedTools: 100 } as const
+
+/**
+ * Stage 1 M4 (N40, #674): what a sign-in's return forwards to the hub, both always: who finished it, and every `iss`
+ * value it carried, in order, or null for none. An explicit null, never a missing field.
+ */
+export type ConnectReturn = { actorKind: ConnectionActorKind; iss: string[] | null }
 
 /** Who acts on a connection: the Inhouse team or one of the brand's Admins. A Member never reaches the hub. */
 export type ConnectionActorKind = 'inhouse' | 'admin'

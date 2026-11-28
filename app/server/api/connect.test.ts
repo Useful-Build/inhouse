@@ -14,7 +14,8 @@ import { openStores } from '../db/stores.ts'
 import type { Stores } from '../db/stores.ts'
 import { brokenAudit, ctx, lastLineId, linesSince, person, personPrincipal, reqId } from '../db/test-support.ts'
 import type { Principal } from '../auth/principal.ts'
-import { connectCallback, startConnect, stateAccountHint } from './connect.ts'
+import { connectCallback, PROVEN, startConnect, stateAccountHint } from './connect.ts'
+import { HUB_ERROR_CODES } from '../egress/hub.ts'
 import type { ConnectBinding } from './connect.ts'
 
 const db = env.DB
@@ -116,8 +117,27 @@ describe('route B (failures 2 to 4)', () => {
     expect(res.headers.get('Location')).toBe('/tools/slack?connected=1')
     expect(res.headers.get('Cache-Control')).toBe('no-store')
     expect(res.headers.get('Referrer-Policy')).toBe('no-referrer')
-    expect(calls).toEqual([{ method: 'completeConnect', args: [expect.anything(), { state: STATE, code: 'the-code', memberId: (p as { memberId: string }).memberId }] }])
+    // Stage 1 M4 (#674): who finished it and the return's `iss` always go along (null: the return carried none).
+    expect(calls).toEqual([{ method: 'completeConnect', args: [expect.anything(), { state: STATE, code: 'the-code', memberId: (p as { memberId: string }).memberId, actorKind: 'inhouse', iss: null }] }])
     expect(await row()).toMatchObject({ last_state: 'connected', connected_by: (p as { memberId: string }).memberId, connected_at_ms: T })
+  })
+
+  // Stage 1 M4 (N40, #674): every `iss` the return carried reaches the hub as it is, in order, a doubled one included,
+  // on success and on the AS's error; the hub (M4-O1a) decides. Nothing else from the query goes along.
+  it('forwards every iss and the actor kind, on success and on error', async () => {
+    const p = await inhouse()
+    const memberId = (p as { memberId: string }).memberId
+    const { hub, calls } = fakeHub()
+    await callback(p, hub, `code=the-code&state=${STATE}&iss=${encodeURIComponent('https://slack.com')}`)
+    await callback(p, hub, `code=the-code&state=${STATE}&iss=a&iss=b`)
+    await callback(p, hub, `error=access_denied&state=${STATE}&iss=${encodeURIComponent('https://slack.com')}`)
+    await callback(p, hub, `error=access_denied&state=${STATE}`)
+    expect(calls.filter(c => c.method === 'completeConnect' || c.method === 'failConnect').map(c => c.args[1])).toEqual([
+      { state: STATE, code: 'the-code', memberId, actorKind: 'inhouse', iss: ['https://slack.com'] },
+      { state: STATE, code: 'the-code', memberId, actorKind: 'inhouse', iss: ['a', 'b'] },
+      { state: STATE, memberId, error: 'access_denied', actorKind: 'inhouse', iss: ['https://slack.com'] },
+      { state: STATE, memberId, error: 'access_denied', actorKind: 'inhouse', iss: null },
+    ])
   })
 
   it("the AS's error is never echoed: connect_refused, and the row goes back to the hub's state", async () => {
@@ -150,6 +170,31 @@ describe('route B (failures 2 to 4)', () => {
         const lines = await linesSince(db, before)
         expect(lines.map(l => JSON.parse(l.args_json)), at).toEqual([{ accountId: SLACK, outcome: code }])
       }
+    }
+  })
+
+  // #676: the codes that prove the hub took the state are an allow-list. Every hub code is tried; only the ones the hub
+  // answers after its state check (written out here, as the hub's signin/core.ts gives them) write a row, and any code
+  // added later (M4's included) writes nothing until someone shows it's proof.
+  const PROVEN_BY_HUB = ['not_configured', 'key_unavailable', 'credentials_rejected', 'upstream_rejected', 'upstream_unavailable', 'rate_limited',
+    'connect_refused', 'workspace_mismatch', 'scope_mismatch', 'connect_stale']
+  it('only a code the hub gives after its state check writes the row; every other code, new ones included, writes nothing', async () => {
+    expect([...PROVEN].sort()).toEqual([...PROVEN_BY_HUB].sort())
+    for (const code of HUB_ERROR_CODES) {
+      await db.prepare('DELETE FROM connector_accounts').run()
+      const p = await inhouse()
+      const { hub } = fakeHub({ complete: { ok: false, error: { code, message: 'x' } } })
+      const before = await lastLineId(db)
+      const res = await callback(p, hub, `code=c&state=${STATE}`)
+      expect(res.status, code).toBe(303)
+      const rows = await db.prepare('SELECT COUNT(*) AS n FROM connector_accounts').first<number>('n')
+      expect(rows, code).toBe(PROVEN_BY_HUB.includes(code) ? 1 : 0)
+      expect((await linesSince(db, before)).length, code).toBe(PROVEN_BY_HUB.includes(code) ? 1 : 0)
+    }
+    // Control: every M4 code is among those tried, and none is proof.
+    for (const code of ['needs_key', 'definition_changed', 'needs_input', 'leak', 'client_fault', 'not_built', 'connections_off'] as const) {
+      expect(HUB_ERROR_CODES, code).toContain(code)
+      expect(PROVEN.has(code), code).toBe(false)
     }
   })
 

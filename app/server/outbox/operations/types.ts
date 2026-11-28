@@ -132,18 +132,24 @@ type Harmless = Effects & { money: false; destructive: false; unreviewed: false 
  * - `coalesces` (N22): whether calls of this kind may collect into one batch card (a 6th waiting card, or a call past its
  *   grant's count). When false, the 6th waiting card of the kind in a chat is refused `too_many_waiting`.
  * - `amount` (N21): a money operation's amount, shown, bound and sent.
- * - Stage 1 M4 (N46): an `unreviewed` operation is admins only, exact only and never a batch (the last class).
+ * - Stage 1 M4 (N46): an `unreviewed` operation is admins only, exact only and never a batch (`UnreviewedClass`).
+ *
+ * These are the classes of a reviewed operation (a compiled one, on an account connector).
  */
-export type OperationClass<A> =
+type ReviewedClass<A> =
   | { effects: Harmless; memberMay: true; reversible: boolean; coalesces: boolean; amount?: undefined; defaults: OperationDefaults }
   | { effects: Harmless; memberMay: false; reversible: boolean; coalesces: false; amount?: undefined; defaults: OperationDefaults }
   | { effects: Effects & { money: true; destructive: false; unreviewed: false }; memberMay: boolean; reversible: boolean; coalesces: false; amount(a: A, f: ResolveFacts): MoneyAmount; defaults: OperationDefaults & { grant: null } }
   | { effects: Effects & { money: false; destructive: true; unreviewed: false }; memberMay: boolean; reversible: false; coalesces: false; amount?: undefined; defaults: OperationDefaults & { grant: null } }
   | { effects: Effects & { money: true; destructive: true; unreviewed: false }; memberMay: boolean; reversible: false; coalesces: false; amount(a: A, f: ResolveFacts): MoneyAmount; defaults: OperationDefaults & { grant: null } }
-  // Stage 1 M4 (N46): an unreviewed tool's write (`mcp.tool.call`, M4-W2). Its only flag is `unreviewed` (nothing about
-  // the tool is known, so no other effect is claimed or needed), only admins approve it, it never collects into a batch,
-  // no grant covers it, and it isn't reversible.
-  | { effects: Effects & { money: false; customer: false; destructive: false; access: false; unreviewed: true }; memberMay: false; reversible: false; coalesces: false; amount?: undefined; defaults: OperationDefaults & { grant: null } }
+// Stage 1 M4 (N46): an unreviewed tool's write (`mcp.tool.call`, M4-W2). Its only flag is `unreviewed` (nothing about
+// the tool is known, so no other effect is claimed or needed), only admins approve it, it never collects into a batch,
+// no grant covers it, and it isn't reversible.
+type UnreviewedClass =
+  { effects: Effects & { money: false; customer: false; destructive: false; access: false; unreviewed: true }; memberMay: false; reversible: false; coalesces: false; amount?: undefined; defaults: OperationDefaults & { grant: null } }
+
+/** The connector goes with the class: a reviewed operation writes to an account connector, an unreviewed one to `mcp`, never the other way. */
+export type OperationClass<A> = (ReviewedClass<A> & { connector: AccountConnector }) | (UnreviewedClass & { connector: 'mcp' })
 
 export type OperationEntry<A = unknown> = OperationBase<A> & OperationClass<A>
 

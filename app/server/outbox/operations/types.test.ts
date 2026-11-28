@@ -105,6 +105,12 @@ describe('OperationEntry classes (M3-A)', () => {
     const f: OperationEntry<Refund> = { ...base, effects: { ...effects, unreviewed: true }, memberMay: true, reversible: true, coalesces: true, defaults: { ...exactOnly, grant: { perDay: 1, unitsMax: 1 } } }
     // @ts-expect-error: nor can money
     const g: OperationEntry<Refund> = { ...base, effects: { ...money, unreviewed: true }, memberMay: false, reversible: false, coalesces: false, amount, defaults: exactOnly }
-    expect([ok, a, b, c, d, e, f, g]).toHaveLength(8)
+    // @ts-expect-error: an unreviewed write goes to a connection, never a compiled connector's account
+    const h: OperationEntry<Refund> = { ...base, effects: unreviewed, memberMay: false, reversible: false, coalesces: false, defaults: exactOnly }
+    // @ts-expect-error: a connection's write is unreviewed: a reviewed, grantable mcp entry doesn't typecheck
+    const i: OperationEntry<Refund> = { ...mcp, effects, memberMay: true, reversible: true, coalesces: true, defaults: { ...exactOnly, grant: { perDay: 1, unitsMax: 1 } } }
+    // @ts-expect-error: nor does an mcp entry with any other reviewed class
+    const j: OperationEntry<Refund> = { ...mcp, effects: destructive, memberMay: true, reversible: false, coalesces: false, defaults: exactOnly }
+    expect([ok, a, b, c, d, e, f, g, h, i, j]).toHaveLength(11)
   })
 })

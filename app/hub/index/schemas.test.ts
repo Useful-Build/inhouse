@@ -4,7 +4,7 @@ import { describe, expect, expectTypeOf, it } from 'vitest'
 import type { z } from 'zod'
 import type { AccountStatus, AccountSummary, CallerScope, CallToolOptions, CardFacts, CardFactsRequest, HubError, HubErrorCode, HubResult, Instant, SignInState, ToolInfo, WriteOperationKey, WriteRequest, WriteResult } from './contract'
 import type {
-  CallToolValue, ConfirmToolsRequest, ConnectGateway, ConnectionActor, ConnectionBindingInput, ConnectionCredential, ConnectionDestinations, ConnectionKeyPlace,
+  CallToolValue, ConfirmToolsRequest, ConnectGateway, ConnectReturn, ConnectionActor, ConnectionBindingInput, ConnectionCredential, ConnectionDestinations, ConnectionKeyPlace,
   ConnectionListFreshness, ConnectionState, ConnectionSummary, ConnectionTool, ConnectionTools, ConnectionView, DetectResult, PrepareConnectionRequest,
   ScriptProposal, ToolTrust, UpdateConnectionRequest, WriteToolInfo,
 } from './contract'
@@ -29,6 +29,7 @@ import {
   CallToolValueSchema,
   ConfirmToolsRequestSchema,
   ConnectionActorSchema,
+  ConnectReturnSchema,
   ConnectionBindingInputSchema,
   ConnectionCredentialSchema,
   ConnectionDestinationsSchema,
@@ -50,6 +51,7 @@ import {
   ToolTrustSchema,
   UpdateConnectionRequestSchema,
   WriteToolInfoSchema,
+  PINNED_OPERATIONS,
 } from './schemas'
 
 type Flat<T> = { [K in keyof T]: T[K] }
@@ -106,8 +108,9 @@ describe('schemas.ts mirrors contract.ts', () => {
     expectTypeOf<z.infer<typeof ConnectionRefRequestSchema>>().toEqualTypeOf<Req<'listConnectionTools'>>()
     expectTypeOf<z.infer<typeof ConfirmToolsRequestSchema>>().toEqualTypeOf<Req<'confirmConnectionTools'>>()
     expectTypeOf<z.infer<typeof ConnectionRefRequestSchema>>().toEqualTypeOf<Req<'removeConnection'>>()
-    expectTypeOf<z.infer<typeof ReturnIssSchema>>().toEqualTypeOf<NonNullable<Req<'completeConnect'>['iss']>>()
-    expectTypeOf<z.infer<typeof ReturnIssSchema>>().toEqualTypeOf<NonNullable<Req<'failConnect'>['iss']>>()
+    expectTypeOf<z.infer<typeof ConnectReturnSchema>>().toEqualTypeOf<ConnectReturn>()
+    expectTypeOf<Partial<ConnectReturn>>().toEqualTypeOf<Partial<Pick<Req<'completeConnect'>, 'actorKind' | 'iss'>>>()
+    expectTypeOf<Partial<ConnectReturn>>().toEqualTypeOf<Partial<Pick<Req<'failConnect'>, 'actorKind' | 'iss'>>>()
   })
 
   it('caller scopes parse strictly', () => {
@@ -209,14 +212,20 @@ describe('schemas.ts mirrors contract.ts', () => {
     expect(ToolInfoSchema.safeParse({ ...tool, trust: 'yes' }).success).toBe(false)
   })
 
-  it('an MCP write pins generation, defHash and policyRev together, or none of them', () => {
+  // #673: the pins are refused on every operation that doesn't read them (all of them until M4-W2), so a request that
+  // carries them is refused as it was before M4-A, never sent with them unread.
+  it('an MCP write pins generation, defHash and policyRev together, and only where an operation reads them', () => {
     const req = { actionId: 'ac_1', attempt: 1, requestId: 'ac_1:1', accountId: 'shopify:store', expect: { connectedAtMs: 5 }, operation: 'shopify.order.tag_add', args: {} }
     const pins = { generation: 3, defHash: 'a'.repeat(64), policyRev: 7 }
+    expect(PINNED_OPERATIONS).toEqual([])
     expect(WriteRequestSchema.safeParse(req).success).toBe(true)
-    expect(WriteRequestSchema.safeParse({ ...req, expect: { connectedAtMs: 5, ...pins } }).success).toBe(true)
+    for (const operation of WRITE_OPERATIONS) {
+      expect(WriteRequestSchema.safeParse({ ...req, operation, expect: { connectedAtMs: 5, ...pins } }).success, operation).toBe(false)
+    }
     for (const k of Object.keys(pins) as (keyof typeof pins)[]) {
       const { [k]: _, ...rest } = pins
       expect(WriteRequestSchema.safeParse({ ...req, expect: { connectedAtMs: 5, ...rest } }).success, k).toBe(false)
+      expect(WriteRequestSchema.safeParse({ ...req, expect: { connectedAtMs: 5, [k]: pins[k] } }).success, k).toBe(false)
     }
     for (const bad of [{ defHash: 'A'.repeat(64) }, { defHash: 'a'.repeat(63) }, { generation: 0 }, { policyRev: 1.5 }])
       expect(WriteRequestSchema.safeParse({ ...req, expect: { connectedAtMs: 5, ...pins, ...bad } }).success, JSON.stringify(bad)).toBe(false)
@@ -273,6 +282,14 @@ describe('schemas.ts mirrors contract.ts', () => {
     expect(DetectResultSchema.safeParse({ outcome: 'blocked', reason: 'Redirected to <a>', era: null, destinations }).success).toBe(false)
     expect(WriteToolInfoSchema.safeParse({ accountId: 'mcp:helpdesk', name: 'reply', hubName: 'helpdesk_reply', description: 'Replies', inputSchema: {}, defHash: hash, generation: 1, policyRev: 2, trusted: false }).success).toBe(true)
     expect(ReturnIssSchema.safeParse(['https://login.example.com', 'https://login.example.com']).success).toBe(true)
+    expect(ReturnIssSchema.safeParse(null).success).toBe(true)
+    expect(ReturnIssSchema.safeParse([]).success).toBe(false)
+    expect(ReturnIssSchema.safeParse(undefined).success).toBe(false)
+    // #674: both fields, always; none is an explicit null.
+    expect(ConnectReturnSchema.safeParse({ actorKind: 'inhouse', iss: null }).success).toBe(true)
+    expect(ConnectReturnSchema.safeParse({ actorKind: 'admin', iss: ['https://login.example.com'] }).success).toBe(true)
+    for (const bad of [{ actorKind: 'inhouse' }, { iss: null }, {}, { actorKind: 'member', iss: null }, { actorKind: 'inhouse', iss: [] }])
+      expect(ConnectReturnSchema.safeParse(bad).success, JSON.stringify(bad)).toBe(false)
     expect(CONNECTION_CAPS).toEqual({ perBrand: 20, snapshotTools: 200, confirmedTools: 100 })
   })
 })

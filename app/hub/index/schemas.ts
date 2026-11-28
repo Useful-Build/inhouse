@@ -127,6 +127,9 @@ export const CallToolValueSchema = z.strictObject({ data: z.unknown(), proposals
 export const WriteOperationKeySchema = z.enum(['shopify.order.tag_add', 'slack.channel.post', 'shopify.order.tag_remove', 'shopify.draft_order.create',
   'shopify.inventory.restock', 'shopify.inventory.reduce', 'shopify.refund.create'])
 
+/** Stage 1 M4 (N46): the write operations whose request carries an MCP write's pins. M4-W2 adds `mcp.tool.call`. */
+export const PINNED_OPERATIONS: readonly string[] = []
+
 /** Stage 1 M4 (N43): a tool definition's hash, SHA-256 in lower-case hex. */
 export const DEF_HASH = /^[0-9a-f]{64}$/
 
@@ -149,6 +152,11 @@ export const WriteRequestSchema = z.strictObject({
   // idempotency key (`<actionId>:<n>`).
   item: z.strictObject({ n: z.int().min(1).max(500), of: z.int().min(1).max(500) }).refine(i => i.n <= i.of, 'An item is at most the last one').optional(),
   idempotencyKey: z.string().regex(/^[A-Za-z0-9_:-]{1,200}$/).optional(),
+}).superRefine((r, ctx) => {
+  // Stage 1 M4 (#673): an MCP write's pins only on an operation that reads them, and always there. None does yet (M4-W2
+  // adds `mcp.tool.call` here with its entry), so a request carrying them is refused, `sent: 'no'`, as before M4-A.
+  const pinned = r.expect.generation !== undefined
+  if (pinned !== (PINNED_OPERATIONS as readonly string[]).includes(r.operation)) ctx.addIssue({ code: 'custom', path: ['expect', 'generation'], message: 'Pins only on an operation that reads them' })
 })
 
 export const WriteResultSchema = z.discriminatedUnion('ok', [
@@ -334,5 +342,7 @@ export const WriteToolInfoSchema = z.strictObject({
   policyRev: z.int().min(1),
   trusted: z.boolean(),
 })
-/** N40: every `iss` value a sign-in's return carried, in order; two or more is a doubled `iss` (refused by the hub). */
-export const ReturnIssSchema = z.array(z.string().max(2048)).max(4)
+/** N40: every `iss` value a sign-in's return carried, in order, or null for none; two or more is a doubled `iss` (refused by the hub). */
+export const ReturnIssSchema = z.array(z.string().max(2048)).min(1).max(4).nullable()
+/** #674: a return's forwarded fields, both required (contract.ts `ConnectReturn`). */
+export const ConnectReturnSchema = z.strictObject({ actorKind: ConnectionActorKindSchema, iss: ReturnIssSchema })
