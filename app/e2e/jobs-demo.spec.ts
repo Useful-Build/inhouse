@@ -14,7 +14,7 @@ import { expect, fxFor, test, type Theme } from './support/fx.js'
 import { openTraceFrom } from './support/steps.js'
 
 async function start(page: Page, hash: string, theme: Theme = 'light', settings?: Record<string, string>) {
-  await fxFor(page, undefined).seedSaved({ stage: 'Act', scenario: 'Normal', theme }, settings ? { settings } : {})
+  await fxFor(page, undefined).seedSaved({ scenario: 'Normal', theme }, settings ? { settings } : {})
   await page.goto('/?demo' + hash)
 }
 

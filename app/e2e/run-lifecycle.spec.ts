@@ -8,7 +8,7 @@ import type { Page } from '@playwright/test'
 
 async function start(page: Page, fx: Fx, hash = '#/today') {
   await page.clock.install()
-  await fx.seed({ stage: 'Act' })
+  await fx.seed({})
   await page.goto('/?demo' + hash)
 }
 

@@ -3,11 +3,11 @@
 import { expect } from '@playwright/test'
 import type { Page, TestType } from '@playwright/test'
 import { atRest } from './states.js'
-import { mockClient, type Stage } from './support/clients/mock.js'
+import { mockClient } from './support/clients/mock.js'
 
-async function start(page: Page, stage: Stage, scenario: string, hash: string) {
+async function start(page: Page, scenario: string, hash: string) {
   const client = mockClient(page)
-  await client.seed({ stage, scenario })
+  await client.seed({ scenario })
   await client.open(hash)
 }
 const go = (page: Page, h: string) => page.evaluate(x => { location.hash = x }, h)
@@ -18,7 +18,7 @@ const detail = (page: Page, key: string) => page.locator('main dt', { hasText: n
 
 export function pagesPolish(test: TestType<{ page: Page }, object>, size: 'desktop' | 'phone') {
   test(`Tool page (${size}): pausing a tool changes Read, Draft, Access and the suggestions, and Resume brings them back`, async ({ page }) => {
-    await start(page, 'Act', 'Normal', '#/tools/shopify')
+    await start(page, 'Normal', '#/tools/shopify')
     await expect(ability(page, 'read')).toContainText('On')
     await expect(ability(page, 'draft')).toContainText('On')
     await expect(detail(page, 'Access')).toContainText('Read, plus drafts you approve')
@@ -45,8 +45,8 @@ export function pagesPolish(test: TestType<{ page: Page }, object>, size: 'deskt
     await expect(page.locator('[data-tool-example]').first()).toBeVisible()
   })
 
-  test(`Tool disconnected (${size}): Access no longer claims the stage's access`, async ({ page }) => {
-    await start(page, 'Act', 'Tool disconnected', '#/tools/gorgias')
+  test(`Tool disconnected (${size}): Access no longer claims read access`, async ({ page }) => {
+    await start(page, 'Tool disconnected', '#/tools/gorgias')
     await expect(ability(page, 'read')).toContainText('Off')
     await expect(detail(page, 'Access')).toContainText('None until the login is renewed.')
     // A person's pause on top of the broken login shows both facts.
@@ -61,7 +61,7 @@ export function pagesPolish(test: TestType<{ page: Page }, object>, size: 'deskt
       page.on('console', m => { if (m.type() === 'error') errors.push(m.text()) })
       page.on('pageerror', e => errors.push(e.message))
       const firstDay = scenario === 'First day'
-      await start(page, 'Act', scenario, '#/routines')
+      await start(page, scenario, '#/routines')
       const main = page.locator('main')
       // Routines: the team's own on day one (none run yet), a waiting note while loading.
       if (firstDay) {
@@ -102,7 +102,7 @@ export function pagesPolish(test: TestType<{ page: Page }, object>, size: 'deskt
   }
 
   test(`Routines (${size}): a run from Run now lands in Last runs with its result, for two routines, and survives a reload`, async ({ page }) => {
-    await start(page, 'Act', 'Normal', '#/routines')
+    await start(page, 'Normal', '#/routines')
     await expect(page.getByRole('heading', { level: 1, name: 'Routines' })).toBeVisible()
     // The last run sits on its own line under the chips, and the row fits the screen.
     const row = page.getByRole('listitem').filter({ has: page.getByRole('button', { name: 'Morning check', exact: true }) })
@@ -135,7 +135,7 @@ export function pagesPolish(test: TestType<{ page: Page }, object>, size: 'deskt
   })
 
   test(`Routines (${size}): with no last-run note a run says plain "Run now", on the row and in the sheet`, async ({ page }) => {
-    await start(page, 'Act', 'First day', '#/routines')
+    await start(page, 'First day', '#/routines')
     const row = page.getByRole('listitem').filter({ has: page.getByRole('button', { name: 'Morning check', exact: true }) })
     await expect(row).toContainText('Not run yet')
     await page.getByRole('button', { name: 'Morning check', exact: true }).click()
@@ -150,7 +150,7 @@ export function pagesPolish(test: TestType<{ page: Page }, object>, size: 'deskt
   })
 
   test(`Morning check (${size}): Last runs shows filled counts, not placeholders`, async ({ page }) => {
-    await start(page, 'Act', 'Normal', '#/routines')
+    await start(page, 'Normal', '#/routines')
     await page.getByRole('button', { name: 'Morning check', exact: true }).click()
     const runs = page.getByRole('dialog', { name: 'Morning check' }).getByRole('list', { name: 'Last runs' })
     await expect(runs.getByRole('listitem').first()).toBeVisible()

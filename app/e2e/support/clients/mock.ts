@@ -4,7 +4,7 @@ import { readFileSync } from 'node:fs'
 import type { Page } from '@playwright/test'
 import type { Fx, Names, Restage, Saved, Seed, SavedDemo, Theme } from '../fx.js'
 
-export type { Names, Seed, Stage, Theme } from '../fx.js'
+export type { Names, Seed, Theme } from '../fx.js'
 
 /** What the mock keeps in the browser. Never change these: a returning visitor keeps their demo. */
 const KEYS = {
@@ -74,8 +74,8 @@ function applySeed({ id, entries, once, clear, stampStart }: Script) {
   if (once) sessionStorage.setItem(mark, '1')
 }
 
-const switches = ({ stage, scenario = 'Normal', demo }: Restage) => ({
-  [KEYS.switches]: JSON.stringify({ stage, scenario, ambient: demo?.ambient ?? 'Off', animateMark: demo?.animateMark ?? false }),
+const switches = ({ scenario = 'Normal', demo }: Restage) => ({
+  [KEYS.switches]: JSON.stringify({ scenario, ambient: demo?.ambient ?? 'Off', animateMark: demo?.animateMark ?? false }),
 })
 
 /**
@@ -100,7 +100,7 @@ export function mockClient(page: Page, baseURL?: string): Fx & { demoStartedAt()
   }
   const seedOnce = async (s: Seed, saved?: SavedDemo) => {
     const st = stateOf(page)
-    if (st.seeded) throw new Error('fx.seed: this page was already seeded. Seed once per page; use fx.restage to change the stage later, or fx.reset first.')
+    if (st.seeded) throw new Error('fx.seed: this page was already seeded. Seed once per page; use fx.restage to change the scenario later, or fx.reset first.')
     st.seeded = true
     const stored: Record<string, string> = switches(s)
     if (s.theme) stored[KEYS.theme] = s.theme

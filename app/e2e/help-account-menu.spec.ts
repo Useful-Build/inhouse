@@ -6,7 +6,7 @@ import { expect, fxFor, test } from './support/fx.js'
 import type { Page } from '@playwright/test'
 
 async function start(page: Page, hash: string) {
-  await fxFor(page, undefined).seed({ stage: 'Act' })
+  await fxFor(page, undefined).seed({})
   await page.goto('/?demo' + hash)
   await expect(page.getByRole('heading', { level: 1 }).first()).toBeVisible()
 }
@@ -108,7 +108,8 @@ test('Account menu: Your Inhouse team opens the team window with its open reques
   await accountItem(page, 'Your settings')
   await expect(page.getByRole('heading', { level: 1, name: 'General', exact: true })).toBeVisible()
   await expect(page).toHaveURL(/#\/settings\/you-general$/)
+  // Stage and plan, where Team settings opened in the demo, left with its stages (decision A13): the first team page now.
   await accountItem(page, 'Team settings')
-  await expect(page.getByRole('heading', { level: 1, name: 'Stage and plan', exact: true })).toBeVisible()
-  await expect(page).toHaveURL(/#\/settings\/team-plan$/)
+  await expect(page.getByRole('heading', { level: 1, name: 'Inhouse agent', exact: true })).toBeVisible()
+  await expect(page).toHaveURL(/#\/settings\/team-agent$/)
 })

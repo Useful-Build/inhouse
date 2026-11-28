@@ -1,13 +1,11 @@
-// Settings > Notifications and Memory (your own pages), at 1440. Each control does what it says; the picks survive a
-// reload and Reset demo clears them. Memory is available at Watch and Notifications unlocks at Act. The phone twin is
-// settings-pages-phone.spec.ts.
+// Settings > Memory (your own page), at 1440. Each control does what it says; the picks survive a reload and Reset demo
+// clears them. The Notifications page left the demo with its stages (decision A13, option B), as it left the product;
+// Always allowed is asking-demo.spec.ts's. The phone twin is settings-pages-phone.spec.ts.
 import { expect, test, type Fx } from './support/fx.js'
 import type { Page } from '@playwright/test'
 
-type Stage = 'Watch' | 'Act' | 'Run'
-
-async function start(page: Page, fx: Fx, stage: Stage, hash: string) {
-  await fx.seed({ stage })
+async function start(page: Page, fx: Fx, hash: string) {
+  await fx.seed({})
   await page.goto('/?demo' + hash)
   await expect(page.getByRole('heading', { level: 1 }).first()).toBeVisible()
 }
@@ -15,84 +13,37 @@ async function start(page: Page, fx: Fx, stage: Stage, hash: string) {
 const main = (page: Page) => page.getByRole('main')
 const toast = (page: Page, text: string) => page.locator('[data-toast]').filter({ hasText: text })
 const goTo = (page: Page, tab: string) => page.evaluate(t => { location.hash = `#/settings/${t}` }, tab)
-const combo = (page: Page, name: string) => main(page).getByRole('combobox', { name, exact: true })
 const sw = (page: Page, name: string) => main(page).getByRole('switch', { name, exact: true })
 
-/** Reset demo (Act and Normal come back, Today opens). */
+/** Reset demo (Normal comes back, Today opens). */
 async function resetDemo(page: Page) {
   await page.getByRole('button', { name: /Demo switches/ }).click()
   const switches = page.getByRole('dialog', { name: 'Demo switches' })
   await switches.getByRole('button', { name: 'Reset demo' }).click()
-  await expect(page.getByRole('heading', { level: 1 }).first()).toContainText('things need you')
+  await expect(page.getByRole('heading', { level: 1 }).first()).toContainText('left to approve today')
   await page.getByRole('button', { name: 'Close demo switches' }).click()
 }
 
 const PERSONAL = [
   'You like numbers in a table, most urgent first.',
   'You want short answers, with the source for each number.',
-  'You handle supplier emails yourself. Dana handles money.',
+  'You handle supplier questions yourself. Dana handles money.',
 ]
 
-test('At Watch, Notifications is locked and Memory is available', async ({ fx, page }) => {
-  await start(page, fx, 'Watch', '#/settings/you-notif')
-  await expect(page.getByRole('heading', { level: 1, name: 'Notifications', exact: true })).toBeVisible()
-  await expect(main(page).getByRole('combobox', { name: /^Approvals waiting/ })).toBeDisabled()
-  await expect(main(page).getByRole('combobox', { name: /^Send alerts to/ })).toBeDisabled()
-  await expect(main(page).getByRole('switch', { name: 'Weekly report' })).toBeDisabled()
-
-  await goTo(page, 'you-memory')
+test('Memory: the lines, Forget and the learn switch are available, and privacy is said as a fact', async ({ fx, page }) => {
+  await start(page, fx, '#/settings/you-memory')
   await expect(page.getByRole('heading', { level: 1, name: 'Memory', exact: true })).toBeVisible()
   for (const line of PERSONAL) await expect(main(page).getByText(line, { exact: true })).toBeVisible()
   const forgets = main(page).getByRole('button', { name: 'Forget', exact: true })
   await expect(forgets).toHaveCount(3)
   for (const forget of await forgets.all()) await expect(forget).toBeEnabled()
   await expect(sw(page, 'Learn from my chats')).toBeEnabled()
-  // Privacy is a fact, not a control: it shows at every stage.
+  // Privacy is a fact, not a control.
   await expect(main(page).getByText('Private', { exact: true })).toBeVisible()
 })
 
-test('Notifications: alert timing, where alerts go and both switches change, survive a reload and Reset demo clears them', async ({ fx, page }) => {
-  await start(page, fx, 'Act', '#/settings/you-notif')
-  await expect(combo(page, 'Approvals waiting: Right away')).toBeVisible()
-  await expect(combo(page, 'Send alerts to: Slack')).toBeVisible()
-  await expect(sw(page, 'Slack')).toBeChecked()
-  await expect(sw(page, 'Weekly report')).toBeChecked()
-
-  // Each dropdown lists its real choices and saves the one picked.
-  await combo(page, 'Approvals waiting: Right away').click()
-  await expect(page.getByRole('listbox', { name: 'Approvals waiting' }).getByRole('option')).toHaveText([/^Right away(\s*check)?$/, /^Once an hour(\s*check)?$/, /^Once a day(\s*check)?$/])
-  await page.getByRole('option', { name: 'Once a day' }).click()
-  await expect(combo(page, 'Approvals waiting: Once a day')).toBeVisible()
-  await combo(page, 'Send alerts to: Slack').click()
-  await expect(page.getByRole('listbox', { name: 'Send alerts to' }).getByRole('option')).toHaveText([/^Email(\s*check)?$/, /^Slack(\s*check)?$/, /^Email and Slack(\s*check)?$/, /^In the app only(\s*check)?$/])
-  await page.getByRole('option', { name: 'In the app only' }).click()
-  await expect(combo(page, 'Send alerts to: In the app only')).toBeVisible()
-  await sw(page, 'Slack').click()
-  await expect(sw(page, 'Slack')).not.toBeChecked()
-  await sw(page, 'Weekly report').click()
-  await expect(sw(page, 'Weekly report')).not.toBeChecked()
-
-  // A reload keeps every pick.
-  await page.reload()
-  await expect(combo(page, 'Approvals waiting: Once a day')).toBeVisible()
-  await expect(combo(page, 'Send alerts to: In the app only')).toBeVisible()
-  await expect(sw(page, 'Slack')).not.toBeChecked()
-  await expect(sw(page, 'Weekly report')).not.toBeChecked()
-
-  // Reset demo puts the defaults back, and a reload keeps them.
-  await resetDemo(page)
-  await goTo(page, 'you-notif')
-  await expect(combo(page, 'Approvals waiting: Right away')).toBeVisible()
-  await expect(combo(page, 'Send alerts to: Slack')).toBeVisible()
-  await expect(sw(page, 'Slack')).toBeChecked()
-  await expect(sw(page, 'Weekly report')).toBeChecked()
-  await page.reload()
-  await expect(combo(page, 'Send alerts to: Slack')).toBeVisible()
-  await expect(sw(page, 'Weekly report')).toBeChecked()
-})
-
 test('Memory: Forget (with Undo) and the learn switch work, survive a reload and Reset demo clears them', async ({ fx, page }) => {
-  await start(page, fx, 'Act', '#/settings/you-memory')
+  await start(page, fx, '#/settings/you-memory')
   const forgets = main(page).getByRole('button', { name: 'Forget', exact: true })
   const learn = sw(page, 'Learn from my chats')
   await expect(forgets).toHaveCount(3)

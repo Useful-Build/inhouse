@@ -5,7 +5,7 @@ import type { Page } from '@playwright/test'
 import { expect, fxFor, test, type Theme } from './support/fx.js'
 
 async function start(page: Page, hash: string, theme: Theme) {
-  await fxFor(page, undefined).seed({ stage: 'Act', scenario: 'Normal', theme })
+  await fxFor(page, undefined).seed({ scenario: 'Normal', theme })
   await page.goto('/?demo' + hash)
 }
 const settled = (page: Page) => page.evaluate(() => Promise.all(document.getAnimations().filter(a => a.timeline instanceof DocumentTimeline && a.effect?.getTiming().iterations !== Infinity).map(a => a.finished)))

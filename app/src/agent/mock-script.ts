@@ -6,7 +6,6 @@ import { listNames } from '../state/derive'
 import type { RoutineCard, SeedTurn, SkillCard, SkillDef, ToolsData, MessagePart, Instant, ChatThread, AgentState, AgentData, DemoContext } from './types'
 import type { Script, RunInfo } from './mock'
 import type { TraceKey } from './data'
-import { stageIndex } from './types'
 
 const cap1 = (s: string) => s.charAt(0).toUpperCase() + s.slice(1)
 /** A question as typed, for matching a seeded one: case, spaces and the closing punctuation don't count. */
@@ -131,11 +130,10 @@ const nameOf = (q: string) => {
 }
 
 /** A routine from a request, or null when it doesn't say the day and time clearly enough: the agent asks for them. */
-function routineFromRequest(q: string, stage: number, id: string, now: Date): RoutineCard | null {
-  const script = chatScript.scripted.find(x => x.match.startsWith('every|'))! as unknown as { example: { ask: string; routine: { name: string; freq: string; day: string; time: string } }; ActRun: { type: string; note?: Record<string, string> }[] }
-  const notes = script.ActRun.find(x => x.type === 'routine')?.note
-  if (!notes) throw new Error('chat-script.json: the routine reply has no routine part with notes.')
-  const note = stage === 2 ? notes.Run : notes.Act
+function routineFromRequest(q: string, id: string, now: Date): RoutineCard | null {
+  const script = chatScript.scripted.find(x => x.match.startsWith('every|'))! as unknown as { example: { ask: string; routine: { name: string; freq: string; day: string; time: string } }; reply: { type: string; note?: string }[] }
+  const note = script.reply.find(x => x.type === 'routine')?.note
+  if (!note) throw new Error('chat-script.json: the routine reply has no routine part with a note.')
   let name: string, freq: string, day: string, at: Clock | null
   if (q.trim().toLowerCase() === script.example.ask.toLowerCase()) {
     let time: string
@@ -174,9 +172,9 @@ const isRequest = (q: string) => !ASKS_TO_BE_TOLD.test(q.trim()) && (POLITE.test
 const isScheduleRequest = (q: string) => isRequest(q) && SCHEDULE.test(q)
 const ASK_FOR_TIME = 'What time should it run? Tell me the day and the time, like "every Friday at 9\u00a0AM", and I\'ll set it up.'
 
-function skillFromRequest(q: string, stage: number, tools: ToolsData): SkillCard {
-  const modes = (chatScript.scripted.find(x => x.match.endsWith('skill'))! as unknown as { reply: { type: string; mode?: Record<string, string> }[] }).reply.find(x => x.type === 'skill')?.mode
-  if (!modes) throw new Error('chat-script.json: the skill reply has no skill part with modes.')
+function skillFromRequest(q: string, tools: ToolsData): SkillCard {
+  const mode = (chatScript.scripted.find(x => x.match.endsWith('skill'))! as unknown as { reply: { type: string; mode?: string }[] }).reply.find(x => x.type === 'skill')?.mode
+  if (!mode) throw new Error('chat-script.json: the skill reply has no skill part with a mode.')
   // A skill's name and description are a few words: past 500 characters is never needed, and keeps the trim below quick on a long paste.
   const m = /\bskill\b\s*(?:that|to|which|for|who)?\s*(.*)$/i.exec(q.slice(0, 500))
   // "Can you build a skill?" names nothing after the word: the description is the request itself, never a lone ".".
@@ -187,7 +185,7 @@ function skillFromRequest(q: string, stage: number, tools: ToolsData): SkillCard
     name: shortName(rest, 'New skill'),
     desc,
     tools: toolNames.length ? toolNames.join(' · ') : 'Shopify',
-    mode: ['Watch', 'Act', 'Run'].map(s => modes[s])[stage],
+    mode,
   }
 }
 
@@ -288,7 +286,6 @@ export const BROKEN_DIAGRAM_ANSWER = [
 
 /** A seeded turn's own answer when the question is one a chat already asked: this chat's first, then any chat's. */
 export function seeded(h: ScriptHost, q: string, chatId: string): Script | null {
-  const stage = h.demo.stage
   const want = norm(q)
   const order = [...h.k.chats.filter(c => c.id === chatId), ...h.k.chats.filter(c => c.id !== chatId)]
   for (const c of order) {
@@ -299,7 +296,7 @@ export function seeded(h: ScriptHost, q: string, chatId: string): Script | null 
       for (let j = t + 1; j < c.turns.length; j++) {
         const a = c.turns[j]
         if (a.role === 'user') break
-        if (!a.stage || a.stage === stage) answers.push(a)
+        answers.push(a)
       }
       if (!answers.length) continue
       const fb = chatScript.fallback
@@ -418,7 +415,6 @@ const webScript = (h: ScriptHost, q: string): Script | null => {
 }
 
 export function buildScript(h: ScriptHost, q: string, chatId: string): Script {
-  const S = stageIndex(h.demo.stage)
   const sc = chatScript.scripted
   const pick = (match: string) => {
     const e = sc.find(x => x.match === match)
@@ -485,7 +481,7 @@ export function buildScript(h: ScriptHost, q: string, chatId: string): Script {
   // The same guard as routines: "Any new skill ideas?" is a question, not a request to make one.
   if (isRequest(q) && /\b(create|make|build|add|new|teach)\b.{0,14}\bskill\b/i.test(q)) {
     const s = pick('(create|make|build|add|new|teach) … skill') as { thinking: string[]; delayMs: number; reply: { type: string; text?: string }[]; trace: string }
-    const skill = skillFromRequest(q, S, h.k.tools)
+    const skill = skillFromRequest(q, h.k.tools)
     // The answer's footer links its steps, so the reply carries no work row of its own (one link per answer).
     return {
       thinking: s.thinking, delayMs: s.delayMs, trace: h.k.traceKey(s.trace),
@@ -501,17 +497,14 @@ export function buildScript(h: ScriptHost, q: string, chatId: string): Script {
       },
     }
   }
-  const r = pick('every|each|daily|weekly|remind|routine|schedule') as { match: string; thinking: string[]; delayMs: number; Watch: { type: string; text: string }[]; ActRun: { type: string; text?: string }[]; trace: string }
+  const r = pick('every|each|daily|weekly|remind|routine|schedule') as { match: string; thinking: string[]; delayMs: number; reply: { type: string; text?: string }[]; trace: string }
   if (isScheduleRequest(q)) {
-    if (S === 0) {
-      return { thinking: r.thinking, delayMs: r.delayMs, trace: 'generic', parts: [text(r.Watch[0].text), { type: 'notInThisStage', text: r.Watch[1].text }] }
-    }
     // A schedule with no time (or no day, or a time that can't be) makes nothing yet: the agent asks.
-    const routine = routineFromRequest(q, S, '', demoNow(h.startedAt))
+    const routine = routineFromRequest(q, '', demoNow(h.startedAt))
     if (!routine) return { thinking: r.thinking.slice(0, 1), delayMs: fb.delayMs, trace: 'generic', parts: [text(ASK_FOR_TIME)] }
     return {
       thinking: r.thinking, delayMs: r.delayMs, trace: h.k.traceKey(r.trace),
-      parts: [text(r.ActRun.find(x => x.type === 'text')!.text!), { type: 'routine', routine }],
+      parts: [text(r.reply.find(x => x.type === 'text')!.text!), { type: 'routine', routine }],
     }
   }
   if (/stuck/i.test(q)) {

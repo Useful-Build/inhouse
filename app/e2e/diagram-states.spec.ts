@@ -10,7 +10,7 @@ const DIAGRAM_Q = 'Show me a diagram of how a refund moves through the team'
 const ROUGH_DIAGRAM_Q = 'Show me a rough diagram of the returns queue'
 
 async function ask(page: Page, question: string) {
-  await fxFor(page, undefined).seed({ stage: 'Act', scenario: 'Normal', theme: 'light', demo: { ambient: 'Always' } })
+  await fxFor(page, undefined).seed({ scenario: 'Normal', theme: 'light', demo: { ambient: 'Always' } })
   await page.goto('/?demo#/today')
   await page.getByRole('textbox', { name: 'Ask Inhouse' }).fill(question)
   await page.keyboard.press('Enter')

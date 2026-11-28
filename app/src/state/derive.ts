@@ -13,7 +13,8 @@ export interface Ctx {
   /**
    * Stage 1 M2-I: the product build, which has no stages (decision "Master plan: one agent"). Its view is pinned to the
    * Act view (`PRODUCT_STAGE`) until M5: nothing is locked by a stage or tagged with one, and what only a later stage
-   * would offer is left out. Absent in the demo, where the Stage switch still drives everything.
+   * would offer is left out. The demo has no stages either since decision A13 (option B): store.ts `useCtx` sets this
+   * for both builds. The flag stays so a pure selector's test can still ask for an S-driven view.
    */
   noStages?: boolean
 }
@@ -21,7 +22,7 @@ export interface Ctx {
 /** Stage 1 M2-I: the stage the product's view is pinned to until M5 (today's Act view). The `stage` setting stays, unread. */
 export const PRODUCT_STAGE = 'Act' as const
 
-/** Whether a stage holds back something that needs `need`: the demo's Stage switch only. The product has no stages. */
+/** Whether a stage holds back something that needs `need`: never in the app (no build has stages, `noStages`). */
 export const stageLocked = (ctx: Pick<Ctx, 'S' | 'noStages'>, need: number): boolean => !ctx.noStages && ctx.S < need
 
 /** The channel the team hears from the agent on at a stage: the first one whose stage is reached. None: no channel wording. */

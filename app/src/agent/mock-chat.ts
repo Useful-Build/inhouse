@@ -115,7 +115,6 @@ export class ChatEngine {
         out.push({ id: `${turnId}.u`, role: 'user', text: t.text, turnId, runId, pos: out.length, at: c.at })
         return
       }
-      if (t.stage !== undefined && t.stage !== this.h.demo.stage) return
       for (const part of t.parts) out.push({ id: `${turnId}.${n++}`, role: 'agent', part, trace: t.trace, model: t.model, at: c.at, turnId, runId, pos: out.length })
     })
     return out

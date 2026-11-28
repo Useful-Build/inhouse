@@ -12,14 +12,13 @@ const JACKET = 'Trail Shell Jacket (M, Olive) is oversold by 5'
 const PAYOUT = 'Amazon paid out $1,240 less than expected'
 const KESTREL = 'Ridge 30L Pack runs out in 9 days'
 const PO = 'PO-1187 from Kestrel is 6 days late'
-const RETURNS = '11 returns are not restocked'
 
 const card = (page: Page, title: string) => page.getByRole('article', { name: title, exact: true })
 const panel = (page: Page) => page.getByRole('dialog')
 const draft = (page: Page, title: string) => page.locator('[data-slot=card]').filter({ has: page.getByRole('heading', { level: 2, name: title, exact: true }) })
 
-async function start(page: Page, fx: Fx, stage: 'Watch' | 'Act' | 'Run' = 'Act', theme: 'light' | 'dark' = 'light') {
-  await fx.seed({ stage, theme })
+async function start(page: Page, fx: Fx, theme: 'light' | 'dark' = 'light') {
+  await fx.seed({ theme })
   await page.emulateMedia({ colorScheme: theme })
   await page.goto('/?demo#/today')
   await expect(page.getByRole('heading', { level: 1 }).first()).toBeVisible()
@@ -30,12 +29,6 @@ async function goApprovals(page: Page) {
   if (phone()) await page.getByRole('button', { name: 'Menu' }).click()
   await page.getByRole('complementary', { name: 'Sidebar' }).getByRole('button', { name: /^Approvals/ }).click()
   await expect(page.getByRole('heading', { level: 1, name: 'Approvals' })).toBeVisible()
-}
-
-async function goToday(page: Page) {
-  if (phone()) await page.getByRole('button', { name: 'Menu' }).click()
-  await page.getByRole('complementary', { name: 'Sidebar' }).getByRole('button', { name: /^Today/ }).click()
-  await expect(card(page, JACKET)).toBeVisible()
 }
 
 test('S1: Today shows each problem with its drafted fix, urgent ones marked, and a low-risk fix approves in place', async ({ fx, page }) => {
@@ -115,7 +108,7 @@ test('S3: Approvals lists each draft as one card with its risk, and the review w
   await start(page, fx)
   await goApprovals(page)
   await expect(page.getByRole('button', { name: /^Approve all low-risk\s*3$/ })).toBeVisible()
-  const claim = draft(page, 'Open a reimbursement case')
+  const claim = draft(page, 'Ask Dana to claim $1,240 from Amazon')
   await expect(claim.getByText('Urgent', { exact: true })).toBeVisible()
   await expect(claim.getByText('Claims $1,240', { exact: true })).toBeVisible()
   await expect(claim).toContainText('From Amazon · Xero')
@@ -148,7 +141,7 @@ test('S3: Approvals lists each draft as one card with its risk, and the review w
 })
 
 test('S4: In dark, the cards and the panel keep the draft sheet and the document readable', async ({ fx, page }) => {
-  await start(page, fx, 'Act', 'dark')
+  await start(page, fx, 'dark')
   await expect(card(page, JACKET)).toContainText('Draft · Shopify and 5 emails')
   await card(page, KESTREL).scrollIntoViewIfNeeded()
   await card(page, KESTREL).getByRole('button', { name: 'Ridge 30L Pack runs out in 9 days', exact: true }).click()
@@ -159,39 +152,4 @@ test('S4: In dark, the cards and the panel keep the draft sheet and the document
   await expect(draft(page, 'Reorder 600 Ridge 30L Packs').getByText('Spends $9,600', { exact: true })).toBeVisible()
 })
 
-test('S5: Watch shows what the agent suggests and Ask starts a chat; in Run a handled card stays muted and its window offers Undo', async ({ fx, page }) => {
-  await start(page, fx, 'Watch')
-  await expect(card(page, JACKET)).toContainText(/Suggested:/)
-  await card(page, KESTREL).getByRole('button', { name: KESTREL, exact: true }).click()
-  await expect(panel(page).getByRole('list', { name: 'Progress' })).toHaveCount(0)
-  await expect(panel(page)).toContainText('Your Inhouse agent suggests')
-  await expect(panel(page)).toContainText('Reorder 600 from Kestrel Supply today.')
-  await expect(panel(page)).toContainText("For now your agent only suggests. It doesn't send anything.")
-  // Watch's footer: Ask Inhouse, then More holding the ways to set it aside (no draft, so no Don't send).
-  await expect(panel(page).getByRole('button', { name: 'Set aside', exact: true })).toHaveCount(0)
-  await panel(page).getByRole('button', { name: 'More', exact: true }).click()
-  const more = page.getByRole('menu', { name: 'More actions' })
-  await expect(more.getByRole('menuitem')).toHaveCount(2)
-  await expect(more.getByRole('menuitem').nth(0)).toHaveAccessibleName('Snooze until tomorrow')
-  await expect(more.getByRole('menuitem').nth(1)).toHaveAccessibleName('Not a problem')
-  // Escape closes only the menu; the window stays.
-  await page.keyboard.press('Escape')
-  await expect(more).toHaveCount(0)
-  await expect(panel(page)).toBeVisible()
-  // Ask Inhouse starts a chat about the problem.
-  await panel(page).getByRole('button', { name: 'Ask Inhouse', exact: true }).click()
-  await expect(panel(page)).toHaveCount(0)
-  await expect(page).toHaveURL(/#\/chats\/(?!new$|all$)[^/]+$/)
-
-  await fx.restage({ stage: 'Run' })
-  await page.reload()
-  await goToday(page)
-  const returns = card(page, RETURNS)
-  await returns.scrollIntoViewIfNeeded()
-  await expect(returns).toContainText('Handled by Inhouse agent')
-  await expect(returns.getByText('Urgent', { exact: true })).toHaveCount(0)
-  await returns.getByRole('button', { name: RETURNS, exact: true }).click()
-  await expect(panel(page)).toContainText('Handled by Inhouse agent')
-  await expect(panel(page).getByRole('button', { name: 'Undo', exact: true })).toBeVisible()
-  await expect(panel(page).getByRole('button', { name: "Don't send" })).toHaveCount(0)
-})
+// S5 (Watch's suggestions, Run's handled cards) left with the demo's stages (decision A13, option B).

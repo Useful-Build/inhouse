@@ -9,12 +9,12 @@
 //  5. the setup list comes out in another order, under a rebuilt key, or with other words than the demo showed;
 //  6. a tool being set up needs a connected or going-live date to show its row (a real first-day tool has neither);
 //  7. a setup entry for a tool the data doesn't describe is dropped silently;
-//  8. the demo's screens change: a flag differs from what the scenario name gave in some stage and scenario.
+//  8. the demo's screens change: a flag differs from what the scenario name gave in some scenario.
 import { fc, test } from '@fast-check/vitest'
 import { describe, expect, vi } from 'vitest'
 import { HttpAgent } from '../agent/http/client'
-import { SCENARIOS, STAGES, stageIndex } from '../agent/types'
-import type { AgentData, Instant, Scenario, Stage, StageIndex, ToolDetail, ToolsData } from '../agent/types'
+import { SCENARIOS } from '../agent/types'
+import type { AgentData, Instant, Scenario, StageIndex, ToolDetail, ToolsData } from '../agent/types'
 import { flags, goingLive, isFirstDay, noToolsYet, pendingIds, setupRows, todayCopy, toolState, toolView } from './derive'
 import type { Ctx } from './derive'
 import { fmtWeekday } from '../lib/format'
@@ -222,7 +222,7 @@ describe('the setup list, by tool key', () => {
   })
 })
 
-// ---------- the demo: every stage and scenario shows what the scenario name used to decide ----------
+// ---------- the demo: every scenario shows what the scenario name used to decide ----------
 
 // The mock reads and writes localStorage when it starts: an empty one in memory, so it starts fresh and quietly.
 const store = new Map<string, string>()
@@ -233,9 +233,10 @@ vi.stubGlobal('localStorage', {
 })
 const { MockAgent } = await import('../agent/mock')
 const mock = new MockAgent()
-const demoCtx = (stage: Stage, scenario: Scenario): Ctx => {
-  mock.setDemo({ stage, scenario })
-  return { S: stageIndex(stage), agent: mock.getSnapshot(), data: mock.read() }
+/** The demo's view of a scenario: the product's (Act, no stages; decision A13). */
+const demoCtx = (scenario: Scenario): Ctx => {
+  mock.setDemo({ scenario })
+  return { S: 1, agent: mock.getSnapshot(), data: mock.read(), noStages: true }
 }
 /** `goingLive` before day one's rule: the first tool being connected that has a going-live date. */
 const firstWithLiveBy = (ctx: Ctx): { name: string; by: string } | null => {
@@ -246,11 +247,11 @@ const firstWithLiveBy = (ctx: Ctx): { name: string; by: string } | null => {
 const SETUP_BEFORE: [string, string][] = [['Shopify', 'Connecting today'], ['Amazon', 'Tomorrow'], ['ShipBob', 'Tomorrow'], ['Xero', 'This week'], ['Gorgias', 'This week'], ['Meta Ads', 'This week']]
 /** The key Today rebuilt from a setup name before the reshape. */
 const keyBefore = (name: string) => name.toLowerCase().replace(/\s+/g, '-')
-const everyDemo = STAGES.flatMap(stage => SCENARIOS.map(scenario => [stage, scenario] as [Stage, Scenario]))
+const everyDemo = SCENARIOS
 
 describe('the demo shows what the scenario name used to decide', () => {
-  test.each(everyDemo)('the flags in %s, %s', (stage, scenario) => {
-    const ctx = demoCtx(stage, scenario)
+  test.each(everyDemo)('the flags in %s', scenario => {
+    const ctx = demoCtx(scenario)
     const f = flags(ctx)
     expect(f.isFirst).toBe(scenario === 'First day')
     expect(f.isLoading).toBe(scenario === 'Loading')
@@ -259,15 +260,15 @@ describe('the demo shows what the scenario name used to decide', () => {
     expect(f.cap).toBe(scenario === 'Cap reached')
   })
 
-  test.each(everyDemo)('the "goes live by" line in %s, %s', (stage, scenario) => {
-    const ctx = demoCtx(stage, scenario)
+  test.each(everyDemo)('the "goes live by" line in %s', scenario => {
+    const ctx = demoCtx(scenario)
     // The sample data has a tool with a going-live date in every scenario, so only day one's rule hides the line.
     expect(firstWithLiveBy(ctx)).not.toBeNull()
     expect(goingLive(ctx)).toEqual(scenario === 'First day' ? null : firstWithLiveBy(ctx))
   })
 
-  test.each(everyDemo)('the setup list in %s, %s', (stage, scenario) => {
-    const ctx = demoCtx(stage, scenario)
+  test.each(everyDemo)('the setup list in %s', scenario => {
+    const ctx = demoCtx(scenario)
     const rows = setupRows(ctx.data)
     if (scenario !== 'First day') { expect(rows).toEqual([]); return }
     expect(rows.map(r => [r.name, r.when])).toEqual(SETUP_BEFORE)

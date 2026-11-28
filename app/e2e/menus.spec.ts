@@ -6,11 +6,12 @@ import { mkdirSync } from 'node:fs'
 import { atRest } from './states.js'
 
 const OUT = process.env.VERIFY_DIR ?? 'e2e-artifacts'
-const TITLES: Record<string, string> = { 'you-general': 'General', 'you-notif': 'Notifications', 'you-memory': 'Memory', 'team-plan': 'Stage and plan', 'team-agent': 'Inhouse agent', 'team-memory': 'Team memory', 'team-members': 'Members', 'team-approvals': 'Who approves what', 'team-limits': 'Run limits', 'team-spend': 'Spending cap', 'team-data': 'Data and access', 'team-audit': 'Audit log' }
-const PAGES = ['you-general', 'you-notif', 'you-memory', 'team-plan', 'team-agent', 'team-memory', 'team-members', 'team-approvals', 'team-limits', 'team-spend', 'team-data', 'team-audit']
+// The demo has no Notifications, Stage and plan, Who approves what or Run limits page since decision A13 (option B).
+const TITLES: Record<string, string> = { 'you-general': 'General', 'you-memory': 'Memory', 'you-permissions': 'Always allowed', 'team-agent': 'Inhouse agent', 'team-memory': 'Team memory', 'team-members': 'Members', 'team-spend': 'Spending cap', 'team-data': 'Data and access', 'team-audit': 'Audit log' }
+const PAGES = ['you-general', 'you-memory', 'you-permissions', 'team-agent', 'team-memory', 'team-members', 'team-spend', 'team-data', 'team-audit']
 
 async function start(page: Page, hash: string) {
-  await fxFor(page, undefined).seed({ stage: 'Run', demo: { ambient: 'Always' } })
+  await fxFor(page, undefined).seed({ demo: { ambient: 'Always' } })
   await page.goto('/?demo' + hash)
 }
 
@@ -83,8 +84,9 @@ for (const width of [1440, 390]) {
           void r
         }
       }
-      // On a phone only Your settings has dropdowns (Theme, Language, Text size, Time zone and the two alert ones).
-      expect(opened, 'dropdowns opened').toBeGreaterThan(phone ? 3 : 15)
+      // On a phone only Your settings has dropdowns (Theme, Language, Text size, Time zone). 14 on desktop since the
+      // Notifications, Who approves what and Run limits pages (8 of the 22 before) left with decision A13.
+      expect(opened, 'dropdowns opened').toBeGreaterThan(phone ? 3 : 13)
       test.info().annotations.push({ type: 'dropdowns opened', description: String(opened) })
       test.info().annotations.push({ type: 'widest', description: `${widestPage} #${widestIdx} ${Math.round(widest)}px` })
 

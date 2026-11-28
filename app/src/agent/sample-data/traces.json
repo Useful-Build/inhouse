@@ -12,8 +12,7 @@
   },
   "usedBy": {
     "stuck": "answer to \"Which orders are stuck over 3 days?\"",
-    "routine": "the follow-up that drafts a message and creates a routine (Act and Run)",
-    "stuck-watch": "the same follow-up in Watch",
+    "routine": "the follow-up that drafts a message and creates a routine",
     "morning": "the 6:00 AM morning check",
     "draft": "drafting one fix (opened from Activity)",
     "generic": "an answer from this morning's findings, and the off-script answer",
@@ -33,7 +32,10 @@
     "stuck": {
       "title": "Which orders are stuck over 3 days?",
       "durationSeconds": 9.4,
-      "cost": { "minor": 4, "currency": "USD" },
+      "cost": {
+        "minor": 4,
+        "currency": "USD"
+      },
       "tokens": "18.2k",
       "steps": [
         {
@@ -97,7 +99,10 @@
     "routine": {
       "title": "Chase ShipBob on #4821, and check for stuck orders every morning",
       "durationSeconds": 41,
-      "cost": { "minor": 21, "currency": "USD" },
+      "cost": {
+        "minor": 21,
+        "currency": "USD"
+      },
       "tokens": "61.4k",
       "steps": [
         {
@@ -133,7 +138,7 @@
           "detail": "Output: anyone who approves"
         },
         {
-          "label": "Drafted the message to ShipBob",
+          "label": "Drafted the post to #ops-alerts",
           "kind": "model",
           "startSeconds": 3.4,
           "endSeconds": 9.8,
@@ -141,7 +146,7 @@
           "detail": "Sonnet 5.5 · in your tone · waits for approval"
         },
         {
-          "label": "Message to ShipBob waits for approval",
+          "label": "The post waits for approval",
           "kind": "approval",
           "startSeconds": 9.8,
           "endSeconds": 41,
@@ -185,7 +190,10 @@
     "morning": {
       "title": "Morning check",
       "durationSeconds": 118,
-      "cost": { "minor": 31, "currency": "USD" },
+      "cost": {
+        "minor": 31,
+        "currency": "USD"
+      },
       "tokens": "92.7k",
       "steps": [
         {
@@ -273,7 +281,10 @@
     "draft": {
       "title": "Drafted a fix for your approval",
       "durationSeconds": 14.2,
-      "cost": { "minor": 6, "currency": "USD" },
+      "cost": {
+        "minor": 6,
+        "currency": "USD"
+      },
       "tokens": "24.9k",
       "steps": [
         {
@@ -337,7 +348,10 @@
     "generic": {
       "title": "Answer",
       "durationSeconds": 6.8,
-      "cost": { "minor": 2, "currency": "USD" },
+      "cost": {
+        "minor": 2,
+        "currency": "USD"
+      },
       "tokens": "7.4k",
       "steps": [
         {
@@ -374,66 +388,13 @@
         }
       ]
     },
-    "stuck-watch": {
-      "title": "Chase ShipBob on #4821, and check for stuck orders every morning",
-      "durationSeconds": 8.6,
-      "cost": { "minor": 3, "currency": "USD" },
-      "tokens": "14.6k",
-      "steps": [
-        {
-          "label": "Inhouse agent",
-          "kind": "root",
-          "startSeconds": 0,
-          "endSeconds": 8.6,
-          "depth": 0,
-          "detail": "Request in Chats, in Watch"
-        },
-        {
-          "label": "Understood the request",
-          "kind": "model",
-          "startSeconds": 0,
-          "endSeconds": 1.6,
-          "depth": 1,
-          "detail": "Haiku 5.5 · Watch reads only, so the message is text to copy"
-        },
-        {
-          "label": "ShipBob · status of #4821",
-          "kind": "tool",
-          "startSeconds": 1.7,
-          "endSeconds": 2.5,
-          "depth": 1,
-          "detail": "Output: released Nov 12, not picked"
-        },
-        {
-          "label": "Memory · how you write to suppliers",
-          "kind": "tool",
-          "startSeconds": 2.6,
-          "endSeconds": 2.8,
-          "depth": 1,
-          "detail": "Output: short, signed Northline Outdoor"
-        },
-        {
-          "label": "Wrote the message to copy",
-          "kind": "model",
-          "startSeconds": 2.9,
-          "endSeconds": 8.4,
-          "depth": 1,
-          "detail": "Sonnet 5.5 · nothing sent"
-        },
-        {
-          "label": "Answer",
-          "kind": "answer",
-          "startSeconds": 8.4,
-          "endSeconds": 8.6,
-          "depth": 1,
-          "detail": "Sent to Chats with a note that routines start in Act"
-        }
-      ]
-    },
     "refunds": {
       "title": "Why did refunds jump this week?",
       "durationSeconds": 12.4,
-      "cost": { "minor": 4, "currency": "USD" },
+      "cost": {
+        "minor": 4,
+        "currency": "USD"
+      },
       "tokens": "19.8k",
       "steps": [
         {
@@ -463,7 +424,7 @@
         {
           "label": "Shopify · refunds by product",
           "kind": "tool",
-          "startSeconds": 4.0,
+          "startSeconds": 4,
           "endSeconds": 5.2,
           "depth": 1,
           "detail": "Output: 19 for the Trail Shell Jacket, size M"
@@ -497,7 +458,10 @@
     "refunds-list": {
       "title": "Show me the newest ones.",
       "durationSeconds": 7.9,
-      "cost": { "minor": 3, "currency": "USD" },
+      "cost": {
+        "minor": 3,
+        "currency": "USD"
+      },
       "tokens": "12.1k",
       "steps": [
         {
@@ -553,7 +517,10 @@
     "sizing-note": {
       "title": "Draft a sizing note for the product page.",
       "durationSeconds": 6.2,
-      "cost": { "minor": 2, "currency": "USD" },
+      "cost": {
+        "minor": 2,
+        "currency": "USD"
+      },
       "tokens": "8.3k",
       "steps": [
         {
@@ -575,7 +542,7 @@
         {
           "label": "Memory · your tone",
           "kind": "tool",
-          "startSeconds": 1.0,
+          "startSeconds": 1,
           "endSeconds": 1.1,
           "depth": 1,
           "detail": "Output: friendly and short"
@@ -584,14 +551,14 @@
           "label": "Wrote the note",
           "kind": "model",
           "startSeconds": 1.2,
-          "endSeconds": 6.0,
+          "endSeconds": 6,
           "depth": 1,
           "detail": "Sonnet 5.5"
         },
         {
           "label": "Answer",
           "kind": "answer",
-          "startSeconds": 6.0,
+          "startSeconds": 6,
           "endSeconds": 6.2,
           "depth": 1,
           "detail": "Sent to Chats. Nothing was changed in Shopify"
@@ -601,7 +568,10 @@
     "friday": {
       "title": "What should we feature in Friday's email?",
       "durationSeconds": 10.6,
-      "cost": { "minor": 3, "currency": "USD" },
+      "cost": {
+        "minor": 3,
+        "currency": "USD"
+      },
       "tokens": "13.9k",
       "steps": [
         {
@@ -649,7 +619,10 @@
     "bottle-colors": {
       "title": "Which bottle color sells best?",
       "durationSeconds": 5.4,
-      "cost": { "minor": 2, "currency": "USD" },
+      "cost": {
+        "minor": 2,
+        "currency": "USD"
+      },
       "tokens": "6.9k",
       "steps": [
         {
@@ -679,7 +652,7 @@
         {
           "label": "Wrote the answer",
           "kind": "model",
-          "startSeconds": 2.0,
+          "startSeconds": 2,
           "endSeconds": 5.2,
           "depth": 1,
           "detail": "Sonnet 5.5"
@@ -696,15 +669,18 @@
     },
     "payout": {
       "title": "Why was the last Amazon payout lower than Xero expected?",
-      "durationSeconds": 14.0,
-      "cost": { "minor": 5, "currency": "USD" },
+      "durationSeconds": 14,
+      "cost": {
+        "minor": 5,
+        "currency": "USD"
+      },
       "tokens": "22.6k",
       "steps": [
         {
           "label": "Inhouse agent",
           "kind": "root",
           "startSeconds": 0,
-          "endSeconds": 14.0,
+          "endSeconds": 14,
           "depth": 0,
           "detail": "Question in Chats"
         },
@@ -727,7 +703,7 @@
         {
           "label": "Amazon · fee preview per order",
           "kind": "tool",
-          "startSeconds": 4.0,
+          "startSeconds": 4,
           "endSeconds": 7.6,
           "depth": 1,
           "detail": "Output: 18 orders charged the large-item fee"
@@ -752,7 +728,7 @@
           "label": "Answer",
           "kind": "answer",
           "startSeconds": 13.8,
-          "endSeconds": 14.0,
+          "endSeconds": 14,
           "depth": 1,
           "detail": "Sent to Chats"
         }
@@ -761,7 +737,10 @@
     "payout-check": {
       "title": "Can you check the next one?",
       "durationSeconds": 4.8,
-      "cost": { "minor": 1, "currency": "USD" },
+      "cost": {
+        "minor": 1,
+        "currency": "USD"
+      },
       "tokens": "4.2k",
       "steps": [
         {
@@ -800,15 +779,18 @@
     },
     "weekly-report": {
       "title": "Weekly numbers report · Nov 7 to 13",
-      "durationSeconds": 22.0,
-      "cost": { "minor": 8, "currency": "USD" },
+      "durationSeconds": 22,
+      "cost": {
+        "minor": 8,
+        "currency": "USD"
+      },
       "tokens": "38.4k",
       "steps": [
         {
           "label": "Inhouse agent",
           "kind": "root",
           "startSeconds": 0,
-          "endSeconds": 22.0,
+          "endSeconds": 22,
           "depth": 0,
           "detail": "Weekly numbers report, Friday at 4:00 PM"
         },
@@ -847,7 +829,7 @@
         {
           "label": "Wrote the report",
           "kind": "model",
-          "startSeconds": 6.0,
+          "startSeconds": 6,
           "endSeconds": 19.4,
           "depth": 1,
           "detail": "Sonnet 5.5 · compared with the week before"
@@ -864,7 +846,7 @@
           "label": "Answer",
           "kind": "answer",
           "startSeconds": 21.8,
-          "endSeconds": 22.0,
+          "endSeconds": 22,
           "depth": 1,
           "detail": "Sent to Chats with a table"
         }
@@ -873,7 +855,10 @@
     "ridge": {
       "title": "How many Ridge 30L Packs should we reorder?",
       "durationSeconds": 9.8,
-      "cost": { "minor": 4, "currency": "USD" },
+      "cost": {
+        "minor": 4,
+        "currency": "USD"
+      },
       "tokens": "17.5k",
       "steps": [
         {
@@ -904,7 +889,7 @@
           "label": "Kestrel price list",
           "kind": "tool",
           "startSeconds": 1.7,
-          "endSeconds": 2.0,
+          "endSeconds": 2,
           "depth": 1,
           "detail": "Output: $16.00 a pack"
         },
@@ -937,7 +922,10 @@
     "meta-ads": {
       "title": "Which ads are spending on low-stock products?",
       "durationSeconds": 8.1,
-      "cost": { "minor": 3, "currency": "USD" },
+      "cost": {
+        "minor": 3,
+        "currency": "USD"
+      },
       "tokens": "13.2k",
       "steps": [
         {
@@ -993,7 +981,10 @@
     "kestrel": {
       "title": "How long does Kestrel really take to deliver?",
       "durationSeconds": 7.3,
-      "cost": { "minor": 2, "currency": "USD" },
+      "cost": {
+        "minor": 2,
+        "currency": "USD"
+      },
       "tokens": "9.6k",
       "steps": [
         {
@@ -1008,7 +999,7 @@
           "label": "PO sheet · last 6 Kestrel orders",
           "kind": "tool",
           "startSeconds": 0.2,
-          "endSeconds": 1.0,
+          "endSeconds": 1,
           "depth": 1,
           "detail": "Output: 13 to 16 days, 14 on average"
         },
@@ -1031,7 +1022,7 @@
         {
           "label": "Wrote the answer",
           "kind": "model",
-          "startSeconds": 3.0,
+          "startSeconds": 3,
           "endSeconds": 7.1,
           "depth": 1,
           "detail": "Sonnet 5.5"
@@ -1049,7 +1040,10 @@
     "black-friday": {
       "title": "Which products will run out before Black Friday?",
       "durationSeconds": 9.2,
-      "cost": { "minor": 3, "currency": "USD" },
+      "cost": {
+        "minor": 3,
+        "currency": "USD"
+      },
       "tokens": "14.4k",
       "steps": [
         {
@@ -1080,14 +1074,14 @@
           "label": "Wrote the answer",
           "kind": "model",
           "startSeconds": 3.2,
-          "endSeconds": 9.0,
+          "endSeconds": 9,
           "depth": 1,
           "detail": "Sonnet 5.5"
         },
         {
           "label": "Answer",
           "kind": "answer",
-          "startSeconds": 9.0,
+          "startSeconds": 9,
           "endSeconds": 9.2,
           "depth": 1,
           "detail": "Sent to Chats"
@@ -1097,7 +1091,10 @@
     "query": {
       "title": "Last week by SKU",
       "durationSeconds": 8.4,
-      "cost": { "minor": 3, "currency": "USD" },
+      "cost": {
+        "minor": 3,
+        "currency": "USD"
+      },
       "tokens": "11.8k",
       "steps": [
         {
@@ -1137,7 +1134,10 @@
     "routine-new": {
       "title": "Set up a routine from a request",
       "durationSeconds": 11.6,
-      "cost": { "minor": 6, "currency": "USD" },
+      "cost": {
+        "minor": 6,
+        "currency": "USD"
+      },
       "tokens": "26.3k",
       "steps": [
         {
@@ -1185,7 +1185,10 @@
     "skill-new": {
       "title": "Wrote a skill from a request",
       "durationSeconds": 9.4,
-      "cost": { "minor": 5, "currency": "USD" },
+      "cost": {
+        "minor": 5,
+        "currency": "USD"
+      },
       "tokens": "21.7k",
       "steps": [
         {
@@ -1233,7 +1236,10 @@
     "gorgias-failed": {
       "title": "Couldn't read Gorgias",
       "durationSeconds": 3.1,
-      "cost": { "minor": 1, "currency": "USD" },
+      "cost": {
+        "minor": 1,
+        "currency": "USD"
+      },
       "tokens": "2.1k",
       "steps": [
         {
@@ -1265,7 +1271,10 @@
     "first-day": {
       "title": "No tools connected yet",
       "durationSeconds": 1.2,
-      "cost": { "minor": 0, "currency": "USD" },
+      "cost": {
+        "minor": 0,
+        "currency": "USD"
+      },
       "tokens": "0.9k",
       "steps": [
         {
@@ -1287,7 +1296,7 @@
         {
           "label": "Answer",
           "kind": "answer",
-          "startSeconds": 1.0,
+          "startSeconds": 1,
           "endSeconds": 1.2,
           "depth": 1,
           "detail": "Sent to Chats"
@@ -1297,7 +1306,10 @@
     "loading": {
       "title": "Still reading your tools",
       "durationSeconds": 1.2,
-      "cost": { "minor": 0, "currency": "USD" },
+      "cost": {
+        "minor": 0,
+        "currency": "USD"
+      },
       "tokens": "0.9k",
       "steps": [
         {
@@ -1329,7 +1341,10 @@
     "vip-tags": {
       "title": "Tag everyone who spent over $500 this year as VIP.",
       "durationSeconds": 9.4,
-      "cost": { "minor": 3, "currency": "USD" },
+      "cost": {
+        "minor": 3,
+        "currency": "USD"
+      },
       "tokens": "12.4k",
       "steps": [
         {
@@ -1382,10 +1397,182 @@
         }
       ]
     },
+    "order-tags-gift": {
+      "title": "Tag order 4377 as Gift.",
+      "durationSeconds": 5.1,
+      "cost": {
+        "minor": 2,
+        "currency": "USD"
+      },
+      "tokens": "6.2k",
+      "steps": [
+        {
+          "label": "Inhouse agent",
+          "kind": "root",
+          "startSeconds": 0,
+          "endSeconds": 5.1,
+          "depth": 0,
+          "detail": "Question in Chats"
+        },
+        {
+          "label": "Shopify · order 4377",
+          "kind": "tool",
+          "startSeconds": 0.2,
+          "endSeconds": 0.9,
+          "depth": 1,
+          "detail": "Output: 1 order"
+        },
+        {
+          "label": "Shopify · add the Gift tag to order 4377",
+          "kind": "tool",
+          "startSeconds": 1,
+          "endSeconds": 1.8,
+          "depth": 1,
+          "detail": "Asks first"
+        },
+        {
+          "label": "Waits for your OK",
+          "kind": "approval",
+          "startSeconds": 1.8,
+          "endSeconds": 1.9,
+          "depth": 1,
+          "detail": "Nothing goes out until someone allows it"
+        },
+        {
+          "label": "Wrote the answer",
+          "kind": "model",
+          "startSeconds": 1.9,
+          "endSeconds": 4.9,
+          "depth": 1,
+          "detail": "Sonnet 5.5"
+        },
+        {
+          "label": "Answer",
+          "kind": "answer",
+          "startSeconds": 4.9,
+          "endSeconds": 5.1,
+          "depth": 1,
+          "detail": "Sent to Chats"
+        }
+      ]
+    },
+    "order-tags-wholesale": {
+      "title": "Tag order 4512 as Wholesale.",
+      "durationSeconds": 5.6,
+      "cost": {
+        "minor": 2,
+        "currency": "USD"
+      },
+      "tokens": "6.8k",
+      "steps": [
+        {
+          "label": "Inhouse agent",
+          "kind": "root",
+          "startSeconds": 0,
+          "endSeconds": 5.6,
+          "depth": 0,
+          "detail": "Question in Chats"
+        },
+        {
+          "label": "Shopify · order 4512",
+          "kind": "tool",
+          "startSeconds": 0.2,
+          "endSeconds": 1,
+          "depth": 1,
+          "detail": "Output: 1 order from Harbor & Pine"
+        },
+        {
+          "label": "Shopify · add the Wholesale tag to order 4512",
+          "kind": "tool",
+          "startSeconds": 1.1,
+          "endSeconds": 1.9,
+          "depth": 1,
+          "detail": "Asks first"
+        },
+        {
+          "label": "Waits for your OK",
+          "kind": "approval",
+          "startSeconds": 1.9,
+          "endSeconds": 2,
+          "depth": 1,
+          "detail": "Nothing goes out until someone allows it"
+        },
+        {
+          "label": "Wrote the answer",
+          "kind": "model",
+          "startSeconds": 2,
+          "endSeconds": 5.4,
+          "depth": 1,
+          "detail": "Sonnet 5.5"
+        },
+        {
+          "label": "Answer",
+          "kind": "answer",
+          "startSeconds": 5.4,
+          "endSeconds": 5.6,
+          "depth": 1,
+          "detail": "Sent to Chats"
+        }
+      ]
+    },
+    "order-tags-post": {
+      "title": "Post a heads-up in #ops-alerts once it's tagged.",
+      "durationSeconds": 4.8,
+      "cost": {
+        "minor": 2,
+        "currency": "USD"
+      },
+      "tokens": "5.9k",
+      "steps": [
+        {
+          "label": "Inhouse agent",
+          "kind": "root",
+          "startSeconds": 0,
+          "endSeconds": 4.8,
+          "depth": 0,
+          "detail": "Question in Chats"
+        },
+        {
+          "label": "Slack · post to #ops-alerts",
+          "kind": "tool",
+          "startSeconds": 0.2,
+          "endSeconds": 1,
+          "depth": 1,
+          "detail": "Asks first"
+        },
+        {
+          "label": "Waits for your OK",
+          "kind": "approval",
+          "startSeconds": 1,
+          "endSeconds": 1.1,
+          "depth": 1,
+          "detail": "Nothing goes out until someone allows it"
+        },
+        {
+          "label": "Wrote the answer",
+          "kind": "model",
+          "startSeconds": 1.1,
+          "endSeconds": 4.6,
+          "depth": 1,
+          "detail": "Sonnet 5.5"
+        },
+        {
+          "label": "Answer",
+          "kind": "answer",
+          "startSeconds": 4.6,
+          "endSeconds": 4.8,
+          "depth": 1,
+          "detail": "Sent to Chats"
+        }
+      ]
+    },
     "catalog-audit-start": {
       "title": "Audit gross margin across every SKU",
       "durationSeconds": 8.2,
-      "cost": { "minor": 6, "currency": "USD" },
+      "cost": {
+        "minor": 6,
+        "currency": "USD"
+      },
       "tokens": "24.6k",
       "steps": [
         {
@@ -1425,7 +1612,10 @@
     "catalog-audit-progress": {
       "title": "Apparel and outerwear margin pass",
       "durationSeconds": 312,
-      "cost": { "minor": 42, "currency": "USD" },
+      "cost": {
+        "minor": 42,
+        "currency": "USD"
+      },
       "tokens": "118.4k",
       "steps": [
         {
@@ -1529,7 +1719,10 @@
     "restock-plan-part1": {
       "title": "Pull stock on hand across stores",
       "durationSeconds": 10,
-      "cost": { "minor": 5, "currency": "USD" },
+      "cost": {
+        "minor": 5,
+        "currency": "USD"
+      },
       "tokens": "19.8k",
       "steps": [
         {
@@ -1569,7 +1762,10 @@
     "restock-plan-part2": {
       "title": "Check Kestrel transit and peak demand",
       "durationSeconds": 294,
-      "cost": { "minor": 34, "currency": "USD" },
+      "cost": {
+        "minor": 34,
+        "currency": "USD"
+      },
       "tokens": "94.2k",
       "steps": [
         {
@@ -1641,7 +1837,10 @@
     "restock-plan-final": {
       "title": "Finalize Q4 restock quantities",
       "durationSeconds": 268,
-      "cost": { "minor": 26, "currency": "USD" },
+      "cost": {
+        "minor": 26,
+        "currency": "USD"
+      },
       "tokens": "76.4k",
       "steps": [
         {
@@ -1689,7 +1888,10 @@
     "ad-audit-part1": {
       "title": "Audit 90-day Meta Ads contribution margin",
       "durationSeconds": 11.9,
-      "cost": { "minor": 7, "currency": "USD" },
+      "cost": {
+        "minor": 7,
+        "currency": "USD"
+      },
       "tokens": "27.0k",
       "steps": [
         {
@@ -1737,7 +1939,10 @@
     "ad-audit-part2": {
       "title": "Join ad cohorts with return shipping",
       "durationSeconds": 342,
-      "cost": { "minor": 58, "currency": "USD" },
+      "cost": {
+        "minor": 58,
+        "currency": "USD"
+      },
       "tokens": "164.0k",
       "steps": [
         {
@@ -1769,7 +1974,10 @@
     "web-bottles": {
       "title": "Compare competitor prices for 750ml insulated bottles",
       "durationSeconds": 15.4,
-      "cost": { "minor": 8, "currency": "USD" },
+      "cost": {
+        "minor": 8,
+        "currency": "USD"
+      },
       "tokens": "28.1k",
       "steps": [
         {
@@ -1849,7 +2057,10 @@
     "web-fetch": {
       "title": "Read a listed website",
       "durationSeconds": 8.4,
-      "cost": { "minor": 4, "currency": "USD" },
+      "cost": {
+        "minor": 4,
+        "currency": "USD"
+      },
       "tokens": "14.2k",
       "steps": [
         {
@@ -1879,7 +2090,7 @@
         {
           "label": "Wrote the answer",
           "kind": "model",
-          "startSeconds": 6.0,
+          "startSeconds": 6,
           "endSeconds": 8.2,
           "depth": 1,
           "detail": "Opus 5.5"
@@ -1897,7 +2108,10 @@
     "web-search": {
       "title": "Web search snippets",
       "durationSeconds": 8.6,
-      "cost": { "minor": 4, "currency": "USD" },
+      "cost": {
+        "minor": 4,
+        "currency": "USD"
+      },
       "tokens": "14.8k",
       "steps": [
         {
@@ -1945,7 +2159,10 @@
     "web-lookup": {
       "title": "Web pricing check",
       "durationSeconds": 10.4,
-      "cost": { "minor": 5, "currency": "USD" },
+      "cost": {
+        "minor": 5,
+        "currency": "USD"
+      },
       "tokens": "16.0k",
       "steps": [
         {
@@ -2001,7 +2218,10 @@
     "long-job-run": {
       "title": "Long job continuation",
       "durationSeconds": 324,
-      "cost": { "minor": 46, "currency": "USD" },
+      "cost": {
+        "minor": 46,
+        "currency": "USD"
+      },
       "tokens": "132.0k",
       "steps": [
         {

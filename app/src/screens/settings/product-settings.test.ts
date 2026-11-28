@@ -1,10 +1,10 @@
 // What the product's Settings leaves out, what both builds keep, and where Pause and the brand name live. Ways it can fail,
 // written first:
-//  1. the product shows a setting nothing reads (Language, Text size, Two-step sign-in, Tone, Signs emails as) or an Act-stage
-//     alert nothing sends (the Notifications rows), or the demo loses one of them;
-//  2. the product menu, the palette or a deep link still offers Who approves what, Run limits or Notifications, or the demo
-//     loses a page;
-//  3. the limits section keeps its "Approvals and limits" name in the product with only the Spending cap left in it;
+//  1. the product shows a setting nothing reads (Language, Text size, Two-step sign-in, Tone, Signs emails as), or the
+//     demo loses one of them;
+//  2. a menu, the palette or a deep link still offers Who approves what, Run limits, Notifications or Stage and plan (gone
+//     from the product with M2-I and from the demo with decision A13, option B), or the demo loses a product page;
+//  3. the limits section keeps its "Approvals and limits" name with only the Spending cap left in it;
 //  4. Pause Inhouse agent is missing from the page that keeps the Spending cap (nothing else in the product can pause at
 //     Act or Run), or still sits on Run limits;
 //  5. the Brand name row is missing, writes under another key, or the delete request reads "for ." with no name, or the demo's
@@ -17,7 +17,7 @@ import type { Can } from '../../agent/types'
 vi.stubGlobal('localStorage', { getItem: () => null, setItem: () => {}, removeItem: () => {} })
 const { agent } = await import('../../agent')
 const { settingsPage } = await import('./content')
-const { SECTIONS, SETTINGS_PAGES, menuFor, pageShown, settingsTabs, teamSettingsTab } = await import('./menu')
+const { SECTIONS, SETTINGS_PAGES, TEAM_SETTINGS_TAB, menuFor, pageShown, settingsTabs } = await import('./menu')
 const { settingRow } = await import('../../../shared/contract/settings-table')
 const { allowance } = await import('./allowance')
 const { mayPause } = await import('../../lib/product-flow')
@@ -26,7 +26,7 @@ type Env = Parameters<typeof settingsPage>[1]
 
 const noop = () => {}
 const env = (product: boolean, over: Partial<Env> = {}): Env => ({
-  S: 2, stage: 'Run', agent: agent.getSnapshot(), data: agent.read(), spent: agent.read().usage.total, phone: false,
+  agent: agent.getSnapshot(), data: agent.read(), spent: agent.read().usage.total, phone: false,
   openTeam: noop, openPop: noop, openSettings: noop, newChat: noop, goSkills: noop, togglePause: noop,
   theme: 'system', setTheme: noop, toast: noop, forget: noop, download: noop, setRole: noop, setSupport: noop,
   me: agent.me(), invite: noop, removeMember: noop, grantUi: product, product, showGrant: true, loadingMore: false, loadMore: noop, exportFromServer: null, exportDataFromServer: null,
@@ -40,7 +40,6 @@ const noTools = { connected: [], channels: [] }
 describe('rows only the demo shows (failure 1)', () => {
   const cases: [string, string[]][] = [
     ['you-general', ['Language', 'Text size']],
-    ['you-notif', ['Approvals waiting', 'Send alerts to', 'Weekly report']],
     ['team-agent', ['Tone', 'Signs emails as']],
     ['team-data', ['Two-step sign-in']],
   ]
@@ -52,39 +51,39 @@ describe('rows only the demo shows (failure 1)', () => {
       }
     })
   }
-  it('the product keeps the rest of each page, and the chat-app switch goes with the alerts', () => {
+  it('the product keeps the rest of each page; no build has the Notifications page or its chat-app switch', () => {
     expect(titles('you-general', env(true))).toEqual(expect.arrayContaining(['Photo', 'Name', 'Email', 'Role', 'Theme', 'Time zone']))
     expect(titles('team-data', env(true))).toEqual(expect.arrayContaining(['Inhouse team access', 'Your team', 'Export everything']))
-    // The Notifications page is not in the product: a link to it renders the default page, never its rows.
-    expect(titles('you-notif', env(true))).toEqual(titles('you-general', env(true)))
-    expect(rows('you-notif', env(true)).some(r => r.key === 'n:slack')).toBe(false)
-    expect(rows('you-notif', env(false)).some(r => r.key === 'n:slack')).toBe(true)
+    // A link to the Notifications page renders the default page, never its rows.
+    for (const product of [true, false]) {
+      expect(titles('you-notif', env(product))).toEqual(titles('you-general', env(product)))
+      expect(rows('you-notif', env(product)).some(r => r.key === 'n:slack')).toBe(false)
+    }
   })
 })
 
 describe('the menu, the palette and the deep links (failures 2 and 3)', () => {
   const ids = (product: boolean) => menuFor(noTools, product).flatMap(s => s.pages).map(p => p.id)
-  it('the product has no Who approves what, Run limits, Notifications or Stage and plan (M2-I); the demo has every page', () => {
+  it('no build has Who approves what, Run limits, Notifications or Stage and plan (M2-I; the demo since A13)', () => {
     for (const id of ['team-approvals', 'team-limits', 'you-notif', 'team-plan']) {
-      expect(ids(true), id).not.toContain(id)
-      expect(settingsTabs(true), id).not.toContain(id)
-      expect(pageShown(id, true), id).toBe(false)
-      expect(ids(false), id).toContain(id)
-      expect(settingsTabs(false), id).toContain(id)
+      for (const product of [true, false]) {
+        expect(ids(product), id).not.toContain(id)
+        expect(settingsTabs(product), id).not.toContain(id)
+      }
     }
-    // Stage 1 M2-H: every page but Always allowed, which only the product offers (and, M3-C, What the agent can do).
-    expect(settingsTabs(false)).toEqual(SETTINGS_PAGES.map(p => p.id).filter(id => id !== 'you-permissions' && id !== 'team-ceiling'))
+    // The demo has every page the product has but What the agent can do (M3-C: the demo has no ceiling yet).
+    expect(settingsTabs(true)).toEqual(SETTINGS_PAGES.map(p => p.id))
+    expect(settingsTabs(false)).toEqual(SETTINGS_PAGES.map(p => p.id).filter(id => id !== 'team-ceiling'))
     expect(ids(true)).toEqual(expect.arrayContaining(['you-general', 'you-memory', 'you-permissions', 'team-agent', 'team-modes', 'team-memory', 'team-spend', 'team-members', 'team-data', 'team-audit']))
   })
   // Stage 1 M2-I: the product has no stages. Its Env is the Act view it is pinned to (store.ts `useCtx`). The audit log is
   // history: a line written before the retirement keeps its words (N17), so it isn't read here.
-  it('no product Settings page, title or section names a stage', () => {
-    const product = env(true, { S: 1, stage: 'Act' })
+  it('no Settings page, title or section names a stage, in the product or the demo (A13)', () => {
     const slack = { connected: ['slack'], channels: [] }
-    for (const sec of menuFor(slack, true)) {
+    for (const product of [true, false]) for (const sec of menuFor(slack, product)) {
       expect(sec.label, sec.id).not.toMatch(/\bstages?\b/i)
       for (const { id, label } of sec.pages.filter(p => p.id !== 'team-audit')) {
-        const page = settingsPage(id, product)
+        const page = settingsPage(id, env(product))
         const text = [label, page.title, ...page.sections.flatMap(x => [x.label, x.empty ?? '', ...x.rows.flatMap(r => [r.title, r.desc, r.value, ...(r.options ?? [])])])].join(' | ')
         expect(text, id).not.toMatch(/\bstages?\b/i)
         expect(text, id).not.toMatch(/\b(Watch|Act|Run)\b/)
@@ -92,30 +91,28 @@ describe('the menu, the palette and the deep links (failures 2 and 3)', () => {
       }
     }
   })
-  it("the account menu's Team settings opens a page each build has (M2-I: the product has no Stage and plan)", () => {
-    expect(teamSettingsTab(false)).toBe('team-plan')
-    expect(teamSettingsTab(true)).toBe('team-agent')
-    for (const product of [true, false]) expect(settingsTabs(product)).toContain(teamSettingsTab(product))
+  it("the account menu's Team settings opens a page each build has (no Stage and plan)", () => {
+    expect(TEAM_SETTINGS_TAB).toBe('team-agent')
+    for (const product of [true, false]) expect(settingsTabs(product)).toContain(TEAM_SETTINGS_TAB)
   })
-  it('Always allowed is in the product only (Stage 1 M2-H): the demo has no permissions', () => {
-    expect(ids(true)).toContain('you-permissions')
-    expect(settingsTabs(true)).toContain('you-permissions')
-    expect(pageShown('you-permissions', true)).toBe(true)
-    expect(ids(false)).not.toContain('you-permissions')
-    expect(settingsTabs(false)).not.toContain('you-permissions')
-    expect(pageShown('you-permissions', false)).toBe(false)
+  it('Always allowed is in both builds (Stage 1 M2-H; the demo since its sample permissions)', () => {
+    for (const product of [true, false]) {
+      expect(ids(product)).toContain('you-permissions')
+      expect(settingsTabs(product)).toContain('you-permissions')
+      expect(pageShown('you-permissions', product)).toBe(true)
+    }
   })
   it("the Inhouse team's product menu has no Always allowed (they have no permissions); every other page stays", () => {
     const inhouse = menuFor(noTools, true, 'inhouse').flatMap(s => s.pages).map(p => p.id)
     expect(inhouse).toEqual(ids(true).filter(id => id !== 'you-permissions'))
   })
-  it('the section that holds the Spending cap is called Spending in the product, and keeps its name in the demo', () => {
-    const limits = (product: boolean) => menuFor(noTools, product).find(s => s.id === 'limits')!
-    expect(limits(true).label).toBe('Spending')
-    expect(limits(true).pages.map(p => p.id)).toEqual(['team-spend'])
-    expect(limits(false).label).toBe('Approvals and limits')
-    expect(limits(false).pages.map(p => p.id)).toEqual(['team-approvals', 'team-limits', 'team-spend'])
-    expect(SECTIONS.find(s => s.id === 'limits')!.label).toBe('Approvals and limits')
+  it('the section that holds the Spending cap is called Spending, in both builds', () => {
+    for (const product of [true, false]) {
+      const limits = menuFor(noTools, product).find(s => s.id === 'limits')!
+      expect(limits.label).toBe('Spending')
+      expect(limits.pages.map(p => p.id)).toEqual(['team-spend'])
+    }
+    expect(SECTIONS.find(s => s.id === 'limits')!.label).toBe('Spending')
   })
   it('Slack notices still shows only with Slack, in both builds', () => {
     for (const product of [true, false]) {
@@ -146,12 +143,15 @@ describe('Pause Inhouse agent (failure 4)', () => {
   })
 })
 
-describe('a page the product leaves out (failure 6)', () => {
-  it('a hidden page renders the default page in the product, and itself in the demo', () => {
-    for (const id of ['team-approvals', 'team-limits', 'you-notif']) {
-      expect(settingsPage(id, env(true)).title, id).toBe(settingsPage('you-general', env(true)).title)
-      expect(settingsPage(id, env(false)).title, id).not.toBe(settingsPage('you-general', env(false)).title)
+describe('a page no build has (failure 6)', () => {
+  it('a gone page renders the default page, in the product and the demo; the ceiling page only in the product', () => {
+    for (const product of [true, false]) {
+      for (const id of ['team-approvals', 'team-limits', 'you-notif', 'team-plan']) {
+        expect(settingsPage(id, env(product)).title, id).toBe(settingsPage('you-general', env(product)).title)
+      }
     }
+    expect(settingsPage('team-ceiling', env(true)).title).toBe('What the agent can do')
+    expect(settingsPage('team-ceiling', env(false)).title).toBe(settingsPage('you-general', env(false)).title)
   })
 })
 

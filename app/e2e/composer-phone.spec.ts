@@ -4,7 +4,7 @@ import { expect, test } from './support/fx.js'
 
 test('Phone: the chat composer stays above the safe area, and opening a chat leaves it unfocused', async ({ page, fx }) => {
   await page.clock.install() // time keeps flowing; runFor adds app time on top, so no real sleep
-  await fx.seed({ stage: 'Act', demo: { ambient: 'Always' } })
+  await fx.seed({ demo: { ambient: 'Always' } })
   await page.goto('/?demo#/chats/refunds')
   const field = page.getByRole('textbox', { name: 'Message Inhouse' })
   const composer = page.locator('[data-composer]')

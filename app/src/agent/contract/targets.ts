@@ -32,7 +32,7 @@ export interface Fixtures {
   /** How long an approved draft is held before it goes out, in ms on the client's clock (the 10 s hold). */
   holdMs: number
   questions: {
-    /** A question the agent answers with text and a table, in every stage. */
+    /** A question the agent answers with text and a table. */
     table: string
     /** A question that asks for an approval (a draft) in Act and is refused in Watch (it can't approve there). */
     approval: string
@@ -119,7 +119,7 @@ export interface ContractTarget {
   advance(ms: number): Promise<void>
   /** Back to a first-run state: no writes, no saved runs, no pending holds, no failures armed. */
   reset(): Promise<void>
-  /** Put the client in a stage and scenario (the demo's dev switcher). Resolves only once the client shows the new world: `read()` is the new data and `subscribe` listeners have heard it. */
+  /** Put the client in a scenario (the demo's dev switcher; the demo has no stages since decision A13). Resolves only once the client shows the new world: `read()` is the new data and `subscribe` listeners have heard it. */
   seed(state: DemoContext): Promise<void>
   /**
    * Make every write fail to save (true) or work again (false). For the mock that is the browser's storage refusing a
@@ -146,7 +146,7 @@ export interface ContractTarget {
   seedWaitingMemory?(texts: string[]): Promise<string[]>
   /**
    * Stage 1 M2-H: one action waiting on the signed-in person's answer, as the agent's request leaves it (an ask card they
-   * may answer); answers its id. A target that can't make one (the demo has no actions) leaves this out, and the suite
+   * may answer); answers its id (the demo: its sample ask card). A target that can't make one leaves this out, and the suite
    * skips the cases that answer one.
    */
   seedAction?(): Promise<string>
@@ -330,6 +330,8 @@ function mockTarget(): ContractTarget {
     async scriptNextTurn(kind) { mockAgent.scriptNextTurn(kind) },
     // The demo's sample batch (sample-data/actions.json), waiting again after the reset.
     async seedBatch() { return (await mockAgent.actions({ states: ['waiting'] })).find(a => a.batch)!.id },
+    // The demo's sample ask card (Allow once, Always allow, No), waiting again after the reset.
+    async seedAction() { return (await mockAgent.actions({ states: ['waiting'] })).find(a => a.kind === 'ask' && a.can.allowOnce && !a.nudgeAlways)!.id },
     async seedWaitingMemory(texts) {
       const inner = mockAgent as unknown as MockInternals
       const lines = texts.map((text, i) => ({ key: `mem_contractWaiting${String(i).padStart(7, '0')}`, text, source: 'Sam told your Inhouse agent in a chat', rev: 1, scope: 'brand' as const }))

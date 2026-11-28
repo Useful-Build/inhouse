@@ -35,7 +35,7 @@ const GOLDEN_COST: Record<string, string> = {
 
 /** Seeds the demo at Act, with the sample's own clock, then opens Today as a first visit. */
 async function start(page: Page, fx: Fx) {
-  await fx.seed({ stage: 'Act', demo: { ambient: 'Always' } })
+  await fx.seed({ demo: { ambient: 'Always' } })
   await fx.open('#/today')
   await expect(h1(page)).toContainText(`Good morning, ${fx.names.user.name.split(' ')[0]}.`)
 }
@@ -183,18 +183,15 @@ test('S4: Usage shows this month\'s spend and the per-tool dollars as before', a
   for (const [i, cost] of costs.entries()) await expect(rows.nth(i)).toContainText(`$${cost.toFixed(2)}`)
 })
 
-test('S5: The demo switches move to Run and to Cap reached, and Reset demo returns to the start', async ({ fx, page }) => {
+test('S5: The demo switches move to Cap reached, and Reset demo returns to the start', async ({ fx, page }) => {
   await start(page, fx)
   // Hold the page clock, then let half an hour pass: a clock that Reset demo didn't send back would now stamp 8:30 AM.
   const started = (await fx.saved()).demo.demoStartedAt as number
   await page.clock.install({ time: started })
   await page.clock.pauseAt(started + 20_000)
   await page.clock.runFor(30 * 60_000)
+  // The demo has no stages since decision A13: the Run move this check made is gone.
   let panel = await switches(page)
-  await panel.getByRole('radiogroup', { name: 'Stage' }).getByRole('radio', { name: 'Run', exact: true }).click()
-  await panel.getByRole('button', { name: 'Close demo switches' }).click()
-  await expect(h1(page)).toContainText('4 handled today. 3 need you.')
-  panel = await switches(page)
   await panel.getByRole('button', { name: 'Cap reached', exact: true }).click()
   await panel.getByRole('button', { name: 'Close demo switches' }).click()
   await expect(page.getByRole('alert')).toContainText('Spending cap reached.')
@@ -202,7 +199,7 @@ test('S5: The demo switches move to Run and to Cap reached, and Reset demo retur
   await panel.getByRole('button', { name: 'Reset demo' }).click()
   await expect(toast(page, 'Demo reset. Every change is cleared.')).toBeVisible()
   await panel.getByRole('button', { name: 'Close demo switches' }).click()
-  await expect(page.getByRole('button', { name: 'Demo switches: Act, Normal' })).toBeVisible()
+  await expect(page.getByRole('button', { name: 'Demo switches: Normal' })).toBeVisible()
   await expect(h1(page)).toContainText('6 things need you. Drafts are ready.')
   await expect(page.getByRole('alert')).toHaveCount(0)
   // The clock is back at the 8:00 AM start: an approval is stamped 8:00 AM, not 8:30.

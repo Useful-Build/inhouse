@@ -11,8 +11,8 @@ const asked = new Set<string>()
 const listeners = new Set<() => void>()
 let version = 0
 
-/** Stage and scenario change what the demo's steps say (Run drops approval waits, a tool can fail), so they're part of the key. */
-const keyOf = (id: string) => { const s = useUi.getState(); return `${s.stage}|${s.scenario}|${id}` }
+/** The scenario changes what the demo's steps say (a tool can fail), so it's part of the key. */
+const keyOf = (id: string) => `${useUi.getState().scenario}|${id}`
 
 export function traceOf(id: string): Trace | null | undefined {
   // A message the client made itself (a send the server refused) has no turn, so no id: there are no steps to ask for.

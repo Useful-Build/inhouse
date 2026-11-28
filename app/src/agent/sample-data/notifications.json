@@ -1,6 +1,16 @@
 {
   "notifications": [
     {
+      "text": "Approval waiting",
+      "who": "Inhouse",
+      "at": "0d 07:31",
+      "unread": true,
+      "opens": "Approvals",
+      "icon": "front_hand",
+      "waiting": true,
+      "approval": true
+    },
+    {
       "text": "Klaviyo is being connected. It goes live by Fri, Nov 20.",
       "who": "Inhouse team",
       "at": "0d 07:30",
@@ -8,17 +18,30 @@
       "opens": "tool page: klaviyo"
     },
     {
-      "text": {
-        "Watch": "Today has {count} things that need you.",
-        "ActRun": "{pending} drafts are waiting for your approval."
-      },
+      "text": "A send needs a check",
+      "who": "Inhouse",
+      "at": "0d 07:12",
+      "unread": true,
+      "opens": "Approvals",
+      "icon": "info",
+      "waiting": true,
+      "approval": true
+    },
+    {
+      "drafts": "{pending} drafts are waiting for your approval.",
       "who": "Inhouse agent",
       "at": "0d 06:08",
       "unread": true,
-      "opens": {
-        "Watch": "Today",
-        "ActRun": "Approvals"
-      }
+      "opens": "Approvals"
+    },
+    {
+      "text": "An approval expired",
+      "who": "Inhouse",
+      "at": "-2d 09:00",
+      "unread": false,
+      "opens": "Approvals",
+      "icon": "hourglass_empty",
+      "approval": true
     },
     {
       "text": "Your weekly numbers report is ready.",
@@ -44,8 +67,8 @@
       "opens": "chat: ad-spend-audit"
     },
     {
-      "text": "Dana Kim approved the reorder of 300 Summit Fleece.",
-      "who": "Dana Kim",
+      "text": "You approved the refund on order 4807.",
+      "who": "Sam Mercer",
       "at": "-4d 10:14",
       "unread": false,
       "opens": "Activity"
@@ -88,7 +111,7 @@
       "at": "-12d 14:00",
       "status": "Declined",
       "closed": "declined",
-      "text": "Draft a reply to every comment on our posts so we can send them in one go."
+      "text": "Flag every comment on our posts that needs an answer, so we can reply to them in one go."
     }
   ]
 }

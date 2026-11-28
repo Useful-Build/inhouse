@@ -6,7 +6,7 @@ import { pagesPolish } from './pages-polish-checks.js'
 pagesPolish(test, 'phone')
 
 test('Phone: team settings read as text with a note, your own settings keep their controls, Activity rows fit', async ({ page, fx }) => {
-  await fx.seed({ stage: 'Act' })
+  await fx.seed({})
   await page.goto('/?demo#/settings/team-spend')
   await expect(page.getByRole('note')).toContainText('Change these on a computer.')
   await expect(page.getByRole('textbox', { name: 'Monthly cap' })).toHaveCount(0)

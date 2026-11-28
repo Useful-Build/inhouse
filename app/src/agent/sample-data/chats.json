@@ -1,5 +1,5 @@
 {
-  "note": "Every chat in the sidebar and in See all, newest first by \"at\" (the mock checks it): days from the demo's Monday and a local time (\"-1d 16:40\" is Sunday at 4:40 PM). The app shows today a time, the six days before a weekday, older a date. The first four are the Recent chats. The stuck-orders chat plays the seed thread in chat-script.json, which changes with the stage; an agent turn with a \"stage\" shows only in that stage. Every agent turn names its own trace in traces.json. All invented. Numbers match problems.json, tools.json, library.json and usage.json.",
+  "note": "Every chat in the sidebar and in See all, newest first by \"at\" (the mock checks it): days from the demo's Monday and a local time (\"-1d 16:40\" is Sunday at 4:40 PM). The app shows today a time, the six days before a weekday, older a date. The first four are the Recent chats. The stuck-orders chat plays the seed thread in chat-script.json. Every agent turn names its own trace in traces.json. All invented. Numbers match problems.json, tools.json, library.json and usage.json.",
   "recent": 4,
   "chats": [
     {
@@ -81,29 +81,6 @@
           "user": "Draft a sizing note for the product page."
         },
         {
-          "stage": "Watch",
-          "agent": [
-            {
-              "type": "text",
-              "text": "Here's a draft you can paste in:\n\n\"The Trail Shell Jacket fits close. If you're between sizes, or you plan to layer a fleece underneath, order one size up.\"\n\nI can't edit the product page in Watch, so it's yours to add."
-            }
-          ],
-          "trace": "sizing-note",
-          "model": "sonnet"
-        },
-        {
-          "stage": "Act",
-          "agent": [
-            {
-              "type": "text",
-              "text": "Here's a draft you can paste in:\n\n\"The Trail Shell Jacket fits close. If you're between sizes, or you plan to layer a fleece underneath, order one size up.\"\n\nEditing a product page isn't one of the jobs I can draft for approval yet, so it's yours to add."
-            }
-          ],
-          "trace": "sizing-note",
-          "model": "sonnet"
-        },
-        {
-          "stage": "Run",
           "agent": [
             {
               "type": "text",
@@ -160,7 +137,7 @@
           "agent": [
             {
               "type": "text",
-              "text": "The settlement for Oct 30 to Nov 12 paid $18,420. Xero expected $19,660, so the payout is $1,240 short. 18 orders were charged the large-item fee, though they ship as standard size. That's an Amazon error, so it can be claimed back. I can draft the reimbursement case for you to approve."
+              "text": "The settlement for Oct 30 to Nov 12 paid $18,420. Xero expected $19,660, so the payout is $1,240 short. 18 orders were charged the large-item fee, though they ship as standard size. That's an Amazon error, so it can be claimed back. I can post it to #ops-alerts so Dana opens the reimbursement case."
             }
           ],
           "trace": "payout",
@@ -197,6 +174,64 @@
             }
           ],
           "trace": "weekly-report",
+          "model": "sonnet"
+        }
+      ]
+    },
+    {
+      "id": "order-tags",
+      "title": "Wholesale and gift tags",
+      "at": "-3d 15:51",
+      "turns": [
+        {
+          "user": "Tag order 4377 as Gift."
+        },
+        {
+          "agent": [
+            {
+              "type": "text",
+              "text": "Order 4377 is Mia Torres's order of the Summit Fleece. I'll add the Gift tag once you allow it."
+            },
+            {
+              "type": "ask",
+              "actionId": "ac_demoGiftTagCheck000000"
+            }
+          ],
+          "trace": "order-tags-gift",
+          "model": "sonnet"
+        },
+        {
+          "user": "Tag order 4512 as Wholesale."
+        },
+        {
+          "agent": [
+            {
+              "type": "text",
+              "text": "Order 4512 is Harbor & Pine's restock of 24 Ridge 30L packs. I'll add the Wholesale tag once you allow it, so the warehouse packs it with the trade orders."
+            },
+            {
+              "type": "ask",
+              "actionId": "ac_demoWholesaleTag000000"
+            }
+          ],
+          "trace": "order-tags-wholesale",
+          "model": "sonnet"
+        },
+        {
+          "user": "Post a heads-up in #ops-alerts once it's tagged."
+        },
+        {
+          "agent": [
+            {
+              "type": "text",
+              "text": "Here's the post. It goes to #ops-alerts once you allow it."
+            },
+            {
+              "type": "ask",
+              "actionId": "ac_demoOpsAlertsPost00000"
+            }
+          ],
+          "trace": "order-tags-post",
           "model": "sonnet"
         }
       ]

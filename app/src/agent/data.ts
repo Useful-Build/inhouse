@@ -94,14 +94,17 @@ const needOf = (what: string, need: unknown): StageIndex => {
 
 // The file's own notes (`note`, `fixedClock`) document the sample data: the agent returns only who the brand, agent and person are.
 export const meta = { brand: metaJson.brand, agent: metaJson.agent, currentUser: metaJson.currentUser }
-/** A problem as the sample data has it: the mock adds the draft time from the Library (see `DATA` in mock.ts). */
+/** A problem as the sample data has it: the mock adds `draftedAt` from `draftTimes` (see `DATA` in mock.ts). */
 export type ProblemSeed = Omit<Problem, 'draftedAt'>
-type RawProblem = Omit<ProblemSeed, 'cost' | 'done' | 'draft'> & { cost: unknown; done?: unknown; draft: Omit<Draft, 'doneNote'> & { doneNote?: unknown } }
+type RawProblem = Omit<ProblemSeed, 'cost' | 'done' | 'draft'> & { cost: unknown; done?: unknown; draft: Omit<Draft, 'doneNote'> & { doneNote?: unknown }; draftedAt: unknown }
+/** When the agent made each problem's draft or finding, by problem id: what Approvals sorts by. */
+export const draftTimes: Record<string, Instant> = {}
 /** Each problem with its amount checked and, when the agent did it by itself in Run, what it did and when (`done.times.at`). */
 export const problems: ProblemSeed[] = (problemsJson.problems as unknown as RawProblem[]).map(p => {
   const what = `the problem "${p.id}"`
-  const { done, draft, ...rest } = p
+  const { done, draft, draftedAt, ...rest } = p
   const { doneNote, ...dr } = draft
+  draftTimes[p.id] = sampleAt(`${what}'s draftedAt`, draftedAt)
   return {
     ...rest,
     cost: moneyIn(what, p.cost),
@@ -320,7 +323,7 @@ export const usageHistory = (usageHistoryJson.months as RawMonth[]).map(m => usa
 for (const j of peopleJson.runLimits.jobsAgentMayFinish as { id?: unknown }[]) {
   if (typeof j.id !== 'string' || !j.id) throw new Error('Sample data: a job in runLimits.jobsAgentMayFinish has no id.')
 }
-if (new Set(peopleJson.runLimits.jobsAgentMayFinish.map(j => j.id)).size !== peopleJson.runLimits.jobsAgentMayFinish.length) throw new Error('Sample data: runLimits.jobsAgentMayFinish has a repeated id.')
+if (new Set((peopleJson.runLimits.jobsAgentMayFinish as { id?: unknown }[]).map(j => j.id)).size !== peopleJson.runLimits.jobsAgentMayFinish.length) throw new Error('Sample data: runLimits.jobsAgentMayFinish has a repeated id.')
 // `placeholders` is a note on the sample data, not something the agent returns.
 const { placeholders: _placeholders, ...runLimits } = peopleJson.runLimits
 export const people = { ...peopleJson, runLimits }
@@ -342,11 +345,10 @@ export const memory = {
 }
 
 export const auditLog: AuditEntry[] = auditJson.entries.map(e => ({ ...e, at: sampleAt(`the audit line "${e.what}"`, e.at) }))
-/** Activity's fixed lines, each with its instant (a stage or time the app doesn't know stops it). */
-type RawActivityLine = Omit<ActivityLine, 'at' | 'minStage' | 'by'> & { at: string; minStage?: string; by: unknown }
-const STAGE_NAMES = ['Watch', 'Act', 'Run']
+/** Activity's fixed lines, each with its instant (a time the app doesn't know stops it). The demo has no stages (A13). */
+type RawActivityLine = Omit<ActivityLine, 'at' | 'minStage' | 'by'> & { at: string; by: unknown }
 const activityLine = (l: RawActivityLine): ActivityLine => {
-  if (l.minStage !== undefined && !STAGE_NAMES.includes(l.minStage)) throw new Error(`Activity data: "${l.text}" has an unknown stage "${l.minStage}".`)
+  if ('minStage' in l) throw new Error(`Activity data: "${l.text}" names a stage; the demo has none.`)
   const what = `the Activity line "${l.text}"`
   return { ...l, at: sampleAt(what, l.at), by: proseIn(what, l.by) } as ActivityLine
 }

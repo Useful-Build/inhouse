@@ -23,7 +23,7 @@ const log = (page: Page) => page.getByRole('log', { name: 'Conversation' })
 
 /** Opens the demo with the WebFetch setting at `hosts` (one host per line), asks the markdown question and waits for the finished answer. */
 async function answered(page: Page, fx: Fx, hosts: string): Promise<void> {
-  await fx.seedSaved({ stage: 'Act', scenario: 'Normal', demo: { ambient: 'Always' } }, { settings: { 't:webfetch': hosts } })
+  await fx.seedSaved({ scenario: 'Normal', demo: { ambient: 'Always' } }, { settings: { 't:webfetch': hosts } })
   await page.goto('/?demo#/today')
   await page.getByRole('textbox', { name: 'Ask Inhouse' }).fill(MD_Q)
   await page.keyboard.press('Enter')

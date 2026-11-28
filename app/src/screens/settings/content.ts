@@ -1,11 +1,10 @@
 // Settings content. Pure data: the screen renders it.
 import type { AvailableChannel, NotifyChannelList } from '../../agent/types'
 import type { NotifyChannel, NotifyPosting } from '../../../shared/contract/notify-slack'
-import type { AgentData, AgentState, AuditLine, CanKey, Me, MemberRecord, MemberRole, MemoryLine, Money, StageIndex } from '../../agent/types'
+import type { AgentData, AgentState, AuditLine, CanKey, Me, MemberRecord, MemberRole, MemoryLine, Money } from '../../agent/types'
 import { AgentError } from '../../agent/types'
 import { CONFLICT, FORBIDDEN, REASON } from '../../../shared/contract/error-codes'
 import type { WaitingState } from './waiting-list'
-import { STAGE_TAGS, channelFrom, listNames } from '../../state/derive'
 import { EFFORTS, defaultModeId, modeEffortKey, modeOnKey, thinkingModes } from '../../state/derive'
 import type { Pop, RequestType } from '../../state/store'
 import type { Theme } from '../../lib/theme'
@@ -120,8 +119,6 @@ export { SECTIONS, SETTINGS_PAGES, hasSlack, menuFor } from './menu'
 import { hasSlack, pageShown } from './menu'
 
 export interface Env {
-  S: StageIndex
-  stage: string
   agent: AgentState
   data: AgentData
   /** Spent so far this month, from the agent's data (a cap never rescales it). */
@@ -153,7 +150,7 @@ export interface Env {
   removeMember: (id: string) => void
   /** Whether Data and access shows the grant (status, hours, End now) instead of the demo's one switch. */
   grantUi: boolean
-  /** The product build (no demo): the demo-only rows (settings nothing reads yet, Act-stage alerts) and stage words are left out of the pages. */
+  /** The product build (no demo): the demo-only rows (settings nothing reads yet) are left out of the pages. */
   product: boolean
   /** Whether the viewer sees the support grant at all: an Admin or the Inhouse team (route 16), or anyone in the demo. */
   showGrant: boolean
@@ -219,7 +216,8 @@ function alertsChannelDesc(c: NotifyChannel, posting: NotifyPosting): string {
 }
 
 /**
- * The Slack notices page (P5 W4, p5-w4.md section 10). `product`: the build with no stages (M2-I), so no stage words.
+ * The Slack notices page (P5 W4, p5-w4.md section 10). No stage words (M2-I; the demo too since A13). `product`: the
+ * product build, whose posting state the demo doesn't serve yet.
  * Stage 1 M3-C (N27): in the product it says what the alerts mark gives (`viewer`: who is looking, for whose mark gives a
  * permission) and links an admin to Always allowed, where the permission can be removed.
  */
@@ -229,11 +227,9 @@ function slackPage(nv: NotifyView, product: boolean, viewer: MemberRole | 'inhou
   const rules: Section = { label: 'How notices work', rows: [
     // Stage 1 M2-N: in the product the agent's posts to a listed channel are off until the Inhouse team switches posting
     // on (N2), so its notices reach the bell; the server's own fixed alerts (a failed routine) post to the alerts channel.
-    product && posting?.on
+    posting?.on
       ? R('Agent posts', "Your Inhouse agent asks before it posts to a listed channel, unless it has a standing permission there. Inhouse's own alerts, like a failed routine, post to your alerts channel.", 'value')
-      : product
-        ? R('For now', "The agent's notices reach the bell in the app. Inhouse's own alerts, like a failed routine, post to your alerts channel.", 'value')
-        : R('Before the Act stage', 'Slack posts start at Act. Until then alerts reach the bell in the app.', 'value'),
+      : R('For now', "The agent's notices reach the bell in the app. Inhouse's own alerts, like a failed routine, post to your alerts channel.", 'value'),
     R('While Slack is paused', 'Alerts pause while Slack is paused or needs a reconnect.', 'value'),
     R('Who can read them', 'Anyone in a listed channel can read these alerts, guests included.', 'value'),
   ] }
@@ -340,7 +336,7 @@ export function webFetchWords(mode: unknown, hosts: unknown): { read: string; li
 }
 
 export function settingsPage(tab: string, env: Env): Page {
-  const { S, stage, agent, data } = env
+  const { agent, data } = env
   const { auditLog, memory, meta, people, skills, usage } = data
   const me = meta.currentUser
   const d0 = display()
@@ -362,13 +358,6 @@ export function settingsPage(tab: string, env: Env): Page {
   const waitingMem = waitingRows.length > 0 ? [{ label: 'Waiting for your OK', rows: waitingRows }] : []
   const memCount = teamMem.reduce((n, g) => n + g.rows.length, 0)
   const teach = R('Teach it something', "Tell it a rule in a chat, in your own words. It shows here, after an admin's OK if Ask is on.", 'button', 'Teach in a chat', 0, undefined, undefined, () => env.newChat('Remember that '))
-  const lim = people.runLimits
-  // These rows start at Act, so they name the channel Act connects. None: no channel wording or option.
-  const channel = channelFrom(data, 1)?.name
-  const alertOptions = channel ? ['Email', channel, `Email and ${channel}`, 'In the app only'] : ['Email', 'In the app only']
-  // A saved choice that isn't an option now (another channel, or none) shows and counts as the default.
-  const savedTo = agent.settings['n:channel']
-  const alertsTo = savedTo && alertOptions.includes(savedTo) ? savedTo : (channel ?? 'Email')
   const auditRow = (e: AuditLine) => withAvatar(R(`${e.who} ${e.what}`, `${e.detail} · ${fmtWhen(e.at, now, d0)}`, 'value'), e.who)
   /** The audit log's two groups: changes made today, and earlier ones. */
   const auditDay = (e: AuditLine) => fmtAuditDay(e.at, now, d0)
@@ -389,10 +378,6 @@ export function settingsPage(tab: string, env: Env): Page {
     env.download(dataExportFileName(now), demoExport(people.members, agent.settings, now), 'application/x-ndjson')
     env.toast('Sample export downloaded. The demo uses invented data.', 4000, 'info')
   }
-  const nextStage = S < 2
-    ? [`Act adds ${listNames(['drafted work', 'memory', 'routines', ...(channel ? [channel] : [])])}.`, 'Run adds agreed jobs it finishes by itself, within your limits.'][S]
-    : 'You have every stage. Money and customer actions still wait for a person.'
-  const stageDesc = ['Watch: your Inhouse agent reads every tool and changes nothing.', 'Act: your Inhouse agent does real work, and each piece waits for approval.', 'Run: your Inhouse agent handles agreed jobs by itself, within your limits.'][S]
 
   // Dropdowns and text fields show what was saved, else the default given here.
   const saved = agent.settings
@@ -410,9 +395,7 @@ export function settingsPage(tab: string, env: Env): Page {
   }))
   // A member is an Admin or a Member. Approving is a job per rule, by member id, so the Members page says nothing about rules.
   const team = people.members.filter(m => m.status !== 'removed')
-  const approverIds = [...team.map(m => m.id), 'anyone']
-  const approverLabels: Record<string, string> = { anyone: 'Anyone who approves', ...Object.fromEntries(people.members.map(m => [m.id, m.name])) }
-  // What only the demo offers: rows for settings nothing reads yet, and for work that starts at Act.
+  // What only the demo offers: rows for settings nothing reads yet.
   const demoOnly = (...rows: Row[]): Row[] => (env.product ? [] : rows)
 
   // Taking Admin away asks first, and says so plainly when it's your own.
@@ -433,22 +416,15 @@ export function settingsPage(tab: string, env: Env): Page {
       { label: 'Appearance', rows: [{ ...SEL('Theme', 'Light or dark. System follows your device.', 'g:theme', THEME_LABELS[env.theme], Object.values(THEME_LABELS)), onChange: v => env.setTheme(themeFromLabel(v)) }, ...demoOnly(sel('Language', 'Inhouse shows menus and messages in this language.', 'g:lang', 'English (US)', ['English (US)', 'English (UK)', 'Español', 'Français', 'Deutsch']), sel('Text size', 'The size of text and controls.', 'g:size', '100%', ['90%', '100%', '110%', '125%']))] },
       { label: 'Region', rows: [{ ...sel('Time zone', "Your team's time zone.", 'g:tz', 'America/New_York', Object.keys(TIME_ZONES)), labels: TIME_ZONES }] },
     ] },
-    'you-notif': { title: 'Notifications', sections: [
-      { label: 'Alerts', rows: demoOnly(sel('Approvals waiting', 'When your Inhouse agent drafts something for you.', 'n:wait', 'Right away', ['Right away', 'Once an hour', 'Once a day'], 1), SEL('Send alerts to', 'Where your Inhouse agent tells you about approvals and problems.', 'n:channel', alertsTo, alertOptions, 1), ...(channel ? [R(channel, `Ask your Inhouse agent and approve work in ${channel}.`, 'toggle', '', 1, 'n:slack' /* the channel toggle: the key stays so saved demo state still lines up */, true)] : []), R('Weekly report', 'Fridays at 4:00\u00a0PM.', 'toggle', '', 1, 'n:weekly', true)) },
-    ] },
     'you-memory': { title: 'Memory', sections: [
       { label: 'What your Inhouse agent knows about you', rows: forgetRows(memory.personal) },
       { label: 'Privacy', rows: [R('Only you can see this', 'Teammates and admins cannot read your personal memory.', 'value', 'Private'), R('Learn from my chats', 'Your Inhouse agent saves your preferences as you work. Turn off to stop.', 'toggle', '', 0, 'm:learn', true)] },
     ] },
-    // Stage 1 M2-H: the product's list of what the agent may do without asking (Permissions.tsx draws it; menu.ts keeps it
-    // out of the demo). Its words here are for the settings search.
+    // Stage 1 M2-H: the list of what the agent may do without asking (Permissions.tsx draws it). Its words here are for
+    // the settings search.
     'you-permissions': { title: 'Always allowed', sections: [], keywords: 'permissions always allow without asking remove stop allowing' },
     // Stage 1 M3-C: Ceiling.tsx draws it (the product only); named here for the search.
     'team-ceiling': { title: 'What the agent can do', sections: [], keywords: 'ceiling limits actions writes switch on off inhouse team per day batch' },
-    'team-plan': { title: 'Stage and plan', sections: [
-      { label: 'Your stage', rows: [R('Current stage', stageDesc, 'value', stage), R('Next stage', nextStage, 'value', S < 2 ? STAGE_TAGS[S + 1] : 'None'), R('Talk to your Inhouse team', 'Move up when you are ready. Every stage includes all your tools.', 'button', 'Book a check-in', 0, undefined, undefined, () => env.openTeam('change', ''))] },
-      { label: 'Running costs', rows: [R('AI and hosting', 'Paid at cost, to accounts you own, with a spending cap.', 'value', 'Anthropic · Cloudflare')] },
-    ] },
     'team-agent': { title: 'Inhouse agent', sections: [
       { label: 'About', rows: [
         txt('Brand name', 'Shown in the sidebar and in requests to your Inhouse team.', 'b:name', meta.brand.name),
@@ -478,14 +454,6 @@ export function settingsPage(tab: string, env: Env): Page {
         return withAvatar({ ...SEL(m.name, [m.email, m.title].filter(Boolean).join(' · '), `p:${m.id}`, m.role === 'admin' ? 'Admin' : 'Member', ['Admin', 'Member']), tag: m.status === 'invited' ? 'Invited' : undefined, tagVariant: 'muted', can: 'changeRole', save: v => env.setRole(m.id, v === 'Admin' ? 'admin' : 'member'), confirm: v => removesAdmin(m, v),
           remove: m.id === me.id || (env.me?.role === 'inhouse' && m.role === 'admin') ? undefined : { label: `Remove ${m.name}`, title: `Remove ${m.name}?`, text: `${first} loses access to Inhouse. The audit log keeps what ${first} did.`, action: 'Remove', go: () => env.removeMember(m.id) } }, m.id)
       }), { ...R('Invite someone', 'They sign in with their work email.', 'button', 'Invite', 0, undefined, undefined, env.invite), can: 'invite' }] },
-    ] },
-    'team-approvals': { title: 'Who approves what', sections: [
-      { label: 'Rules', rows: people.approvalRules.map((r, i) => withAvatar({ ...SEL(r.what, r.detail, `a:${i}`, r.approver, approverIds, 1), labels: approverLabels, tag: people.members.find(m => m.id === r.approver)?.status === 'removed' ? 'Removed' : undefined }, r.approver, 'control')) },
-    ] },
-    'team-limits': { title: 'Run limits', sections: [
-      { label: 'Jobs your Inhouse agent may finish by itself', rows: lim.jobsAgentMayFinish.map(({ id, name, desc }) => R(name, desc, 'toggle', '', 2, `l:${id}`, true)) },
-      { label: 'How far your Inhouse agent can go', rows: [sel('Daily limit', 'After this many actions in one day, it stops and asks.', 'l:daily', `${lim.dailyActionLimit} actions`, ['10 actions', '25 actions', '50 actions', '100 actions', '200 actions'], 2), sel('Largest restock', 'Bigger restocks wait for a person.', 'l:restock', `${lim.largestRestockUnits} units`, ['25 units', '50 units', '100 units', '250 units', '500 units'], 2)] },
-      { label: 'Always waits for a person', rows: [R('Money', 'Orders, refunds, claims and budget changes.', 'value', 'Always'), R('Customers', 'Any message to a customer.', 'value', 'Always')] },
     ] },
     'team-spend': { title: 'Spending cap', sections: [
       { label: 'This month', rows: [{ ...txt('Monthly cap', 'Chats, routines and jobs pause when the cap is reached.', 's:cap', fmtCapSetting(usage.cap, d0)), type: 'money' }, { ...txt('Job budget', `A long job stops once it has spent this. It can go a little over. Up to ${fmtMoney(moneyOf(MAX_JOB_BUDGET_USD, FIELD_CURRENCY), d0)}.`, 's:job_cap', fmtMoney(moneyOf(DEFAULT_JOB_BUDGET_USD, FIELD_CURRENCY), d0, { grouping: false })), type: 'jobBudget', keywords: 'job budget per job max' }, sel('Alert at', 'Admins get an email.', 's:alert', `${usage.alertAt}%`, ['50%', '70%', '80%', '90%', '100%']), sel('Show amounts in', 'The currency used for amounts in reports and emails.', 's:currency', 'USD ($)', ['USD ($)', 'GBP (£)', 'EUR (€)', 'CAD ($)', 'AUD ($)']), R('Spent so far', `${usage.month} ${usage.monthKey?.slice(0, 4) ?? calendarOf(now, d0).year}.`, 'value', fmtSpentSetting(env.spent, d0))] },

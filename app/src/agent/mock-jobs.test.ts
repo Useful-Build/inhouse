@@ -123,7 +123,7 @@ describe('demo seeded long jobs and bell notices (J2, J3, J4)', () => {
 
   test('First day hides seeded jobs and job notices', async () => {
     const l = await load()
-    l.mock.setDemo({ stage: 'Act', scenario: 'First day' })
+    l.mock.setDemo({ scenario: 'First day' })
     expect(await l.mock.job('catalog-audit')).toBeNull()
     expect(l.mock.listNotifications()).toEqual([])
   })

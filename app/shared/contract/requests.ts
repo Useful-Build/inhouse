@@ -1,6 +1,6 @@
 // The inputs of the client's calls that carry options, as zod schemas (from #58's review): the client's types are inferred from these.
 import { z } from 'zod'
-import { EffortSchema, ScenarioSchema, StageSchema } from './common.ts'
+import { EffortSchema, ScenarioSchema } from './common.ts'
 import { AttachmentSchema } from './chat.ts'
 import { ChatIdSchema } from './chat-ids.ts'
 
@@ -8,8 +8,8 @@ import { ChatIdSchema } from './chat-ids.ts'
 export const SendPrioritySchema = z.enum(['now', 'next', 'later'])
 export type SendPriority = z.infer<typeof SendPrioritySchema>
 
-/** The demo's stage and scenario. */
-export const DemoContextSchema = z.object({ stage: StageSchema, scenario: ScenarioSchema })
+/** The demo's scenario. The demo has no stages, as the product (decision A13, option B). */
+export const DemoContextSchema = z.object({ scenario: ScenarioSchema })
 export type DemoContext = z.infer<typeof DemoContextSchema>
 
 /** `ask`'s options. */

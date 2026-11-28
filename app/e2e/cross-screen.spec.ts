@@ -4,8 +4,8 @@ import { expect, fxFor, test } from './support/fx.js'
 import type { Page } from '@playwright/test'
 import { atRest } from './states.js'
 
-async function start(page: Page, stage: 'Watch' | 'Act' | 'Run' = 'Act', hash = '#/today') {
-  await fxFor(page, undefined).seed({ stage, demo: { ambient: 'Always' } })
+async function start(page: Page, hash = '#/today') {
+  await fxFor(page, undefined).seed({ demo: { ambient: 'Always' } })
   await page.goto('/?demo' + hash)
 }
 
@@ -121,7 +121,7 @@ test('Chats: a new chat starts clean, with no old reply and the default model', 
 })
 
 test('Settings reach other screens: model, spending cap, alert level and member roles', async ({ page }) => {
-  await start(page, 'Act', '#/settings/team-modes')
+  await start(page, '#/settings/team-modes')
   await page.getByRole('combobox', { name: 'Default model: Smart' }).click()
   await page.getByRole('option', { name: 'Max' }).click()
   await side(page).getByRole('navigation', { name: 'Main' }).getByRole('button', { name: 'Today' }).click()
@@ -150,26 +150,10 @@ test('Settings reach other screens: model, spending cap, alert level and member 
   await keep(page, 'usage-1440', true)
   // November is the first month with spend (the first tool was connected on Nov 2), the only one: no month picker.
   await expect(page.getByRole('combobox', { name: /^Month/ })).toHaveCount(0)
-
-  // The approver list holds every member and Anyone, a plain Member included (call 3: approving is a job per rule, not a role).
-  await page.goto('/?demo#/settings/team-approvals')
-  await page.getByRole('combobox', { name: 'Orders over $5,000: Dana Kim' }).click()
-  await expect(page.getByRole('option')).toHaveCount(5)
-  await expect(page.getByRole('option', { name: 'Priya Shah' })).toBeVisible()
-})
-
-test('Today at Run: Biggest amount first keeps handled cards after the ones that need you', async ({ page }) => {
-  await start(page, 'Run')
-  await page.getByRole('combobox', { name: /^Sort cards/ }).click()
-  await page.getByRole('option', { name: 'Biggest amount first' }).click()
-  const handled = await page.getByRole('article').evaluateAll(els => els.map(e => (e.textContent ?? '').includes('Handled by Inhouse agent')))
-  expect(handled).toContain(true)
-  expect(handled).toContain(false)
-  expect(handled, 'handled cards come last').toEqual([...handled].sort((a, b) => Number(a) - Number(b)))
 })
 
 test('Focus: Clear search goes back to the box, a dropdown closed from outside goes back to its button, Help closes to Settings', async ({ page }) => {
-  await start(page, 'Act', '#/tools')
+  await start(page, '#/tools')
   const search = page.getByRole('searchbox', { name: 'Search tools' })
   await search.fill('ship')
   await page.getByRole('button', { name: 'Clear search' }).click()
@@ -243,7 +227,7 @@ test('Chat URLs: See all and each chat have their own address, Back and Forward 
 })
 
 test('Library: a pick clears when the tab, place or search changes; two deletes share one Undo; Escape leaves Select; counts follow the search', async ({ page }) => {
-  await start(page, 'Act', '#/library')
+  await start(page, '#/library')
   const cards = page.getByRole('list', { name: 'Files' }).getByRole('listitem')
   const tabs = page.getByRole('radiogroup', { name: 'File type' })
   const bar = page.getByRole('toolbar', { name: 'Selected files' })
@@ -314,12 +298,12 @@ test('Library: sample data with an unknown place stops the app with a message', 
   })
   const errors: string[] = []
   page.on('pageerror', e => errors.push(e.message))
-  await start(page, 'Act', '#/library')
+  await start(page, '#/library')
   await expect.poll(() => errors.join(' ')).toContain('unknown place "nowhere"')
 })
 
 test('Demo switcher: no page puts a control under it at 1440', async ({ page }) => {
-  await start(page, 'Act', '#/library')
+  await start(page, '#/library')
   for (const hash of ['#/library', '#/settings/you-general', '#/today', '#/chats/refunds', '#/usage', '#/approvals']) {
     await page.goto('/?demo' + hash)
     await expect(page.getByRole('button', { name: /^Demo switches/ })).toBeVisible()

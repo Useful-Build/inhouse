@@ -3,13 +3,13 @@
   "team": {
     "Suppliers": [
       {
-        "text": "Kestrel Supply ships in 14 days and wants purchase orders as a PDF.",
+        "text": "Kestrel Supply ships in 14 days.",
         "source": "Learned from 6 past orders",
         "used": "used 12 times",
         "lastUsed": "0d 06:05"
       },
       {
-        "text": "Mei Chen is the contact at Kestrel. Keep supplier emails short.",
+        "text": "Mei Chen is the contact at Kestrel.",
         "source": "Sam told your Inhouse agent in a chat",
         "at": "-12d 14:20",
         "used": "used 7 times"
@@ -23,9 +23,9 @@
         "used": "used 41 times"
       },
       {
-        "text": "Sign customer emails \"The Northline team\".",
+        "text": "Sign customer replies \"The Northline team\".",
         "source": "Set up by your Inhouse team",
-        "used": "used on every customer email"
+        "used": "used on every reply it writes"
       }
     ],
     "Stock and money": [
@@ -60,8 +60,8 @@
         "at": "-13d 09:45"
       },
       {
-        "text": "You handle supplier emails yourself. Dana handles money.",
-        "source": "Learned from your approvals"
+        "text": "You handle supplier questions yourself. Dana handles money.",
+        "source": "Learned from your chats"
       }
     ]
   }

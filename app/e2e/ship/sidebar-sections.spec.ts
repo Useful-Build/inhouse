@@ -9,8 +9,8 @@ const side = (page: Page) => page.getByRole('complementary', { name: 'Sidebar' }
 const account = (page: Page) => page.getByRole('menu', { name: 'Account' })
 const team = (page: Page) => page.getByRole('dialog', { name: 'Your Inhouse team' })
 
-async function start(page: Page, fx: Fx, stage: 'Watch' | 'Act' = 'Act', theme: 'light' | 'dark' = 'light') {
-  await fx.seed({ stage, theme })
+async function start(page: Page, fx: Fx, theme: 'light' | 'dark' = 'light') {
+  await fx.seed({ theme })
   await page.emulateMedia({ colorScheme: theme })
   await page.goto('/?demo#/today')
   await expect(page.getByRole('heading', { level: 1 }).first()).toBeVisible()
@@ -61,14 +61,9 @@ test('S2: The account menu holds Usage and one entry for the team, with its open
   await expect(team(page)).toHaveCount(0)
 })
 
-test('S3: In Watch, Approvals and Routines show their locks; in dark the page keeps its near-black ground', async ({ fx, page }) => {
-  await start(page, fx, 'Watch')
-  await openSidebar(page)
-  const nav = side(page).getByRole('navigation', { name: 'Main' })
-  await expect(nav.getByRole('button', { name: /^Approvals/ })).toContainText('Act')
-  await expect(nav.getByRole('group', { name: 'Your agent' }).getByRole('button', { name: /^Routines/ })).toContainText('Act')
-  if (phone()) await page.keyboard.press('Escape')
-
+// S3's Watch locks left with the demo's stages (decision A13, option B); its dark-ground check stays.
+test('S3: in dark the page keeps its near-black ground', async ({ fx, page }) => {
+  await start(page, fx)
   await fx.setTheme('dark')
   await page.emulateMedia({ colorScheme: 'dark' })
   await page.reload()

@@ -19,7 +19,7 @@ import { atRest } from './states.js'
 async function start(page: Page, hash: string) {
   // Time keeps flowing; runFor adds app time on top (answers, the session save, toasts), so no real sleep.
   await page.clock.install()
-  await fxFor(page, undefined).seed({ stage: 'Act', demo: { ambient: 'Always' } })
+  await fxFor(page, undefined).seed({ demo: { ambient: 'Always' } })
   await page.goto('/?demo' + hash)
 }
 

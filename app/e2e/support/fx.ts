@@ -7,7 +7,6 @@ import type { Page, Response } from '@playwright/test'
 import { expect, test as base } from '../csp.js'
 import { mockClient } from './clients/mock.js'
 
-export type Stage = 'Watch' | 'Act' | 'Run'
 export type Theme = 'light' | 'dark'
 /** The demo's dot sweep. "When Ava works" is the value an old version saved; the app maps it to "When working". */
 export type Ambient = 'Always' | 'Off' | 'When working' | 'When Ava works'
@@ -25,8 +24,8 @@ export type DemoSwitches = {
   brand?: { brandName: string; channels: boolean }
 }
 
+/** What a spec starts the page with. The demo has no stages since decision A13 (option B), as the product. */
 export type Seed = {
-  stage: Stage
   /** A scenario switch ("Normal", "First day", "Loading", "Cap reached", "Tool disconnected"). Default "Normal". */
   scenario?: string
   /** The app's own theme preference (product too), saved before the app loads. */
@@ -36,8 +35,8 @@ export type Seed = {
   demo?: DemoSwitches
 }
 
-/** Changes the stage (and demo switches) on the loads that follow, keeping everything the page saved. */
-export type Restage = Pick<Seed, 'stage' | 'scenario' | 'demo'>
+/** Changes the scenario (and demo switches) on the loads that follow, keeping everything the page saved. */
+export type Restage = Pick<Seed, 'scenario' | 'demo'>
 
 /** The demo's saved state, as the app wrote it (or as an earlier version did): a spec passes old values to check they load. */
 export type SavedDemo = Record<string, unknown>
@@ -80,7 +79,7 @@ export interface Fx {
   seed(s: Seed): Promise<void>
   /** `seed`, plus a saved demo state written under it. Demo-only. One seed per page. */
   seedSaved(s: Seed, saved: SavedDemo): Promise<void>
-  /** Changes the stage on later loads of this page, keeping saved state (a mid-test move to another stage). */
+  /** Changes the scenario on later loads of this page, keeping saved state (a mid-test move to another scenario). */
   restage(s: Restage): Promise<void>
   /** Changes the app's theme on later loads of this page (a mid-test switch), keeping saved state. */
   setTheme(theme: Theme): Promise<void>

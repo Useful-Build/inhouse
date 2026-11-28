@@ -17,12 +17,12 @@ const { SETTINGS_PAGES, checkField, settingsPage } = await import('./content')
 type Env = Parameters<typeof settingsPage>[1]
 type Row = ReturnType<typeof settingsPage>['sections'][number]['rows'][number]
 
-/** Every row on every settings page, at Run (the stage that shows them all). */
+/** Every row on every settings page (the demo's view, which shows them all). */
 function allRows(): Row[] {
   const data = agent.read()
   const noop = () => {}
   const env: Env = {
-    S: 2, stage: 'Run', agent: agent.getSnapshot(), data, spent: data.usage.total, phone: false,
+    agent: agent.getSnapshot(), data, spent: data.usage.total, phone: false,
     openTeam: noop, openPop: noop, openSettings: noop, newChat: noop, goSkills: noop, togglePause: noop,
     theme: 'system', setTheme: noop, toast: noop, forget: noop, download: noop, setRole: noop, setSupport: noop,
     me: agent.me(), invite: noop, removeMember: noop, grantUi: false, product: false, showGrant: true, loadingMore: false, loadMore: noop, exportFromServer: null, exportDataFromServer: null,
@@ -43,7 +43,10 @@ describe('the page and the registry (failures 1 to 3)', () => {
   const keys = new Set(rows.flatMap(r => [r.key, r.switchKey]).filter((k): k is string => !!k))
 
   it('sees every kind of key, so the checks below are not empty', () => {
-    for (const k of ['g:name', 'g:tz', 'n:slack', 'tm:fable:effort', 'tm:fable:on', 'l:returns', 'l:daily', 'a:0', 'd:2fa', 'd:support', 'p:m_sam']) expect(keys).toContain(k)
+    // Notifications (`n:`), Run limits (`l:`) and Who approves what (`a:`) left every build with decision A13: their keys
+    // stay in the registry, unread by any page.
+    for (const k of ['g:name', 'g:tz', 'tm:fable:effort', 'tm:fable:on', 'd:2fa', 'd:support', 'p:m_sam']) expect(keys).toContain(k)
+    for (const k of ['n:slack', 'n:channel', 'l:returns', 'l:daily', 'a:0']) expect(keys).not.toContain(k)
   })
 
   it('has a spec for every key the page saves, and none for a role or a grant', () => {
@@ -87,15 +90,17 @@ describe('the page and the registry (failures 1 to 3)', () => {
   })
 
   it('redacts the free-text choices, and still takes every option the page offers for them', () => {
-    // `n:channel` (alert channels) and `g:mode` (model modes) are free text until the server holds closed lists.
+    // `n:channel` (alert channels) and `g:mode` (model modes) are free text until the server holds closed lists. No page
+    // offers `n:channel` since decision A13 (its Notifications page is gone), so only the registry is checked for it.
     for (const key of ['n:channel', 'g:mode']) {
       expect(settingSpec(key)!.auditSafe, key).toBe(false)
-      const row = rows.find(r => r.key === key)
-      expect(row?.options?.length, key).toBeGreaterThan(0)
-      for (const o of [...row!.options!, row!.value]) expect(parses(key, o), `${key} ${o}`).toBe(true)
       expect(parses(key, ''), `${key} empty`).toBe(false)
       expect(parses(key, 'x'.repeat(81)), `${key} too long`).toBe(false)
     }
+    expect(parses('n:channel', 'Email and #ops-alerts')).toBe(true)
+    const row = rows.find(r => r.key === 'g:mode')
+    expect(row?.options?.length).toBeGreaterThan(0)
+    for (const o of [...row!.options!, row!.value]) expect(parses('g:mode', o), `g:mode ${o}`).toBe(true)
   })
 })
 
