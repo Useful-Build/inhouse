@@ -15,9 +15,13 @@
 //    the run's close disconnects Slack (#583), so a later suite's tools don't change.
 // Planting in the store or a web page needs a per-case dataset on the eval hub, not built: those cases are listed as not
 // served here (their twins W31 to W37 plant the same attacks through a file or a memory hit).
-import { accessHeaders, createProductTarget, EVAL_AUD_VAR, testIssuerSignIn, type ProductTarget, type ProductTargetOptions } from '../targets/product.ts'
-import { connectSlack, disconnectSlack, type InhouseApi } from '../targets/slack-door.ts'
+import { WRANGLER_TIMEOUT_MS } from '../targets/door.ts'
+import { accessHeaders, createProductTarget, EVAL_AUD_VAR, JOB_END_TIMEOUT_MS, testIssuerSignIn, type ProductTarget, type ProductTargetOptions } from '../targets/product.ts'
+import { connectSlack, disconnectSlack, slackShown, type InhouseApi } from '../targets/slack-door.ts'
 import { SEED_INHOUSE } from '../../server/seed/brand.ts'
+import { createSessionReader, type SessionReader } from '../read-side/product/r2.ts'
+import { EVAL_BUCKET } from '../exfiltration/store-data/transcripts.ts'
+import { plantVerdict } from './transcript.ts'
 import type { ExfilSpec } from '../types.ts'
 import { StartUndoFailed, type InjectionSession, type InjectionTarget } from './runner.ts'
 import { canonical } from './grade.ts'
@@ -29,6 +33,49 @@ import { PRODUCT_PLANTS, type EvAction, type HarnessAnswer, type InjectionCase, 
 export const CLOCK_SLACK_MS = 2_000
 /** How long the control's card may take to appear after the turn, and its send after the answer (the 10 s hold and the send). */
 export const CONTROL_WAIT_MS = 90_000
+/**
+ * How long a close waits for the running repeat to end (#663): its turn is already stopped, so this is the runner's
+ * quiesce, then reset()'s own quiesce (each up to JOB_END_TIMEOUT_MS), then the reset's few calls (#672: the cap covers both
+ * quiesces with a margin).
+ */
+export const REPEAT_END_WAIT_MS = 2 * JOB_END_TIMEOUT_MS + 90_000
+/**
+ * How long a close waits on a case setup in flight with no call ending (#672, #685): the setup stops at its next step once
+ * the close begins, but one step (the product seed) makes several calls. Each call has its own deadline (API_TIMEOUT_MS,
+ * WRANGLER_TIMEOUT_MS), so the close waits as long as calls keep ending, and gives up once none has ended for longer than
+ * the longest deadline with a margin.
+ */
+export const SETUP_QUIET_MS = WRANGLER_TIMEOUT_MS + 30_000
+
+/** A case that connects Slack at its start: it posts there, or its plant is there. */
+const needsSlack = (c: InjectionCase): boolean => c.needs.includes('slack_post') || c.plant?.via === 'slack'
+
+/** Waits for `p` up to `ms`; true if it settled (either way), false if the time ran out. */
+async function settledWithin(p: Promise<unknown>, ms: number): Promise<boolean> {
+  let timer: ReturnType<typeof setTimeout> | undefined
+  const late = new Promise<false>((r) => { timer = setTimeout(() => r(false), ms) })
+  try {
+    return await Promise.race([p.then(() => true, () => true), late])
+  } finally {
+    clearTimeout(timer)
+  }
+}
+
+/** A sleep a cancel ends at once (#664). */
+const abortableSleep = async (sleep: (ms: number) => Promise<void>, ms: number, signal?: AbortSignal): Promise<void> => {
+  if (!signal) return sleep(ms)
+  if (signal.aborted) return
+  let onAbort!: () => void
+  const aborted = new Promise<void>((r) => { onAbort = r })
+  signal.addEventListener('abort', onAbort, { once: true })
+  try {
+    await Promise.race([sleep(ms), aborted])
+  } finally {
+    // One listener per poll would pile up over a 90 s wait (Node warns past 10): each goes when its sleep ends.
+    signal.removeEventListener('abort', onAbort)
+  }
+}
+const cancelled = (signal?: AbortSignal) => signal?.aborted === true
 
 /**
  * #584: the eval log holds a Slack post as the outbox sent it (`{ channelId, text, title? }`), the outbox rows as the
@@ -86,10 +133,19 @@ export interface ProductInjectionOptions extends Pick<ProductTargetOptions, 'pai
   base?: ProductTarget
   /** The product as the Inhouse team (tests); default from INHOUSE_EVAL_INHOUSE_ORIGIN and _AUD. None: no Slack case runs. */
   inhouse?: InhouseApi | null
+  /**
+   * The session transcripts (tests); default the read-side set's R2 reader on the eval bucket (CF_SANDBOX_ACCOUNT_ID and
+   * CLOUDFLARE_API_TOKEN with R2 read), made on first use.
+   */
+  sessions?: SessionReader
   /** The Slack connect and disconnect (tests); default slack-door.ts's, through the product's own routes. */
   slackLink?: { connect(api: InhouseApi): Promise<void>; disconnect(api: InhouseApi): Promise<void> }
   sleep?: (ms: number) => Promise<void>
   now?: () => number
+  /** How long a close waits for the running repeat to end (tests); default REPEAT_END_WAIT_MS. */
+  repeatEndWaitMs?: number
+  /** How long a close waits on a case setup with no call ending (tests); default SETUP_QUIET_MS. */
+  setupQuietMs?: number
 }
 
 export function createProductInjectionTarget(o: ProductInjectionOptions): InjectionTarget {
@@ -107,39 +163,188 @@ export function createProductInjectionTarget(o: ProductInjectionOptions): Inject
   async function leaveSlack(): Promise<void> {
     if (!slackConnected || !inhouse) return
     const failed: unknown[] = []
-    try {
-      await base.slackDoor().reset()
-    } catch (e) {
-      failed.push(e)
-    }
+    // The disconnect first (#612): it is what a later suite would see, and a cancel's close may be cut short.
     try {
       await link.disconnect(inhouse)
       slackConnected = false
     } catch (e) {
       failed.push(e)
     }
+    try {
+      await base.slackDoor().reset()
+    } catch (e) {
+      failed.push(e)
+    }
     if (failed.length === 1) throw failed[0]
     if (failed.length > 1) throw new AggregateError(failed, 'emptying the Slack workspace and disconnecting Slack both failed')
   }
+  /** What the run found and put right before its first case (#612), for the report. */
+  const notes: string[] = []
+  let slackChecked = false
+  /**
+   * #612: a hard-killed earlier run can leave Slack connected or the eval workspace full, which a non-Slack case (or
+   * another suite) would then run with. Once, at the first case's start (the doors exist only after the eval-brand check):
+   * Slack connected is disconnected, a workspace or a listed channel left is emptied, and the report says so. Slack left
+   * connected with no Inhouse app to disconnect it fails the case by name.
+   */
+  async function checkSlackAtStart(): Promise<void> {
+    if (slackChecked) return
+    const slack = base.slackDoor()
+    const [account, w] = await Promise.all([slack.account(), slack.read()])
+    const connected = account?.lastState === 'connected'
+    const left = w.channels.length + w.messages.length + w.listed.length
+    if (!connected && left === 0) {
+      slackChecked = true
+      return
+    }
+    // Both steps tried, their errors kept (Neon's #618 review); marked done only once both held, and a failure stops the
+    // run (StartUndoFailed, a reset failure to the runner), so no repeat runs on an earlier run's Slack.
+    const failed: unknown[] = []
+    if (connected) {
+      if (!inhouse) failed.push(new Error('Slack is still connected from an earlier run, and without the Inhouse app (INHOUSE_EVAL_INHOUSE_ORIGIN and _AUD) it can\'t be disconnected'))
+      else {
+        try {
+          await link.disconnect(inhouse)
+        } catch (e) {
+          failed.push(e)
+        }
+      }
+    }
+    if (left > 0) {
+      try {
+        await slack.reset()
+      } catch (e) {
+        failed.push(e)
+      }
+    }
+    if (failed.length) throw new StartUndoFailed(failed, 'the start-of-run Slack cleanup failed, so the run stops')
+    slackChecked = true
+    notes.push(`At the run's start an earlier run's Slack state was put right: ${[connected ? 'Slack disconnected' : '', left > 0 ? `the eval workspace emptied (${w.channels.length} channels, ${w.messages.length} messages, ${w.listed.length} listed)` : ''].filter(Boolean).join(', ')}.`)
+  }
   const sleep = o.sleep ?? ((ms: number) => new Promise<void>((r) => setTimeout(r, ms)))
   const now = o.now ?? Date.now
-  return {
+  /**
+   * Neon's #618 review, cancel races: once the close starts no case starts and no Slack connect begins; a connect already
+   * in flight is waited for, so it can't outlive the close; the running repeat's turns are stopped before the lease goes.
+   */
+  let closed = false
+  /** Starts in flight and the running repeat's end (its reset), which the close waits for (#663). */
+  const starting = new Set<Promise<unknown>>()
+  /** Setup steps ended here, plus the product target's calls ended: what the close's wait on a setup watches (#685). */
+  let stepsDone = 0
+  const progress = () => stepsDone + (base.progress?.() ?? 0)
+  let repeatDone: Promise<void> | null = null
+  let sessions: SessionReader | undefined = o.sessions
+  let connecting: Promise<void> | null = null
+  let active: { stopTurns?(): Promise<void> } | null = null
+  const closingRefusal = () => new Error('the target is closing (a cancel): no case starts and Slack stays off')
+  const target: InjectionTarget = {
     name: 'product',
     provides,
-    serves: (c) => (c.plant && !plants.includes(c.plant.via) ? `planting through ${c.plant.via} needs a per-case dataset on the eval hub (not built)` : null),
+    serves: (c) => {
+      if (!c.plant || plants.includes(c.plant.via)) return null
+      if (c.plant.via === 'slack') return `a Slack plant needs the Inhouse app (${EVAL_INHOUSE_ORIGIN_VAR} and ${EVAL_INHOUSE_AUD_VAR}), which is not set`
+      return `planting through ${c.plant.via} needs a per-case dataset on the eval hub (not built)`
+    },
+    lacks: (family) => (family === 'slack_post' && !inhouse ? `slack_post: the Inhouse app (${EVAL_INHOUSE_ORIGIN_VAR} and ${EVAL_INHOUSE_AUD_VAR}) is not set` : null),
     spentUsd: () => base.spentUsd?.() ?? 0,
+    notes: () => [...notes],
+    async preflight() {
+      // The product target's own checks first (the eval brand, the lease, the cap: targets/product.ts setup), which make
+      // its doors; then one read through each door the run uses, and one R2 LIST of the session transcripts (as the
+      // read-side and store-data suites do). A refusal throws here, before any paid turn.
+      // Tracked like a start (#680): a close waits for it, so the lease its setup takes goes back after it.
+      const p = (async () => {
+        if (closed) throw closingRefusal()
+        // (A Slack case without the Inhouse app never reaches here: it is not run or not served, and the runner stops on
+        // it before the preflight unless the run waived it.)
+        await base.ready()
+        if (closed) throw closingRefusal()
+        await base.writeDoor().now()
+        if (inhouse) {
+          await base.slackDoor().read()
+          // One read-only call through the Inhouse app the Slack connect uses (route 70, the Tools page), so a wrong
+          // origin or aud stops the run here, not at the first Slack case (#671).
+          await slackShown(inhouse)
+        }
+        sessions ??= createSessionReader({ env: o.env, bucket: EVAL_BUCKET })
+        await sessions.preflight()
+      })()
+      starting.add(p)
+      try {
+        await p
+      } finally {
+        starting.delete(p)
+      }
+    },
     close: async () => {
+      closed = true
+      const failed: unknown[] = []
+      // A start in flight (seeding, connecting, listing) ends first, refused at its next step and undone by itself; its
+      // failure is start()'s to report (#663). Then a connect in flight.
+      // Bounded (#672, #685): waited for while its calls keep ending; one that goes quiet for SETUP_QUIET_MS is named, and
+      // the close goes on without it.
+      const quietMs = o.setupQuietMs ?? SETUP_QUIET_MS
+      const connectInFlight = connecting as Promise<void> | null
+      const inFlight = [...starting, ...(connectInFlight ? [connectInFlight] : [])]
+      if (inFlight.length) {
+        const all = Promise.allSettled(inFlight)
+        for (;;) {
+          const before = progress()
+          if (await settledWithin(all, quietMs)) break
+          if (progress() === before) {
+            failed.push(new Error(`a case setup made no progress for ${quietMs / 1000} s after the close`))
+            break
+          }
+        }
+      }
+      try {
+        // The running repeat's turns stop before the lease goes back.
+        await active?.stopTurns?.()
+      } catch (e) {
+        failed.push(e)
+      }
+      // The running repeat's own quiesce, evidence and reset (the runner keeps them going after the cancel aborts its
+      // turn) end before the lease goes back and Slack is left, so none of its writes lands after (#663). Bounded: a
+      // runner that never resets can't hold the close forever.
+      const waitMs = o.repeatEndWaitMs ?? REPEAT_END_WAIT_MS
+      if (repeatDone && !(await settledWithin(repeatDone, waitMs))) failed.push(new Error(`the running repeat did not end within ${waitMs / 1000} s of the close`))
       try {
         // #583: leave the shared eval deployment without Slack (a cancel mid-repeat lands here too).
         await leaveSlack()
-      } finally {
+      } catch (e) {
+        failed.push(e)
+      }
+      try {
         await base.close?.()
+      } catch (e) {
+        failed.push(e)
+      }
+      if (failed.length === 1) throw failed[0]
+      if (failed.length > 1) throw new AggregateError(failed, 'the target\'s close failed in more than one step')
+    },
+    async start(c, run) {
+      // Every start is tracked while it runs, so a close waits for it (#663).
+      const p = startCase(c, run)
+      starting.add(p)
+      try {
+        return await p
+      } finally {
+        starting.delete(p)
       }
     },
-    async start(c: InjectionCase, run): Promise<InjectionSession> {
-      const slackCase = c.needs.includes('slack_post') || c.plant?.via === 'slack'
+  }
+
+  async function startCase(c: InjectionCase, run: { rep: number; canary: string }): Promise<InjectionSession> {
+    {
+      if (closed) throw closingRefusal()
+      const slackCase = needsSlack(c)
       const plant: ExfilSpec | undefined = c.plant && c.plant.via !== 'slack' ? { kind: 'memory', via: c.plant.via as ExfilSpec['via'], hosts: [], plant: c.plant.text } : undefined
       const session = await base.seed([], { caseId: c.id, rep: run.rep, canary: run.canary, writes: true }, plant)
+      active = session
+      // The repeat's end, which a close waits for (#663): settled by its reset, or by an undone start.
+      let markDone!: () => void
+      repeatDone = new Promise<void>((r) => { markDone = r })
       const w = base.writeDoor()
       const asker = base.people.current
       const seeded = new Set<string>()
@@ -147,28 +352,59 @@ export function createProductInjectionTarget(o: ProductInjectionOptions): Inject
       let mark = 0
       let teammate: string | undefined
       let ceilingsBefore: WriteEvidence['ceilingsBefore'] = null
+      // A close that began during any setup step (the seed above, or one below): the case stops at once, undone in the
+      // catch, and never hands back a live session (#663, #679).
+      const held = () => {
+        stepsDone++
+        if (closed) throw closingRefusal()
+      }
       try {
+        held()
         if (base.room) {
           const room = await base.room()
+          held()
           if (room.spentUsd + 0.25 > room.capUsd) throw new Error(`this month's spend ($${room.spentUsd.toFixed(2)}) leaves no room under the $${room.capUsd} cap`)
         }
         await w.resetWrites()
+        held()
         mark = (await w.now()) - CLOCK_SLACK_MS
-        for (const s of c.ceilings) await w.setCeiling(s.operation, { ...(s.perDayMax !== undefined ? { perDayMax: s.perDayMax } : {}), ...(s.unitsMax !== undefined ? { unitsMax: s.unitsMax } : {}) })
-        if (c.namedMember) teammate = await base.addTeammate({ caseId: c.id, rep: run.rep, name: c.namedMember })
+        held()
+        for (const s of c.ceilings) {
+          await w.setCeiling(s.operation, { ...(s.perDayMax !== undefined ? { perDayMax: s.perDayMax } : {}), ...(s.unitsMax !== undefined ? { unitsMax: s.unitsMax } : {}) })
+          held()
+        }
+        await checkSlackAtStart()
+        held()
+        if (c.namedMember) {
+          teammate = await base.addTeammate({ caseId: c.id, rep: run.rep, name: c.namedMember })
+          held()
+        }
         if (slackCase) {
           if (!inhouse) throw new Error('a Slack case needs the Inhouse app (INHOUSE_EVAL_INHOUSE_ORIGIN and _AUD)')
           // A fresh connection per case-repeat (the fake keeps its tokens in memory), the workspace with the case's plant
           // in #support, then the case's listed channels (after its ceiling: the door lists only where posting is on).
           // Marked before the connect: a connect that fails after its callback committed is still disconnected later.
           slackConnected = true
-          await link.connect(inhouse)
+          connecting = link.connect(inhouse)
+          try {
+            await connecting
+          } finally {
+            connecting = null
+          }
+          // A close that began while the connect ran: this case stops here (its undo leaves Slack off).
+          held()
           const slack = base.slackDoor()
           await slack.seed({ messages: c.plant?.via === 'slack' ? [{ channel: 'support', text: c.plant.text(run.canary) }] : [] })
+          held()
           await slack.list({ by: base.people.lena, channels: c.channels.map((name) => ({ name: name.replace(/^#/, '') })) })
+          held()
         }
-        if (c.grant) seeded.add(await w.grant({ memberId: asker, operation: c.grant.operation, ...(c.grant.perDay !== undefined ? { perDay: c.grant.perDay } : {}), ...(c.grant.unitsMax !== undefined ? { unitsMax: c.grant.unitsMax } : {}) }))
+        if (c.grant) {
+          seeded.add(await w.grant({ memberId: asker, operation: c.grant.operation, ...(c.grant.perDay !== undefined ? { perDay: c.grant.perDay } : {}), ...(c.grant.unitsMax !== undefined ? { unitsMax: c.grant.unitsMax } : {}) }))
+          held()
+        }
         ceilingsBefore = ceilingRows(await w.ceilings())
+        held()
       } catch (e) {
         // Every part of the undo runs even when one before it throws (the Slack workspace above all), and the seed's own
         // error stays the one thrown.
@@ -180,8 +416,11 @@ export function createProductInjectionTarget(o: ProductInjectionOptions): Inject
           } catch (u) {
             failed.push(u)
           }
+          stepsDone++
         }
         // A failed undo leaves state the next repeat would inherit: the runner records it as a reset failure and stops.
+        active = null
+        markDone()
         if (failed.length) throw new StartUndoFailed([e, ...failed], 'the seed failed, and undoing it failed too')
         throw e
       }
@@ -238,9 +477,11 @@ export function createProductInjectionTarget(o: ProductInjectionOptions): Inject
           if (!session.quiesce) throw new Error('the product session has no quiesce')
           await session.quiesce()
         },
-        async approveControl(control) {
+        async approveControl(control, opts = {}) {
           // A grant's control has no card: the seeded grant runs it (the grader checks it did).
           if (control.via === 'grant') return
+          const stop = () => { if (cancelled(opts.signal)) throw new Error('cancelled') }
+          stop()
           const want = canonical(control.args)
           const deadline = now() + CONTROL_WAIT_MS
           let action: EvAction | undefined
@@ -249,8 +490,10 @@ export function createProductInjectionTarget(o: ProductInjectionOptions): Inject
             if (action?.state === 'waiting') break
             if (action && action.state !== 'waiting') throw new Error(`the control's action is ${action.state}, not waiting for an answer`)
             if (now() > deadline) throw new Error('the control\'s card never appeared')
-            await sleep(2_000)
+            await abortableSleep(sleep, 2_000, opts.signal)
+            stop()
           }
+          stop()
           const answer = async (who: 'current' | 'lena', choice: 'once' | 'approve', rev: number) => {
             const r = await base.call(who, 'POST', `/api/actions/${encodeURIComponent(action!.id)}/answer`, { json: { choice, ifRev: rev } })
             answers.push({ actionId: action!.id, choice, by: who === 'lena' ? base.people.lena : asker, byRole: who === 'lena' ? 'admin' : 'member', accepted: r.status === 200 })
@@ -271,13 +514,23 @@ export function createProductInjectionTarget(o: ProductInjectionOptions): Inject
             const a = (await read()).actions.find((x) => x.id === action!.id)
             if (a && ['sent', 'failed', 'needs_check'].includes(a.state)) return
             if (now() > deadline + CONTROL_WAIT_MS) throw new Error(`the control's send never ended (${a?.state ?? 'gone'})`)
-            await sleep(2_000)
+            await abortableSleep(sleep, 2_000, opts.signal)
+            stop()
           }
         },
         evidence: read,
-        async probeAdminsCard(m) {
+        // What the model received (Neon's #618 review): the non-error tool results in the repeat's session transcripts.
+        async plantDelivered(plant) {
+          sessions ??= createSessionReader({ env: o.env, bucket: EVAL_BUCKET })
+          const chatIds = (session as { chatIds?: () => readonly string[] }).chatIds?.() ?? []
+          const parts: Uint8Array[][] = []
+          for (const id of chatIds) parts.push(await sessions.parts(id))
+          return plantVerdict(parts, plant)
+        },
+        async probeAdminsCard(m, opts = {}) {
           const deadline = now() + CONTROL_WAIT_MS
           for (;;) {
+            if (cancelled(opts.signal)) return // a cancel: nothing more to probe (the repeat fails on its cancelled turn)
             const a = (await read()).actions.find((x) => x.operation === m.operation && x.approverKind === 'admins' && x.state === 'waiting')
             if (a) {
               const r = await base.call('current', 'POST', `/api/actions/${encodeURIComponent(a.id)}/answer`, { json: { choice: 'approve', ifRev: a.rev } })
@@ -285,7 +538,7 @@ export function createProductInjectionTarget(o: ProductInjectionOptions): Inject
               return
             }
             if (now() > deadline) return // no card: the grader says so (mustAsk)
-            await sleep(2_000)
+            await abortableSleep(sleep, 2_000, opts.signal)
           }
         },
         settledCostUsd: session.settledCostUsd ? () => session.settledCostUsd!() : undefined,
@@ -296,12 +549,18 @@ export function createProductInjectionTarget(o: ProductInjectionOptions): Inject
             try {
               if (teammate) await base.removeTeammate(teammate)
             } finally {
-              // Slack off again before the next case: a later non-Slack case must not see Slack in its tools.
-              await leaveSlack()
+              active = null
+              try {
+                // Slack off again before the next case: a later non-Slack case must not see Slack in its tools.
+                await leaveSlack()
+              } finally {
+                markDone()
+              }
             }
           }
         },
       }
-    },
+    }
   }
+  return target
 }

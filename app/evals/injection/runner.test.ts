@@ -3,11 +3,14 @@
 import { describe, expect, it } from 'vitest'
 import { INJECTION_CASES } from './cases.ts'
 import { createFakeInjectionTarget } from './fake.ts'
-import { onCancel, runAndWrite, selfCheck } from './run.ts'
+import { cancelHandler, onCancel, onceClose, runAndWrite, selfCheck } from './run.ts'
 import { mkdtempSync, readFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import path from 'node:path'
 import { gateLine } from './report.ts'
+import { DoorRefusal } from '../targets/sql.ts'
+import type { ProductTarget } from '../targets/product.ts'
+import { createProductInjectionTarget } from './product.ts'
 import { StartUndoFailed, gateOf, runInjection, summarise, type InjectionRow, type InjectionSession, type InjectionTarget } from './runner.ts'
 
 const pick = (...ids: string[]) => INJECTION_CASES.filter((c) => ids.includes(c.id))
@@ -32,12 +35,14 @@ describe('the run loop', () => {
     const base = createFakeInjectionTarget({ provides: ['tag_ops'] })
     const target: InjectionTarget = { ...base, serves: (c) => (c.plant?.via === 'shopify' ? 'no store plant' : null) }
     const cases = pick('W06', 'P01', 'W01', 'W09', 'W15')
-    const out = await runInjection({ target, cases, reps: 1, canary: fixed })
-    expect(out.notRun).toEqual([{ id: 'W01', needs: ['refund'] }, { id: 'W15', needs: ['slack_post'] }])
-    expect(out.notServed).toEqual([{ id: 'W09', why: 'no store plant' }])
-    expect(out.rows.map((r) => r.caseId)).toEqual(['P01', 'W06'])
-    expect(gateOf(out)).toEqual({ pass: false, why: ['not run or not served, and not waived: W01, W15, W09'] })
+    // Not waived: the run stops before any turn (#670 round 2), where it once ran every case and failed at the end.
+    await expect(runInjection({ target, cases, reps: 1, canary: fixed })).rejects.toThrow('not run or not served, and not waived: W01 (needs refund); W15 (needs slack_post); W09 (no store plant)')
+    // The gate still holds it for an output made some other way (a hand-built one).
+    expect(gateOf({ rows: [], planned: 0, waived: [], families: {}, notRun: [{ id: 'W01', needs: ['refund'] }], notServed: [], stoppedByBudget: false, spentUsd: 0 }).why).toContain('not run or not served, and not waived: W01')
     const waived = await runInjection({ target, cases, reps: 1, canary: fixed, waive: ['W01', 'W09', 'W15'] })
+    expect(waived.notRun).toEqual([{ id: 'W01', needs: ['refund'] }, { id: 'W15', needs: ['slack_post'] }])
+    expect(waived.notServed).toEqual([{ id: 'W09', why: 'no store plant' }])
+    expect(waived.rows.map((r) => r.caseId)).toEqual(['P01', 'W06'])
     expect(gateOf(waived)).toEqual({ pass: true, why: [] })
     expect(summarise(waived).waived).toEqual(['W01', 'W09', 'W15'])
   })
@@ -234,5 +239,145 @@ describe('Neon\'s #602 review', () => {
     expect(JSON.parse(readFileSync(path.join(dir, 'rows.json'), 'utf8'))).toEqual([row])
     expect(closed).toEqual(['close'])
     expect(await onCancel({ close: async () => { throw new Error('the disconnect answered 503') } }, dir, [row])).toBe(false)
+  })
+})
+
+describe('#612: a cancel stops the loop and closes once', () => {
+  it('no repeat starts after a cancel, and the gate says the run was cancelled', async () => {
+    let cancelled = false
+    const out = await runInjection({ target: createFakeInjectionTarget(), cases: pick('P01', 'W06', 'W07'), reps: 1, canary: fixed, onRow: () => { cancelled = true }, stop: () => cancelled })
+    expect(out.rows.map((r) => r.caseId)).toEqual(['P01'])
+    expect(gateOf(out).why).toContain('the run was cancelled')
+  })
+
+  it('the close runs once, whoever asks: a second signal or the run\'s end gets the first close', async () => {
+    let closes = 0
+    const target = onceClose({ close: async () => { closes++ } })
+    await Promise.all([target.close!(), target.close!(), target.close!()])
+    expect(closes).toBe(1)
+  })
+})
+
+describe('#613: a memory or file plant counts only when the turn read it', () => {
+  it('a memory-planted case whose turn never read memory, or a ticket case that never opened the file, is not exercised', async () => {
+    const base = createFakeInjectionTarget()
+    const target: InjectionTarget = { ...base, async start(c, run) { const s = await base.start(c, run); return { ...s, chat: async (p, o) => ({ ...(await s.chat(p, o)), toolCalls: [] }) } } }
+    const out = await runInjection({ target, cases: pick('W02', 'W06', 'P06', 'P01'), reps: 1, canary: fixed })
+    expect(out.rows.find((r) => r.caseId === 'W02')).toMatchObject({ pass: false, err: expect.stringContaining('no memory read returned the planted fact') })
+    expect(out.rows.find((r) => r.caseId === 'W06')).toMatchObject({ pass: false, err: expect.stringContaining('never opened the whole attached ticket file') })
+  })
+})
+
+describe('Neon\'s #618 review: the transcript\'s word, the cancel signal, one cancel', () => {
+  it('a plant the transcript doesn\'t hold, or a transcript that can\'t be read, is not exercised; one that holds it passes', async () => {
+    const base = createFakeInjectionTarget()
+    const make = (d: () => Promise<{ delivered: boolean; why?: string }>): InjectionTarget => ({ ...base, async start(c, run) { const s = await base.start(c, run); return { ...s, plantDelivered: d } } })
+    const no = await runInjection({ target: make(async () => ({ delivered: false, why: 'no tool result the model received holds the plant' })), cases: pick('W06', 'P01'), reps: 1, canary: fixed })
+    expect(no.rows.find((r) => r.caseId === 'W06')).toMatchObject({ pass: false, err: 'not exercised: no tool result the model received holds the plant' })
+    const broken = await runInjection({ target: make(async () => { throw new Error('R2 list answered 403') }), cases: pick('W06', 'P01'), reps: 1, canary: fixed })
+    expect(broken.rows.find((r) => r.caseId === 'W06')).toMatchObject({ pass: false, err: expect.stringContaining('the session transcript could not be read (R2 list answered 403)') })
+    const yes = await runInjection({ target: make(async () => ({ delivered: true })), cases: pick('W06', 'P01'), reps: 1, canary: fixed })
+    expect(gateOf(yes).pass).toBe(true)
+  })
+
+  it('a cancel aborts the running turn and no repeat starts after it', async () => {
+    const cancel = new AbortController()
+    const base = createFakeInjectionTarget()
+    let aborted = false
+    const target: InjectionTarget = { ...base, async start(c, run) { const s = await base.start(c, run); return { ...s, chat: (_p, o) => new Promise((_, reject) => { o.signal.addEventListener('abort', () => { aborted = true; reject(new Error('aborted')) }); cancel.abort() }) } } }
+    const out = await runInjection({ target, cases: pick('W06', 'W07'), reps: 1, canary: fixed, signal: cancel.signal })
+    expect(aborted).toBe(true)
+    expect(out.rows.map((r) => [r.caseId, r.err?.split(':')[0]])).toEqual([['W06', 'chat']])
+    expect(gateOf(out).why).toContain('the run was cancelled')
+  })
+
+  it('one cancel whatever arrives: a second signal neither closes twice nor exits early', async () => {
+    const dir = mkdtempSync(path.join(tmpdir(), 'inj-sig-'))
+    let closes = 0
+    let release!: () => void
+    const exits: number[] = []
+    const target = onceClose({ close: () => new Promise<void>((r) => { closes++; release = r }) })
+    const cancel = new AbortController()
+    const handle = cancelHandler(target, dir, [], cancel, (code) => exits.push(code))
+    handle('SIGINT', 130)
+    handle('SIGTERM', 143)
+    handle('SIGINT', 130)
+    expect(cancel.signal.aborted).toBe(true)
+    await new Promise((r) => setTimeout(r, 10))
+    expect(closes).toBe(1)
+    expect(exits).toEqual([])
+    release()
+    await new Promise((r) => setTimeout(r, 10))
+    expect(exits).toEqual([130])
+  })
+
+  it('a close that throws at once still becomes the one close every caller gets', async () => {
+    let calls = 0
+    const target = onceClose({ close: () => { calls++; throw new Error('boom') } })
+    await expect(target.close!()).rejects.toThrow('boom')
+    await expect(target.close!()).rejects.toThrow('boom')
+    expect(calls).toBe(1)
+  })
+})
+
+describe('#662 and #664: a door that refuses stops the run; the beside-turn polls hear the cancel', () => {
+  it('a preflight that refuses stops the run before any repeat starts', async () => {
+    const base = createFakeInjectionTarget()
+    let starts = 0
+    const target: InjectionTarget = { ...base, async preflight() { throw new DoorRefusal('R2 list answered 403') }, async start(c, run) { starts++; return base.start(c, run) } }
+    await expect(runInjection({ target, cases: pick('W06', 'P01'), reps: 1, canary: fixed })).rejects.toThrow('R2 list answered 403')
+    expect(starts).toBe(0)
+  })
+
+  it('a door refusal mid-run (the transcript, the evidence) stops the run there, never "not exercised"', async () => {
+    const base = createFakeInjectionTarget()
+    for (const where of ['plant', 'evidence'] as const) {
+      const target: InjectionTarget = {
+        ...base,
+        async start(c, run) {
+          const s = await base.start(c, run)
+          if (c.id !== 'W06') return s
+          const refuse = async (): Promise<never> => { throw new DoorRefusal('R2 list answered 403') }
+          return where === 'plant' ? { ...s, plantDelivered: refuse } : { ...s, evidence: refuse }
+        },
+      }
+      const out = await runInjection({ target, cases: pick('W06', 'W07', 'P01'), reps: 2, canary: fixed })
+      const last = out.rows.at(-1)!
+      expect(last).toMatchObject({ caseId: 'W06', rep: 1, pass: false, stopErr: 'a door refused: R2 list answered 403' })
+      expect(last.err).not.toMatch(/not exercised/)
+      expect(out.rows.filter((r) => r.stopErr)).toHaveLength(1)
+      expect(gateOf(out).why).toContain('a door refused at W06 r1, so the run stopped')
+    }
+  })
+
+  it('the control and the admins-card probe get the run\'s cancel signal', async () => {
+    const cancel = new AbortController()
+    const base = createFakeInjectionTarget()
+    const got: (AbortSignal | undefined)[] = []
+    const target: InjectionTarget = {
+      ...base,
+      async start(c, run) {
+        const s = await base.start(c, run)
+        return { ...s, approveControl: async (ctl, o) => { got.push(o?.signal); return s.approveControl(ctl, o) }, probeAdminsCard: async (_m, o) => { got.push(o?.signal) } }
+      },
+    }
+    await runInjection({ target, cases: pick('P01', 'W04'), reps: 1, canary: fixed, signal: cancel.signal })
+    expect(got.length).toBeGreaterThanOrEqual(2)
+    expect(got.every((g) => g === cancel.signal)).toBe(true)
+  })
+})
+
+describe('#670 round 2: a case the run can\'t run stops it before any turn', () => {
+  it('on the product without the Inhouse app, the Slack cases stop the run before the preflight, naming the cases and the config', async () => {
+    const calls: string[] = []
+    const base = {
+      name: 'product', people: { current: 'm_c', tom: 'm_t', lena: 'm_l' }, provides: new Set(['tag_ops', 'stock_ops', 'refund']),
+      async ready() { calls.push('ready') }, async seed() { calls.push('seed'); throw new Error('no seed in this test') },
+    } as unknown as ProductTarget
+    const target = createProductInjectionTarget({ paid: true, env: {}, inhouse: null, base, sessions: { preflight: async () => { calls.push('r2') }, parts: async () => [] } })
+    const err = await runInjection({ target, cases: pick('P01', 'W15', 'W29'), reps: 1, canary: fixed }).catch((e: Error) => e)
+    expect(err).toBeInstanceOf(Error)
+    expect((err as Error).message).toBe('the run stops before any turn: not run or not served, and not waived: W15 (needs slack_post: the Inhouse app (INHOUSE_EVAL_INHOUSE_ORIGIN and INHOUSE_EVAL_INHOUSE_AUD) is not set); W29 (a Slack plant needs the Inhouse app (INHOUSE_EVAL_INHOUSE_ORIGIN and INHOUSE_EVAL_INHOUSE_AUD), which is not set). Set what they need, or waive them by name (--waive).')
+    expect(calls).toEqual([])
   })
 })

@@ -40,8 +40,10 @@ const DESCRIPTION: Readonly<Record<WriteOperationKey, string>> = {
   'shopify.inventory.reduce': "Lowers the available stock of one product at one location in the connected store. It can't be undone.",
   'shopify.refund.create': "Refunds line items, and shipping if asked, on one order in the shop's currency. Shopify may send the customer its own refund notice.",
 }
-const TOOL: Readonly<Record<OperationEntry['connector'], string>> = { shopify: 'Shopify', slack: 'Slack' }
-const EFFECT_GUARDRAILS = ['money', 'customer', 'destructive', 'access'] as const satisfies readonly Guardrail[]
+/** `mcp` (Stage 1 M4, N46): an MCP tool's write; M4-W2 names the connection where the screen needs it. */
+export const TOOL: Readonly<Record<OperationEntry['connector'], string>> = { shopify: 'Shopify', slack: 'Slack', mcp: 'A connected tool' }
+/** The guardrails an operation's effects always apply, each an `Effects` flag (contract-coverage.test.ts checks every one is). */
+export const EFFECT_GUARDRAILS = ['money', 'customer', 'destructive', 'access', 'unreviewed'] as const satisfies readonly Guardrail[]
 
 interface CeilingDbRow {
   operation: string

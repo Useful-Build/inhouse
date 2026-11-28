@@ -4,7 +4,7 @@
 // a case needing a field the API doesn't show is graded anyway.
 import { describe, expect, it } from 'vitest'
 import { CASES } from './cases.ts'
-import { assertSandboxDatabase, createDoor, DoorRefusal, EVAL_DB, sqlString, wranglerRunner, type MemoryDoor, type MemoryRow, type NewApproval, type NewMemory } from './targets/door.ts'
+import { assertSandboxDatabase, createDoor, DoorRefusal, EVAL_DB, sqlString, wranglerRunner, WRANGLER_TIMEOUT_MS, type MemoryDoor, type MemoryRow, type NewApproval, type NewMemory } from './targets/door.ts'
 import { callOfStep, createProductTarget, EVAL_PEOPLE, onExampleTest, ProductTargetRefusal, readIssuerKey, unobservableReason, writesFromRows } from './targets/product.ts'
 import { gradeExfil } from './exfil.ts'
 import { mkdtempSync, readdirSync, readFileSync, writeFileSync } from 'node:fs'
@@ -697,6 +697,10 @@ describe('the memory door', () => {
     const err = await failing('SELECT 1').catch((e: Error) => e)
     expect(err).toBeInstanceOf(DoorRefusal)
     expect((err as Error).message).toBe('wrangler d1 execute exited 1')
+  })
+  it('a wrangler call killed at its deadline is a refusal that says so (#672)', async () => {
+    const hung = wranglerRunner({ database: 'inhouse-sbx-eval-db', config: 'c', readConfig: () => JSON.stringify({ account_id: 'acct', d1_databases: [{ database_name: 'inhouse-sbx-eval-db' }] }), env: { CF_SANDBOX_ACCOUNT_ID: 'acct' }, spawn: () => ({ status: null, stdout: '' }) })
+    await expect(hung('SELECT 1')).rejects.toThrow(new DoorRefusal(`wrangler d1 execute did not end (killed after ${WRANGLER_TIMEOUT_MS / 1000} s, or by a signal)`))
   })
   it.each([
     ['an empty config path', '', JSON.stringify({ account_id: 'acct', d1_databases: [{ database_name: 'inhouse-sbx-eval-db' }] })],

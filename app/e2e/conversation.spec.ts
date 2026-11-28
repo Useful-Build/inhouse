@@ -293,6 +293,9 @@ test('Conversation: the steps line expands and collapses and opens the trace, so
   await expect(steps).toHaveAttribute('aria-expanded', 'false')
   await expect(first.getByRole('button', { name: 'Details', exact: true })).toHaveCount(0)
   await steps.click()
+  // The opening list is clipped, not a scroll box (overflow: clip): nothing can scroll Details up into the clip, where the
+  // growing list would pull it out from under a click (#607).
+  await expect(first.locator('[data-steps] > [data-slot=trace-collapsible-content]')).toHaveCSS('overflow-y', 'clip')
   await first.getByRole('button', { name: 'Details', exact: true }).click()
   await expect(page.getByRole('dialog', { name: 'What your Inhouse agent did' })).toBeVisible()
   await page.keyboard.press('Escape')

@@ -7,7 +7,7 @@ import type { NeedsCheckWhySchema } from '../../shared/contract/audit.ts'
 import { plainAnswer } from '../../shared/rpc-answer.ts'
 import { safeError } from '../safe-error.ts'
 import { operationEntry } from './operations/index.ts'
-import type { WriteOperationKey } from './operations/types.ts'
+import type { OperationConnector, WriteOperationKey } from './operations/types.ts'
 import { partialOf } from '../../shared/partial-send.ts'
 import type { PartialGroups } from '../../shared/partial-send.ts'
 
@@ -81,9 +81,25 @@ export function requestArgs(operation: WriteOperationKey, scope: Record<string, 
 export function expectOf(operation: WriteOperationKey, accountGen: number, scope: Record<string, string>, id: string): WriteRequest['expect'] {
   const entry = operationEntry(operation)
   if (!entry) throw new Error(`outbox: a stored action names no operation (${id})`)
-  if (entry.connector !== 'shopify') return { connectedAtMs: accountGen }
-  if (typeof scope.shop !== 'string') throw new Error(`outbox: a Shopify action with no shop in its scope (${id})`)
-  return { connectedAtMs: accountGen, shop: scope.shop }
+  return expectFor(entry.connector, accountGen, scope, id)
+}
+
+/**
+ * `expectOf` by connector, every connector named. Stage 1 M4 (N46): a connection's write pins its generation, tool hash
+ * and policy revision, which M4-W1 and M4-W2 build; until then one is refused here, never sent with Slack's expect.
+ */
+export function expectFor(connector: OperationConnector, accountGen: number, scope: Record<string, string>, id: string): WriteRequest['expect'] {
+  switch (connector) {
+    case 'slack':
+      return { connectedAtMs: accountGen }
+    case 'shopify':
+      if (typeof scope.shop !== 'string') throw new Error(`outbox: a Shopify action with no shop in its scope (${id})`)
+      return { connectedAtMs: accountGen, shop: scope.shop }
+    case 'mcp':
+      throw new Error(`outbox: a connection's write has no pins until M4-W1 builds them (${id})`)
+    default:
+      throw new Error(`outbox: an action for an unknown connector (${connector satisfies never})`)
+  }
 }
 
 /**

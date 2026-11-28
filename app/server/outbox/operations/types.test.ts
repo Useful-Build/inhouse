@@ -5,7 +5,7 @@ import { describe, expect, it } from 'vitest'
 import { z } from 'zod'
 import type { OperationEntry, OperationTable } from './types.ts'
 
-const effects = { money: false, customer: false, destructive: false, access: false } as const
+const effects = { money: false, customer: false, destructive: false, access: false, unreviewed: false } as const
 const tag: OperationEntry<{ orderId: string; tags: string[] }> & { key: 'shopify.order.tag_add' } = {
   key: 'shopify.order.tag_add', tool: 'shopify_order_tag_add', description: 'Adds tags to one order.',
   args: z.strictObject({ orderId: z.string(), tags: z.array(z.string()).min(1).max(5) }), connector: 'shopify',
@@ -54,8 +54,8 @@ const base = {
   connector: 'shopify' as const, scope: () => ({ shop: 'example' }), records: () => 1, units: (a: Refund) => a.minor, unitsLabel: 'minor units',
   itemLine: (a: Refund) => `Order ${a.orderId}: refund ${a.minor}`, idempotent: false as const, card: (a: Refund) => ({ title: `Refund ${a.orderId}`, lines: [] }),
 }
-const money = { money: true, customer: true, destructive: false, access: false } as const
-const destructive = { money: false, customer: false, destructive: true, access: false } as const
+const money = { money: true, customer: true, destructive: false, access: false, unreviewed: false } as const
+const destructive = { money: false, customer: false, destructive: true, access: false, unreviewed: false } as const
 const exactOnly = { grant: null, ceiling: { perDayMax: 1, unitsMax: 50_000 } }
 const amount = (a: Refund) => ({ minor: a.minor, currency: 'USD' })
 
@@ -82,5 +82,35 @@ describe('OperationEntry classes (M3-A)', () => {
     // @ts-expect-error: money names no grant defaults (no grant covers it)
     const g: OperationEntry<Refund> = { ...base, effects: money, memberMay: false, reversible: false, coalesces: false, amount, defaults: { ...exactOnly, grant: { perDay: 1, unitsMax: 1 } } }
     expect([a, b, c, d, e, f, g]).toHaveLength(7)
+  })
+
+  // Stage 1 M4 (M4-A, N46): an unreviewed tool's write. Ways it can go wrong, written first: a member may approve it, it
+  // collects into a batch, a grant can cover it, it claims to be reversible, it sets another effect beside `unreviewed`
+  // (its card would name that guardrail instead), or a compiled operation sets `unreviewed`.
+  it('takes the unreviewed class only as N46 writes it', () => {
+    const unreviewed = { money: false, customer: false, destructive: false, access: false, unreviewed: true } as const
+    const mcp = { ...base, connector: 'mcp' as const }
+    const ok: OperationEntry<Refund> = { ...mcp, effects: unreviewed, memberMay: false, reversible: false, coalesces: false, defaults: exactOnly }
+    // @ts-expect-error: a member never approves it
+    const a: OperationEntry<Refund> = { ...mcp, effects: unreviewed, memberMay: true, reversible: false, coalesces: false, defaults: exactOnly }
+    // @ts-expect-error: it never collects into a batch
+    const b: OperationEntry<Refund> = { ...mcp, effects: unreviewed, memberMay: false, reversible: false, coalesces: true, defaults: exactOnly }
+    // @ts-expect-error: no grant covers it
+    const c: OperationEntry<Refund> = { ...mcp, effects: unreviewed, memberMay: false, reversible: false, coalesces: false, defaults: { ...exactOnly, grant: { perDay: 1, unitsMax: 1 } } }
+    // @ts-expect-error: it isn't reversible
+    const d: OperationEntry<Refund> = { ...mcp, effects: unreviewed, memberMay: false, reversible: true, coalesces: false, defaults: exactOnly }
+    // @ts-expect-error: no other effect beside it
+    const e: OperationEntry<Refund> = { ...mcp, effects: { ...unreviewed, customer: true }, memberMay: false, reversible: false, coalesces: false, defaults: exactOnly }
+    // @ts-expect-error: a reviewed, harmless operation can't set it
+    const f: OperationEntry<Refund> = { ...base, effects: { ...effects, unreviewed: true }, memberMay: true, reversible: true, coalesces: true, defaults: { ...exactOnly, grant: { perDay: 1, unitsMax: 1 } } }
+    // @ts-expect-error: nor can money
+    const g: OperationEntry<Refund> = { ...base, effects: { ...money, unreviewed: true }, memberMay: false, reversible: false, coalesces: false, amount, defaults: exactOnly }
+    // @ts-expect-error: an unreviewed write goes to a connection, never a compiled connector's account
+    const h: OperationEntry<Refund> = { ...base, effects: unreviewed, memberMay: false, reversible: false, coalesces: false, defaults: exactOnly }
+    // @ts-expect-error: a connection's write is unreviewed: a reviewed, grantable mcp entry doesn't typecheck
+    const i: OperationEntry<Refund> = { ...mcp, effects, memberMay: true, reversible: true, coalesces: true, defaults: { ...exactOnly, grant: { perDay: 1, unitsMax: 1 } } }
+    // @ts-expect-error: nor does an mcp entry with any other reviewed class
+    const j: OperationEntry<Refund> = { ...mcp, effects: destructive, memberMay: true, reversible: false, coalesces: false, defaults: exactOnly }
+    expect([ok, a, b, c, d, e, f, g, h, i, j]).toHaveLength(11)
   })
 })

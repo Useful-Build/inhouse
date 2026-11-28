@@ -20,6 +20,7 @@ const facts: ResolveFacts = {
     slack: { accountId: 'slack:workspace', connectedAtMs: 20, connected: true, paused: false, label: 'Slack', shop: null, currency: null },
   },
   listedChannels: [{ id: 'C0123ABCD', name: 'Ops' }],
+  connections: [],
 }
 
 describe('shopify.order.tag_add', () => {
