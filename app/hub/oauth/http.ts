@@ -131,3 +131,292 @@ export function constantTimeEqual(a: string, b: string): boolean {
   for (let i = 0; i < n; i++) diff |= (x[i] ?? 0) ^ (y[i] ?? 0)
   return diff === 0
 }
+
+// ---------- The MCP SDK's fetch (Stage 1 M4-C1, N36) ----------
+// The official client (@modelcontextprotocol/client 2.4.0, connectors/mcp/sdk.ts) sends through this and nothing else.
+// What the SDK's transport does with its `fetch` (StreamableHTTPClientTransport; the package's source map,
+// src/client/streamableHttp.ts, read 2026-11-28): every request goes to the one endpoint URL it was built with; POST for
+// each JSON-RPC message, GET to open a standing stream after a 2025-era `notifications/initialized`, DELETE only from
+// `terminateSession()`. Its default redirect policy wraps this fetch in `fetchWithinOrigin` (core-internal
+// shared/transport.ts), which follows a same-origin 3xx that carries a `Location`: so a redirect answer is handed back
+// with its `Location` removed, and none is ever followed. Each rule below is ours, applied before anything leaves:
+// - the URL must be exactly the endpoint (scheme, host, port, path, query), https, no credentials in it;
+// - GET is answered here with 405 (no standing stream) and DELETE likewise (a session is never ended upstream): the SDK
+//   treats 405 as "no stream offered" on both (`_startOrAuthSse`, `terminateSession`);
+// - a POST's JSON-RPC method must be on the caller's list, and `tools/call` has a per-operation cap (a write's is 1);
+//   anything else is answered here (202 for a notification) or refused, and never sent;
+// - `initialize` (the 2025 handshake) leaves only as the first request of an operation (a cached legacy verdict) or
+//   right after a probe the spec lets a client read as "legacy server": a 4xx other than 401 and 403, or an in-band
+//   JSON-RPC error, neither a 2026-07-28 error (-32020, -32021, or -32022 naming a modern version). So a modern error,
+//   a redirect, an outage or a lost answer is never followed by the legacy handshake (the SDK's own classifier,
+//   src/client/probeClassifier.ts, falls back on every one of those but an outage). One more case lets it leave: a 404
+//   to a request that carried a session id (2025-11-25 transports, "Session Management" 4: start a new session);
+// - our credential is the only one attached (the SDK has no auth provider; any `Authorization` it set is dropped);
+// - `redirect: 'manual'`, a deadline per request (its timer cleared when the answer settles), the SDK's abort signal,
+//   and a byte cap on every body;
+// - an event stream is read event by event and closed at the answer whose id matches the request, so a server that
+//   leaves the stream open doesn't run a finished call into the deadline.
+// Nothing here logs. The record (`WireEvent`) holds statuses, JSON-RPC error codes and flags, never a body or a header.
+
+/** A credential header for the MCP endpoint only: an API key's header, or `Authorization: Bearer <token>`. */
+export type McpCredential = { header: string; value: string }
+
+/** Header names a credential may never take (the transport's own, and the request's framing). */
+const RESERVED_CREDENTIAL_HEADERS = new Set([
+  'content-type', 'content-length', 'accept', 'host', 'cookie', 'connection', 'transfer-encoding', 'last-event-id',
+  'mcp-protocol-version', 'mcp-method', 'mcp-name', 'mcp-session-id', 'forwarded', 'x-forwarded-for', 'x-forwarded-host',
+])
+
+/** A credential the adapter will attach: a token-character header name that isn't reserved, a value with no CR, LF or NUL. */
+export function validCredential(c: McpCredential): boolean {
+  const name = c.header.toLowerCase()
+  return /^[!#$%&'*+.^_`|~0-9a-z-]{1,64}$/.test(name) && !RESERVED_CREDENTIAL_HEADERS.has(name) && !name.startsWith('mcp-param-') && c.value.length > 0 && !/[\r\n\0]/.test(c.value)
+}
+
+/** One request the SDK asked for, and what became of it. */
+export type WireEvent = {
+  method: string
+  /** The JSON-RPC method, for a POST whose body is one message. */
+  rpc: string | null
+  id: string | number | null
+  /** `local`: answered here; `refused`: thrown here, nothing sent; `blocked`: not the endpoint; `sent`: it may have left. */
+  fate: 'local' | 'refused' | 'blocked' | 'sent'
+  /** For a sent request. `network`: threw before any answer; `lost`: the deadline or a broken body; `open`: still streaming. */
+  answer?: 'response' | 'network' | 'lost' | 'too_large' | 'malformed' | 'open'
+  status?: number
+  /** The JSON-RPC error code of the answer to this request's id (never its message or data). */
+  rpcCode?: number
+  /** A -32022 that names a 2026-07-28 or later version among those it supports. */
+  modernVersions?: boolean
+  insufficientScope?: boolean
+  retryAfterMs?: number
+}
+
+export type McpFetchOptions = {
+  endpoint: string
+  credential: McpCredential | null
+  /** The JSON-RPC methods a POST may carry for this operation. */
+  allow: ReadonlySet<string>
+  /** At most this many `tools/call` POSTs may leave for this operation. */
+  maxCalls: number
+  timeoutMs?: number
+  maxBytes?: number
+  /** Every request is appended here, in order. */
+  record: WireEvent[]
+  /** Called when an event stream ends or breaks without its answer (the SDK would otherwise wait for its own timeout). */
+  onLost?: () => void
+}
+
+export type McpFetch = (url: string | URL, init?: RequestInit) => Promise<Response>
+
+const MODERN_ERROR_CODES = new Set([-32020, -32021])
+const FIRST_MODERN_VERSION = '2026-07-28'
+/** Answer headers the SDK may read; everything else (Location, Set-Cookie, ...) stays here. */
+const PASSED_HEADERS = ['content-type', 'mcp-session-id', 'www-authenticate', 'retry-after']
+
+/** What the adapter throws when it sent nothing, or the answer didn't arrive whole. Carries no upstream text. */
+export class McpFetchRefused extends Error {
+  override name = 'McpFetchRefused'
+}
+
+/** The `fetch` the SDK's transport gets: see the section comment above. One per operation (its record and caps). */
+export function mcpFetch(upstream: Upstream, o: McpFetchOptions): McpFetch {
+  const timeoutMs = o.timeoutMs ?? MCP_TIMEOUT_MS
+  const maxBytes = o.maxBytes ?? MCP_MAX_BYTES
+  const endpoint = new URL(o.endpoint)
+  if (endpoint.protocol !== 'https:' || endpoint.username !== '' || endpoint.password !== '' || endpoint.hash !== '') {
+    throw new TypeError('the MCP endpoint must be an https URL with no credentials or fragment')
+  }
+  if (o.credential && !validCredential(o.credential)) throw new TypeError('the credential header is not allowed')
+  let calls = 0
+  let modernSeen = false
+  /** Whether the legacy handshake may follow: true before anything was sent, then only after a probe read as legacy. */
+  let handshakeOk = true
+
+  return async (url, init) => {
+    const method = (init?.method ?? 'GET').toUpperCase()
+    let target: URL | null
+    try {
+      target = new URL(url)
+    } catch {
+      target = null
+    }
+    if (!target || target.href !== endpoint.href) {
+      o.record.push({ method, rpc: null, id: null, fate: 'blocked' })
+      throw new McpFetchRefused('not the endpoint')
+    }
+    if (method !== 'POST') {
+      o.record.push({ method, rpc: null, id: null, fate: 'local', status: 405 })
+      return new Response(null, { status: 405, headers: { Allow: 'POST' } })
+    }
+    const body = typeof init?.body === 'string' ? init.body : null
+    const msg = jsonObject(body)
+    const rpc = msg && typeof msg.method === 'string' ? msg.method : null
+    const id = msg && (typeof msg.id === 'string' || typeof msg.id === 'number') ? msg.id : null
+    const event: WireEvent = { method, rpc, id, fate: 'refused' }
+    o.record.push(event)
+    if (rpc === null || !o.allow.has(rpc) || (rpc === 'initialize' && (modernSeen || !handshakeOk)) || (rpc === 'tools/call' && calls >= o.maxCalls)) {
+      // A notification nobody needs to hear is acknowledged here; a request is refused. Neither leaves.
+      if (rpc !== null && rpc.startsWith('notifications/') && id === null) {
+        event.fate = 'local'
+        event.status = 202
+        return new Response(null, { status: 202 })
+      }
+      throw new McpFetchRefused('not sent')
+    }
+    if (rpc === 'tools/call') calls++
+    handshakeOk = false
+
+    const headers = new Headers(init?.headers)
+    headers.delete('authorization')
+    if (o.credential) headers.set(o.credential.header, o.credential.value)
+    const controller = new AbortController()
+    let timedOut = false
+    const timer = setTimeout(() => {
+      timedOut = true
+      controller.abort(new DOMException('upstream deadline', 'TimeoutError'))
+    }, timeoutMs)
+    const outer = init?.signal ?? null
+    const onOuter = () => controller.abort(outer?.reason)
+    if (outer?.aborted) onOuter()
+    outer?.addEventListener('abort', onOuter, { once: true })
+    const done = () => {
+      clearTimeout(timer)
+      outer?.removeEventListener('abort', onOuter)
+    }
+
+    event.fate = 'sent'
+    let res: Response
+    try {
+      res = await upstream(new Request(endpoint.href, { method: 'POST', headers, body, redirect: 'manual', signal: controller.signal }))
+    } catch {
+      done()
+      event.answer = timedOut ? 'lost' : 'network'
+      throw new McpFetchRefused('no answer')
+    }
+    event.status = res.status
+    if (res.status === 403 && /error="?insufficient_scope"?/.test(res.headers.get('WWW-Authenticate') ?? '')) event.insufficientScope = true
+    if (res.status === 429) event.retryAfterMs = retryAfterMs(res.headers)
+    const passed = new Headers()
+    for (const h of PASSED_HEADERS) {
+      const v = res.headers.get(h)
+      if (v !== null) passed.set(h, v)
+    }
+    const session = passed.get('mcp-session-id')
+    if (session !== null && !/^[\x21-\x7e]{1,256}$/.test(session)) passed.delete('mcp-session-id')
+    const noteError = (m: Record<string, unknown> | null) => {
+      if (!m || m.id !== id || typeof m.error !== 'object' || m.error === null) return
+      const e = m.error as { code?: unknown; data?: unknown }
+      if (typeof e.code !== 'number') return
+      event.rpcCode = e.code
+      const supported = typeof e.data === 'object' && e.data !== null ? (e.data as { supported?: unknown }).supported : undefined
+      const modern = Array.isArray(supported) && supported.some(v => typeof v === 'string' && v >= FIRST_MODERN_VERSION)
+      if (e.code === -32022 && modern) event.modernVersions = true
+      if (MODERN_ERROR_CODES.has(e.code) || (e.code === -32022 && modern)) modernSeen = true
+    }
+
+    if (res.status >= 300 && res.status < 400) {
+      // Never followed: handed back with no Location, so the SDK's same-origin follower has nowhere to go.
+      await res.body?.cancel()
+      done()
+      event.answer = 'response'
+      return new Response(null, { status: res.status, headers: passed })
+    }
+    const type = (res.headers.get('Content-Type') ?? '').split(';')[0]!.trim().toLowerCase()
+    if (type === 'text/event-stream' && res.status === 200 && res.body && id !== null) {
+      event.answer = 'open'
+      return new Response(matchedStream(res.body, id, maxBytes, event, done, noteError, o.onLost), { status: 200, headers: passed })
+    }
+    const read = await readCapped(res, maxBytes)
+    done()
+    if (read.kind !== 'ok') {
+      event.answer = read.kind === 'failed' ? 'lost' : read.kind === 'too_large' ? 'too_large' : 'malformed'
+      throw new McpFetchRefused('no whole answer')
+    }
+    event.answer = 'response'
+    if (type === 'application/json') noteError(jsonObject(read.text))
+    if (res.status === 404 && headers.has('mcp-session-id') && !modernSeen) handshakeOk = true
+    if (rpc === 'server/discover' && !modernSeen) {
+      const legacyLike = (res.status >= 400 && res.status < 500 && res.status !== 401 && res.status !== 403) || (res.status === 200 && event.rpcCode !== undefined)
+      handshakeOk = legacyLike
+    }
+    return new Response(read.text.length > 0 ? read.text : null, { status: res.status, headers: passed })
+  }
+}
+
+/**
+ * An event stream passed on event by event, closed right after the event that answers `id` (the upstream stream is
+ * cancelled then). The deadline (`done` clears it) and the byte cap hold over the whole read. Only whole events pass.
+ */
+function matchedStream(
+  upstream: ReadableStream<Uint8Array>,
+  id: string | number,
+  maxBytes: number,
+  event: WireEvent,
+  done: () => void,
+  noteError: (m: Record<string, unknown> | null) => void,
+  onLost: (() => void) | undefined,
+): ReadableStream<Uint8Array> {
+  const reader = upstream.getReader()
+  const decoder = new TextDecoder('utf-8', { fatal: true, ignoreBOM: false })
+  const encoder = new TextEncoder()
+  let buffer = ''
+  let total = 0
+  let finished = false
+  const finish = async (c: ReadableStreamDefaultController<Uint8Array>, answer: NonNullable<WireEvent['answer']>, failed: boolean) => {
+    if (finished) return
+    finished = true
+    event.answer = answer
+    done()
+    if (failed) c.error(new McpFetchRefused('no whole answer'))
+    else c.close()
+    if (answer !== 'response') onLost?.()
+    // The upstream stream may already be broken (a lost answer): cancelling it then has nothing left to do.
+    await reader.cancel().catch(() => undefined)
+  }
+  return new ReadableStream<Uint8Array>({
+    async pull(c) {
+      for (;;) {
+        let chunk: ReadableStreamReadResult<Uint8Array>
+        try {
+          chunk = await reader.read()
+        } catch {
+          return finish(c, 'lost', true)
+        }
+        // Ended without the answer: the SDK sees the stream end (its reconnection is off, and a GET is answered here).
+        if (chunk.done) return finish(c, 'lost', false)
+        total += chunk.value.byteLength
+        if (total > maxBytes) return finish(c, 'too_large', true)
+        try {
+          buffer += decoder.decode(chunk.value, { stream: true })
+        } catch {
+          return finish(c, 'malformed', true)
+        }
+        const blocks = buffer.split(/\r?\n\r?\n/)
+        buffer = blocks.pop()!
+        let out = ''
+        let answered = false
+        for (const block of blocks) {
+          out += `${block}\n\n`
+          const data = block.split(/\r?\n/).filter(l => l.startsWith('data:')).map(l => l.slice(5).replace(/^ /, '')).join('\n')
+          const m = data.length > 0 ? jsonObject(data) : null
+          if (m && m.id === id && ('result' in m || 'error' in m)) {
+            noteError(m)
+            answered = true
+            break
+          }
+        }
+        if (out.length > 0) c.enqueue(encoder.encode(out))
+        if (answered) return finish(c, 'response', false)
+        if (out.length > 0) return
+      }
+    },
+    async cancel() {
+      if (finished) return
+      finished = true
+      event.answer = 'lost'
+      done()
+      await reader.cancel()
+    },
+  })
+}
