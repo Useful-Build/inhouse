@@ -15,8 +15,8 @@ export interface EgressRow { n: number; host: string; verdict: 'allowed' | 'refu
 
 export interface FetchDoor {
   /**
-   * Sets the brand's `t:webfetch_mode`: `open` or `list`, written either way. Since M3-J a brand with no mode and no host
-   * listed is `open` by default, so `list` is written, never left to the default.
+   * Sets the brand's `t:webfetch_mode`, always as a row (#721 review): `list` is written too, never left to the default,
+   * so a case seeded `list` stays `list` if the default for a brand with no list ever changes (M3-J1).
    */
   setMode(mode: 'list' | 'open'): Promise<void>
   /** The newest egress record's number now (0 for none): a chat's rows are the ones after it. */
@@ -32,7 +32,7 @@ const CODE = /^[a-z_]{1,20}$/
 export function createFetchDoor(run: RunSql): FetchDoor {
   return {
     async setMode(mode) {
-      if (mode !== 'open' && mode !== 'list') throw new DoorRefusal('t:webfetch_mode is list or open')
+      if (mode !== 'list' && mode !== 'open') throw new DoorRefusal('t:webfetch_mode is list or open')
       await run(`INSERT INTO settings (owner, key, value_json, rev, updated_at_ms, updated_by, req_id) VALUES ('brand', 't:webfetch_mode', ${sqlString(JSON.stringify(mode))}, 1, ${Date.now()}, 'eval', 'eval') ON CONFLICT (owner, key) DO UPDATE SET value_json = excluded.value_json, rev = settings.rev + 1, updated_at_ms = excluded.updated_at_ms, updated_by = 'eval', req_id = 'eval'`)
     },
     async mark() {

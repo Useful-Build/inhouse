@@ -127,6 +127,24 @@ const sql = (s: Stmt): string => renderStmt(s).replace(/;$/, '')
 const byId = (a: { id: string }, b: { id: string }): number => (a.id < b.id ? -1 : a.id > b.id ? 1 : 0)
 const key = (name: string): string => name.replace(/^#/, '').toLowerCase()
 
+/**
+ * Why the door refuses to list `channels` in a workspace of `workspace` (list), or null: at most MAX_CHANNELS, at most one
+ * for alerts, each a workspace channel, none named twice. M3-E's preflight checks each planned case against the workspace
+ * its start seeds (EVAL_SLACK_CHANNELS, #724).
+ */
+export function listRefusal(channels: readonly { name: string; alerts?: boolean }[], workspace: readonly { id: string; name: string }[]): string | null {
+  if (channels.length > MAX_CHANNELS) return 'not a number of channels the door lists'
+  if (channels.filter(c => c.alerts).length > 1) return 'at most one channel is marked for alerts'
+  const ids: string[] = []
+  for (const n of channels) {
+    const c = workspace.find(x => x.name === key(n.name))
+    if (!c) return `no workspace channel is named ${JSON.stringify(n.name)}`
+    ids.push(c.id)
+  }
+  if (new Set(ids).size !== ids.length) return 'a channel is named twice'
+  return null
+}
+
 export function createSlackDoor(run: RunSql): SlackDoor {
   const exec = (s: Stmt) => run(sql(s))
   const now = async (): Promise<number> => Number((await run(`SELECT ${D1_NOW_MS} AS now`))[0]?.now)
@@ -160,15 +178,10 @@ export function createSlackDoor(run: RunSql): SlackDoor {
 
     async list(l) {
       if (!MEMBER_ID.test(l.by)) throw new DoorRefusal('not a member id')
-      if (l.channels.length > MAX_CHANNELS) throw new DoorRefusal('not a number of channels the door lists')
-      if (l.channels.filter(c => c.alerts).length > 1) throw new DoorRefusal('at most one channel is marked for alerts')
       const { channels } = await door.read()
-      const rows = l.channels.map(n => {
-        const c = channels.find(x => x.name === key(n.name))
-        if (!c) throw new DoorRefusal(`no workspace channel is named ${JSON.stringify(n.name)}`)
-        return { ...c, alerts: n.alerts === true }
-      })
-      if (new Set(rows.map(r => r.id)).size !== rows.length) throw new DoorRefusal('a channel is named twice')
+      const why = listRefusal(l.channels, channels)
+      if (why) throw new DoorRefusal(why)
+      const rows = l.channels.map(n => ({ ...channels.find(x => x.name === key(n.name))!, alerts: n.alerts === true }))
       // A live brand grant to post anywhere is a case-repeat's leftover (the write door's resetWrites clears grants).
       const live = await run("SELECT COUNT(*) AS n FROM permission_grants WHERE revoked_at_ms IS NULL AND holder = 'brand' AND operation = 'slack.channel.post'")
       if (Number(live[0]?.n) !== 0) throw new DoorRefusal('a brand grant to post in Slack is still live: clear the write state (resetWrites) first')

@@ -33,7 +33,7 @@ const record = (db: DatabaseSync, host: string, code: string | null) =>
   db.prepare("INSERT INTO egress_fetches (at_ms, host, verdict, code, runner, container_gen) VALUES (1, ?, ?, ?, 'r', 1)").run(host, code === null ? 'allowed' : 'refused', code)
 
 describe('the fetch door', () => {
-  it('writes the mode the egress reads, list included (the default with no host listed is open since M3-J)', async () => {
+  it('writes the mode the egress reads, list as a row too (never left to the default, #721 review)', async () => {
     const { db, run } = database()
     const d = createFetchDoor(run)
     await d.setMode('open')
