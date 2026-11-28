@@ -63,11 +63,16 @@ test('open mode: #1001 read through the hub never leaves, in the path, the query
     expect(steps.filter(s => s.kind === 'tool' && s.detail === 'WebFetch')).toHaveLength(4)
 
     const leaked = [hostOf(LEAK_OPEN_URLS.path), hostOf(LEAK_OPEN_URLS.query), hostOf(LEAK_OPEN_REDIRECT_TARGET)]
-    // A refusal's row is written in the background (webfetch.ts `refuse`): wait until all three are there.
-    await expect.poll(async () => (await egress(request, top)).rows.filter(r => leaked.includes(r.host)).length,
-      { timeout: 30_000, intervals: [1_000], message: 'the three leak refusals are recorded' }).toBeGreaterThanOrEqual(3)
+    // A refusal's row is written in the background (webfetch.ts `refuse`): wait until all three are there, then say
+    // what the record holds either way, so a miss shows where each attempt ended.
+    try {
+      await expect.poll(async () => (await egress(request, top)).rows.filter(r => leaked.includes(r.host)).length,
+        { timeout: 30_000, intervals: [1_000], message: 'the three leak refusals are recorded' }).toBeGreaterThanOrEqual(3)
+    } finally {
+      console.log(`leak-open: the egress record for this turn: ${JSON.stringify((await egress(request, top)).rows.map(r => [r.host, r.verdict, r.code]))}`)
+      console.log(`leak-open: the turn's tool steps: ${JSON.stringify(steps.filter(s => s.kind === 'tool'))}`)
+    }
     const rows = (await egress(request, top)).rows
-    console.log(`leak-open: the egress record for this turn: ${JSON.stringify(rows.map(r => [r.host, r.verdict, r.code]))}`)
     for (const host of leaked) {
       expect(rows.filter(r => r.host === host), host).toEqual([expect.objectContaining({ host, verdict: 'refused', code: 'leak' })])
     }

@@ -125,7 +125,8 @@ test.afterAll(async ({ request }) => {
 })
 
 test('the loop of 500 allowed writes stops at the limit and becomes one card; the approval covers what the screen showed', async ({ page, request }) => {
-  test.setTimeout(600_000)
+  // 500 hook calls: under a minute on CI's local test build, about 1 s each against the sandbox deploy.
+  test.setTimeout(1_800_000)
   await allowAlways(request, dana, danaId, `first-${run}`)
 
   // The agent's loop: the first 50 run under the permission (one unit each, inside every limit); every call after them
@@ -220,7 +221,8 @@ test('a permission removed on Always allowed during a batch\'s hold: nothing goe
   await expect(rows).toHaveCount(1)
 
   const leoChat = await createChat(request, leo)
-  const orders = ['9001', '9002', '9003', '9001'].map(n => `gid://shopify/Order/${n}`)
+  // Four distinct orders (a repeated id is `invalid_args`); 9004 isn't in the fake store, which doesn't matter: nothing is sent.
+  const orders = ['9001', '9002', '9003', '9004'].map(n => `gid://shopify/Order/${n}`)
   const b = await requestAction(request, { memberId: leoId, chatId: leoChat }, TAG_ADD, { orderIds: orders, tags: [`hold-${run}`] })
   expect(b, JSON.stringify(b)).toMatchObject({ outcome: 'approved', action: { kind: 'batch', items_n: 4, verdict: 'run', state: 'approved' } })
   await rows.first().getByRole('button', { name: /^Remove: / }).click()
