@@ -20,6 +20,11 @@ export interface FakeWriteOp<K extends string = string> {
   root: string
   /** The query cost Shopify would ask for (the throttle fault reports it). */
   cost(variables: Record<string, unknown>): number
+  /**
+   * Stage 1 M3 (card details): a read scope the fake's grant must hold for this query; without it the fake answers
+   * ACCESS_DENIED and runs nothing, as Shopify does.
+   */
+  needs?: string
   /** The mutation takes `@idempotent(key: $idempotencyKey)`: the same key twice runs once (`../server.ts`). */
   idempotent?: true
   /** The answer's `data`; `refuse` answers every root field with a user error and changes nothing. */

@@ -5,6 +5,8 @@
 // micro-USD, every time in epoch ms.
 import type { AdmitRefusal, Admitted } from './invocations.ts'
 import type { HubAccountFacts } from '../../outbox/facts.ts'
+import type { CleanCardFacts } from '../../outbox/detail.ts'
+import type { CardFactsRequest } from '../../../hub/index/contract.ts'
 import type { AuditEntry, OutputFormat, PushAck, RunEvent, RunStart } from '../../../shared/protocol/index.ts'
 import type { AgentErrorCode, ErrorReason } from '../../../shared/contract/common.ts'
 import type { Trace } from '../../../shared/contract/trace.ts'
@@ -407,6 +409,12 @@ export interface BrandAgentRpc {
    * connection date and Shopify store copied into D1 (hub-accounts.ts). Empty when the hub can't say (every write refused).
    */
   hubAccounts(): Promise<HubAccountFacts[]>
+  /**
+   * Stage 1 M3 (card details, #488): what an approval card shows beside a write's ids, read now from the write store
+   * through the object's ConnectGateway, its tokens captured for the leak check, cleaned (card-facts.ts). Null when the
+   * store didn't answer. Display only.
+   */
+  cardFacts(req: CardFactsRequest): Promise<CleanCardFacts | null>
 }
 
 /** `admitAction`'s answer (invocations.ts). */
