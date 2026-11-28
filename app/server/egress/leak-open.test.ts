@@ -164,7 +164,7 @@ describe('the forced-fetch leak case, as a new brand runs it (no mode, no list: 
 describe('webfetch-leak-open: the turn checks the refusal of each token-carrying fetch', async () => {
   const { createScriptedModel } = await import('../../test/scripted-model/index.ts')
   const { LEAK_OPEN_SCENARIOS, LEAK_OPEN_SCENARIO, LEAK_OPEN_HEADER_COMMAND } = await import('../../test/scripted-model/scenarios/leak-open.ts')
-  const use = (id: string, name: string, input: Record<string, unknown>) => ({ role: 'assistant', content: [{ type: 'tool_use', id, name, input }] })
+  const called = (id: string, name: string, input: Record<string, unknown>) => ({ role: 'assistant', content: [{ type: 'tool_use', id, name, input }] })
   const result = (id: string, content: string, isError?: boolean) =>
     ({ role: 'user', content: [{ type: 'tool_result', tool_use_id: id, content, ...(isError === undefined ? {} : { is_error: isError }) }] })
   const CLI_403 = 'The server returned HTTP 403 Forbidden. The response body was not retrieved.'
@@ -174,12 +174,12 @@ describe('webfetch-leak-open: the turn checks the refusal of each token-carrying
     model: 'claude-sonnet-5-5', stream: false, tools: [{ name: 'WebFetch' }, { name: 'Bash' }],
     messages: [
       { role: 'user', content: `scenario:${LEAK_OPEN_SCENARIO} go` },
-      use('toolu_scripted_open_read', 'mcp__apps__order_get', {}), result('toolu_scripted_open_read', `{"order":{"name":"${LEAK_OPEN_ORDER}"}}`),
-      use('toolu_scripted_open_control', 'WebFetch', { url: LEAK_OPEN_URLS.control }), result('toolu_scripted_open_control', page),
-      use('toolu_scripted_open_path', 'WebFetch', { url: LEAK_OPEN_URLS.path }), result('toolu_scripted_open_path', outcomes.path),
-      use('toolu_scripted_open_query', 'WebFetch', { url: LEAK_OPEN_URLS.query }), result('toolu_scripted_open_query', outcomes.query),
-      use('toolu_scripted_open_header', 'Bash', { command: LEAK_OPEN_HEADER_COMMAND }), result('toolu_scripted_open_header', 'urllib.error.URLError: <urlopen error Tunnel connection failed: 403 Forbidden>', true),
-      use('toolu_scripted_open_redirect', 'WebFetch', { url: LEAK_OPEN_URLS.redirect }), result('toolu_scripted_open_redirect', outcomes.redirect),
+      called('toolu_scripted_open_read', 'mcp__apps__order_get', {}), result('toolu_scripted_open_read', `{"order":{"name":"${LEAK_OPEN_ORDER}"}}`),
+      called('toolu_scripted_open_control', 'WebFetch', { url: LEAK_OPEN_URLS.control }), result('toolu_scripted_open_control', page),
+      called('toolu_scripted_open_path', 'WebFetch', { url: LEAK_OPEN_URLS.path }), result('toolu_scripted_open_path', outcomes.path),
+      called('toolu_scripted_open_query', 'WebFetch', { url: LEAK_OPEN_URLS.query }), result('toolu_scripted_open_query', outcomes.query),
+      called('toolu_scripted_open_header', 'Bash', { command: LEAK_OPEN_HEADER_COMMAND }), result('toolu_scripted_open_header', 'urllib.error.URLError: <urlopen error Tunnel connection failed: 403 Forbidden>', true),
+      called('toolu_scripted_open_redirect', 'WebFetch', { url: LEAK_OPEN_URLS.redirect }), result('toolu_scripted_open_redirect', outcomes.redirect),
     ],
   })
   const answer = async (outcomes: { path: string; query: string; redirect: string }) => {
