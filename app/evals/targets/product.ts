@@ -20,7 +20,7 @@ import { CancelWhySchema, TurnFailureSchema } from '../../shared/contract/runs.t
 import { randomBytes } from 'node:crypto'
 import { readFileSync } from 'node:fs'
 import type { JWK } from 'jose'
-import { createDoor, newActionId, newMemoryId, wranglerRunner, type MemoryDoor, type MemoryRow, type NewMemory } from './door.ts'
+import { createDoor, newActionId, newMemoryId, wranglerRunner, type MemoryDoor, type MemoryRow, type NewMemory, type RunSql } from './door.ts'
 import { createWriteDoor, writeProvides, type WriteDoor } from './write-door.ts'
 import { createSlackDoor, type SlackDoor } from './slack-door.ts'
 import { createFetchDoor, withEgress, type FetchDoor } from '../exfiltration/open-fetch/egress.ts'
@@ -191,6 +191,11 @@ export interface ProductTarget extends Target {
   writeDoor(): WriteDoor
   /** The target's own checks (the eval brand, the members, the lease, the cap), once; makes its doors (M3-E's preflight, #662). */
   ready(): Promise<void>
+  /**
+   * How many calls (to the deployment, through a door) have ended so far: a close waits on a case setup while this still
+   * moves (#685), every call having its own deadline.
+   */
+  progress?(): number
   /** The eval Slack door on the same database (#577), made after the eval-brand check like the write door. */
   slackDoor(): SlackDoor
   /**
@@ -226,6 +231,15 @@ export function createProductTarget(opts: ProductTargetOptions): ProductTarget {
   /** The case-repeat's own person, who asks as `current` (set by seed()). */
   let caseWho: { sub: string; email: string } | undefined
 
+  /** Calls ended so far, each counted once whatever its outcome (#685: the close's progress check). */
+  let callsDone = 0
+  const counted = (run: RunSql): RunSql => async (sql) => {
+    try {
+      return await run(sql)
+    } finally {
+      callsDone++
+    }
+  }
   async function api(who: PersonKey, method: string, path: string, o: { json?: unknown; bytes?: Uint8Array; headers?: Record<string, string>; signal?: AbortSignal } = {}): Promise<{ status: number; json: any; text: string }> {
     const id = who === 'current' && caseWho ? caseWho : EVAL_PEOPLE[who]
     let signed = headersOf.get(`${who}:${id.sub}`)
@@ -242,14 +256,21 @@ export function createProductTarget(opts: ProductTargetOptions): ProductTarget {
     let body: BodyInit | undefined
     if (o.json !== undefined) { body = JSON.stringify(o.json); headers['Content-Type'] = 'application/json' }
     else if (o.bytes !== undefined) { body = o.bytes as unknown as BodyInit; headers['Content-Type'] = headers['Content-Type'] ?? 'application/octet-stream' }
-    // A default deadline on the request and its body read (#672); a caller's own signal (a cancel) ends it sooner.
-    const deadline = AbortSignal.timeout(API_TIMEOUT_MS)
-    const signal = o.signal ? AbortSignal.any([o.signal, deadline]) : deadline
-    const res = await doFetch(`${origin}${path}`, { method, headers, body, signal })
-    const text = await res.text()
-    let json: unknown = null
-    try { json = JSON.parse(text) } catch { /* not JSON */ }
-    return { status: res.status, json, text }
+    // A default deadline on the request and its body read (#672); a caller's own signal (a cancel) ends it sooner. A plain
+    // timer, not AbortSignal.timeout, so a test's fake clock can see it fire (#685).
+    const deadline = new AbortController()
+    const timer = setTimeout(() => deadline.abort(new DOMException(`the call did not end within ${API_TIMEOUT_MS / 1000} s`, 'TimeoutError')), API_TIMEOUT_MS)
+    const signal = o.signal ? AbortSignal.any([o.signal, deadline.signal]) : deadline.signal
+    try {
+      const res = await doFetch(`${origin}${path}`, { method, headers, body, signal })
+      const text = await res.text()
+      let json: unknown = null
+      try { json = JSON.parse(text) } catch { /* not JSON */ }
+      return { status: res.status, json, text }
+    } finally {
+      clearTimeout(timer)
+      callsDone++
+    }
   }
   // What and the status, and the Worker's error code when it's a plain code: never the response body, which can be an
   // Access page with hostnames and a Ray ID, and ends up in report.json (#280 review 2).
@@ -269,12 +290,12 @@ export function createProductTarget(opts: ProductTargetOptions): ProductTarget {
   let slackDoor: SlackDoor | undefined = opts.slackDoor
   const slackOf = (): SlackDoor => {
     if (!checked) throw new ProductTargetRefusal('the Slack door is made only after the eval-brand check: seed a case first')
-    slackDoor ??= createSlackDoor(wranglerRunner({ database: opts.env[EVAL_D1_NAME] ?? '', config: opts.env[EVAL_WRANGLER_CONFIG] ?? '', env: opts.env }))
+    slackDoor ??= createSlackDoor(counted(wranglerRunner({ database: opts.env[EVAL_D1_NAME] ?? '', config: opts.env[EVAL_WRANGLER_CONFIG] ?? '', env: opts.env })))
     return slackDoor
   }
   const writesOf = (): WriteDoor => {
     if (!checked) throw new ProductTargetRefusal('the write door is made only after the eval-brand check: seed a case first')
-    writeDoor ??= createWriteDoor(wranglerRunner({ database: opts.env[EVAL_D1_NAME] ?? '', config: opts.env[EVAL_WRANGLER_CONFIG] ?? '', env: opts.env }))
+    writeDoor ??= createWriteDoor(counted(wranglerRunner({ database: opts.env[EVAL_D1_NAME] ?? '', config: opts.env[EVAL_WRANGLER_CONFIG] ?? '', env: opts.env })))
     return writeDoor
   }
   let ready: Promise<void> | undefined
@@ -336,7 +357,7 @@ export function createProductTarget(opts: ProductTargetOptions): ProductTarget {
     if (notServed !== null) throw new ProductTargetRefusal(`refusing: ${notServed}`)
     // (a) the door only after the check passed; (b) and (c) are door.ts's.
     if (!door || !fetchDoor) {
-      const sql = wranglerRunner({ database: opts.env[EVAL_D1_NAME] ?? '', config: opts.env[EVAL_WRANGLER_CONFIG] ?? '', env: opts.env })
+      const sql = counted(wranglerRunner({ database: opts.env[EVAL_D1_NAME] ?? '', config: opts.env[EVAL_WRANGLER_CONFIG] ?? '', env: opts.env }))
       door ??= createDoor(sql)
       fetchDoor ??= createFetchDoor(sql)
     }
@@ -408,6 +429,7 @@ export function createProductTarget(opts: ProductTargetOptions): ProductTarget {
     call: api,
     writeDoor: writesOf,
     ready: setup,
+    progress: () => callsDone,
     slackDoor: slackOf,
     async addTeammate(t) {
       if (!checked || !door) throw new ProductTargetRefusal('a teammate is added only after the eval-brand check: seed a case first')

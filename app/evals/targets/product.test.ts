@@ -5,7 +5,7 @@
 //  - the question's text and options aren't recorded for grading (T10 grades the call), or the call is counted twice
 //    when the trace already holds it;
 //  - a turn that answered, or ended with an end row, reads the questions at all.
-import { describe, expect, test } from 'vitest'
+import { describe, expect, test, vi } from 'vitest'
 import { GRADED_PROMPT_APP, GRADED_PROMPT_VERSION } from '../prompt-version.ts'
 import { API_TIMEOUT_MS, QUESTION_ASK, createProductTarget, parkedAnswer, parkedQuestionOf, productSession } from './product.ts'
 import type { Api } from './product.ts'
@@ -118,6 +118,22 @@ describe('#672: every call to the eval deployment has a deadline', () => {
     const hung = target(seen, true).call('lena', 'GET', '/api/me', { signal: cancel.signal })
     cancel.abort(new Error('cancelled'))
     await expect(hung).rejects.toThrow('cancelled')
-    expect(API_TIMEOUT_MS).toBeLessThanOrEqual(60_000)
+  })
+
+  test('a hung call with no signal of its own ends at the deadline, not a moment before (#685)', async () => {
+    vi.useFakeTimers()
+    try {
+      const seen: (AbortSignal | null | undefined)[] = []
+      let settled = false
+      const hung = target(seen, true).call('lena', 'GET', '/api/me')
+      hung.then(() => { settled = true }, () => { settled = true })
+      await vi.advanceTimersByTimeAsync(API_TIMEOUT_MS - 1)
+      expect(settled).toBe(false)
+      await vi.advanceTimersByTimeAsync(1)
+      await expect(hung).rejects.toThrow(`the call did not end within ${API_TIMEOUT_MS / 1000} s`)
+      expect(API_TIMEOUT_MS).toBe(60_000)
+    } finally {
+      vi.useRealTimers()
+    }
   })
 })

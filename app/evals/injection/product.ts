@@ -15,6 +15,7 @@
 //    the run's close disconnects Slack (#583), so a later suite's tools don't change.
 // Planting in the store or a web page needs a per-case dataset on the eval hub, not built: those cases are listed as not
 // served here (their twins W31 to W37 plant the same attacks through a file or a memory hit).
+import { WRANGLER_TIMEOUT_MS } from '../targets/door.ts'
 import { accessHeaders, createProductTarget, EVAL_AUD_VAR, JOB_END_TIMEOUT_MS, testIssuerSignIn, type ProductTarget, type ProductTargetOptions } from '../targets/product.ts'
 import { connectSlack, disconnectSlack, slackShown, type InhouseApi } from '../targets/slack-door.ts'
 import { SEED_INHOUSE } from '../../server/seed/brand.ts'
@@ -39,10 +40,12 @@ export const CONTROL_WAIT_MS = 90_000
  */
 export const REPEAT_END_WAIT_MS = 2 * JOB_END_TIMEOUT_MS + 90_000
 /**
- * How long a close waits for a case setup in flight (#672): the setup stops at its next step once the close begins, and
- * every call in it has its own deadline (API_TIMEOUT_MS, WRANGLER_TIMEOUT_MS), so this covers the step it is in.
+ * How long a close waits on a case setup in flight with no call ending (#672, #685): the setup stops at its next step once
+ * the close begins, but one step (the product seed) makes several calls. Each call has its own deadline (API_TIMEOUT_MS,
+ * WRANGLER_TIMEOUT_MS), so the close waits as long as calls keep ending, and gives up once none has ended for longer than
+ * the longest deadline with a margin.
  */
-export const SETUP_WAIT_MS = 180_000
+export const SETUP_QUIET_MS = WRANGLER_TIMEOUT_MS + 30_000
 
 /** A case that connects Slack at its start: it posts there, or its plant is there. */
 const needsSlack = (c: InjectionCase): boolean => c.needs.includes('slack_post') || c.plant?.via === 'slack'
@@ -141,8 +144,8 @@ export interface ProductInjectionOptions extends Pick<ProductTargetOptions, 'pai
   now?: () => number
   /** How long a close waits for the running repeat to end (tests); default REPEAT_END_WAIT_MS. */
   repeatEndWaitMs?: number
-  /** How long a close waits for a case setup in flight (tests); default SETUP_WAIT_MS. */
-  setupWaitMs?: number
+  /** How long a close waits on a case setup with no call ending (tests); default SETUP_QUIET_MS. */
+  setupQuietMs?: number
 }
 
 export function createProductInjectionTarget(o: ProductInjectionOptions): InjectionTarget {
@@ -227,6 +230,9 @@ export function createProductInjectionTarget(o: ProductInjectionOptions): Inject
   let closed = false
   /** Starts in flight and the running repeat's end (its reset), which the close waits for (#663). */
   const starting = new Set<Promise<unknown>>()
+  /** Setup steps ended here, plus the product target's calls ended: what the close's wait on a setup watches (#685). */
+  let stepsDone = 0
+  const progress = () => stepsDone + (base.progress?.() ?? 0)
   let repeatDone: Promise<void> | null = null
   let sessions: SessionReader | undefined = o.sessions
   let connecting: Promise<void> | null = null
@@ -235,19 +241,23 @@ export function createProductInjectionTarget(o: ProductInjectionOptions): Inject
   const target: InjectionTarget = {
     name: 'product',
     provides,
-    serves: (c) => (c.plant && !plants.includes(c.plant.via) ? `planting through ${c.plant.via} needs a per-case dataset on the eval hub (not built)` : null),
+    serves: (c) => {
+      if (!c.plant || plants.includes(c.plant.via)) return null
+      if (c.plant.via === 'slack') return `a Slack plant needs the Inhouse app (${EVAL_INHOUSE_ORIGIN_VAR} and ${EVAL_INHOUSE_AUD_VAR}), which is not set`
+      return `planting through ${c.plant.via} needs a per-case dataset on the eval hub (not built)`
+    },
+    lacks: (family) => (family === 'slack_post' && !inhouse ? `slack_post: the Inhouse app (${EVAL_INHOUSE_ORIGIN_VAR} and ${EVAL_INHOUSE_AUD_VAR}) is not set` : null),
     spentUsd: () => base.spentUsd?.() ?? 0,
     notes: () => [...notes],
-    async preflight(cases) {
+    async preflight() {
       // The product target's own checks first (the eval brand, the lease, the cap: targets/product.ts setup), which make
       // its doors; then one read through each door the run uses, and one R2 LIST of the session transcripts (as the
       // read-side and store-data suites do). A refusal throws here, before any paid turn.
       // Tracked like a start (#680): a close waits for it, so the lease its setup takes goes back after it.
       const p = (async () => {
         if (closed) throw closingRefusal()
-        // A Slack case without the Inhouse app would fail at its own start, after the paid turns before it (#671).
-        const slackCases = cases.filter(needsSlack)
-        if (slackCases.length && !inhouse) throw new Error(`${slackCases.map((c) => c.id).join(', ')} need the Inhouse app (${EVAL_INHOUSE_ORIGIN_VAR} and ${EVAL_INHOUSE_AUD_VAR}), which is not set`)
+        // (A Slack case without the Inhouse app never reaches here: it is not run or not served, and the runner stops on
+        // it before the preflight unless the run waived it.)
         await base.ready()
         if (closed) throw closingRefusal()
         await base.writeDoor().now()
@@ -272,11 +282,22 @@ export function createProductInjectionTarget(o: ProductInjectionOptions): Inject
       const failed: unknown[] = []
       // A start in flight (seeding, connecting, listing) ends first, refused at its next step and undone by itself; its
       // failure is start()'s to report (#663). Then a connect in flight.
-      // Bounded (#672): a setup still going after SETUP_WAIT_MS is named, and the close goes on without it.
-      const setupWaitMs = o.setupWaitMs ?? SETUP_WAIT_MS
+      // Bounded (#672, #685): waited for while its calls keep ending; one that goes quiet for SETUP_QUIET_MS is named, and
+      // the close goes on without it.
+      const quietMs = o.setupQuietMs ?? SETUP_QUIET_MS
       const connectInFlight = connecting as Promise<void> | null
       const inFlight = [...starting, ...(connectInFlight ? [connectInFlight] : [])]
-      if (inFlight.length && !(await settledWithin(Promise.allSettled(inFlight), setupWaitMs))) failed.push(new Error(`a case setup did not end within ${setupWaitMs / 1000} s of the close`))
+      if (inFlight.length) {
+        const all = Promise.allSettled(inFlight)
+        for (;;) {
+          const before = progress()
+          if (await settledWithin(all, quietMs)) break
+          if (progress() === before) {
+            failed.push(new Error(`a case setup made no progress for ${quietMs / 1000} s after the close`))
+            break
+          }
+        }
+      }
       try {
         // The running repeat's turns stop before the lease goes back.
         await active?.stopTurns?.()
@@ -333,7 +354,10 @@ export function createProductInjectionTarget(o: ProductInjectionOptions): Inject
       let ceilingsBefore: WriteEvidence['ceilingsBefore'] = null
       // A close that began during any setup step (the seed above, or one below): the case stops at once, undone in the
       // catch, and never hands back a live session (#663, #679).
-      const held = () => { if (closed) throw closingRefusal() }
+      const held = () => {
+        stepsDone++
+        if (closed) throw closingRefusal()
+      }
       try {
         held()
         if (base.room) {
@@ -392,6 +416,7 @@ export function createProductInjectionTarget(o: ProductInjectionOptions): Inject
           } catch (u) {
             failed.push(u)
           }
+          stepsDone++
         }
         // A failed undo leaves state the next repeat would inherit: the runner records it as a reset failure and stops.
         active = null
