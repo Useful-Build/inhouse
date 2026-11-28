@@ -321,6 +321,23 @@ export function exportRefused(e: unknown): string {
   return "The export didn't start. Try again in a minute."
 }
 
+/**
+ * What the web rows say (M3-F, N29; the default flipped by M3-J), from the Inhouse team's `t:webfetch_mode` as saved:
+ * with none set, the list narrows reading to its hosts and an empty list leaves any public website open; set to `list`,
+ * an empty list blocks every website; set to `open`, any public website, the list unused. `readOnly` is the host row's
+ * text when read-only and its list isn't what decides (else the hosts, or "No websites").
+ */
+export function webFetchWords(mode: unknown, hosts: unknown): { read: string; list: string; readOnly?: string } {
+  if (mode === 'list') return { read: 'Let your Inhouse agent open the websites listed below. Off blocks them all.', list: 'Enter one website name per line. Leave empty to block all websites.' }
+  if (mode === 'open') return { read: 'Let your Inhouse agent open any public website. Off blocks them all.', list: 'Your Inhouse team lets it open any public website, so this list isn’t used.', readOnly: 'Any public website' }
+  const empty = hosts === undefined || hosts === null || hosts === ''
+  return {
+    read: 'Let your Inhouse agent open web pages. Off blocks them all.',
+    list: 'Enter one website name per line to allow only those. Leave empty to allow any public website.',
+    ...(empty ? { readOnly: 'Any public website' } : {}),
+  }
+}
+
 export function settingsPage(tab: string, env: Env): Page {
   const { S, stage, agent, data } = env
   const { auditLog, memory, meta, people, skills, usage } = data
@@ -382,6 +399,7 @@ export function settingsPage(tab: string, env: Env): Page {
   const txt = (title: string, desc: string, key: string, def: string, need = 0) => ({ ...TXT(title, desc, key, saved[key] ?? def, need), defaultValue: def })
   // The brand's name as saved (the product fills `meta.brand.name` from the same setting; the demo has its sample name).
   const brandName = (saved['b:name'] ?? meta.brand.name).trim()
+  const fetchWords = webFetchWords(saved['t:webfetch_mode'], saved['t:webfetch'])
   const modes = thinkingModes(data, saved)
   const modeLabels = modes.filter(m => m.on).map(m => m.label)
   const defaultMode = modes.find(m => m.id === defaultModeId(data, saved))?.label ?? modeLabels[0]
@@ -439,8 +457,8 @@ export function settingsPage(tab: string, env: Env): Page {
         sel('Most steps in one answer', 'An answer that needs more steps than this stops and says so.', 't:max_turns', '25', [...MAX_TURNS]),
         // The two web switches are an Admin's (brand settings, M1-F); which websites it may open stays the Inhouse team's.
         { ...R('Search the web', 'Let your Inhouse agent search the web. Off by default.', 'toggle', '', 0, 't:websearch', false), keywords: 'websearch internet' },
-        { ...R('Read web pages', 'Let your Inhouse agent open the websites listed below. Off blocks them all.', 'toggle', '', 0, 't:webfetch_on', true), keywords: 'webfetch internet websites' },
-        { ...txt('Websites it may open', 'Enter one website name per line. Leave empty to block all websites.', 't:webfetch', ''), type: 'hosts', keywords: 'webfetch hosts domains allowlist' },
+        { ...R('Read web pages', fetchWords.read, 'toggle', '', 0, 't:webfetch_on', true), keywords: 'webfetch internet websites' },
+        { ...txt('Websites it may open', fetchWords.list, 't:webfetch', ''), type: 'hosts', keywords: 'webfetch hosts domains allowlist', ...(fetchWords.readOnly ? { display: fetchWords.readOnly } : {}) },
       ] },
       { label: 'What your Inhouse agent knows', rows: [R('Team memory', `Supplier, customer and stock rules the whole team shares. ${memCount} things remembered.`, 'button', 'Open memory', 0, undefined, undefined, () => env.openSettings('team-memory')), R('Skills', `The jobs it knows how to do. ${skills.length} skills, added by your Inhouse team.`, 'button', 'View skills', 0, undefined, undefined, env.goSkills)] },
     ] },

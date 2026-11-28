@@ -120,12 +120,21 @@ describe('route 29: send a turn', () => {
     })
   })
 
-  it('an empty t:webfetch is no host ([]), web search is off, and the default maxTurns is 25 (P8a S)', async () => {
+  it('an empty t:webfetch with no mode is any public host (M3-J, JSON null), web search is off, and the default maxTurns is 25', async () => {
     await setting('t:webfetch', '')
     const id = `c-${uniq()}`
     await chat(id, alice)
     const r = await send(sendPriced, alice, id, { clientTurnKey: key(), text: 'hi', model: 'haiku' })
-    expect(await turnRow(r.body.turnId as string)).toMatchObject({ model: 'claude-haiku-5-5', effort: 'low', max_turns: 25, web_fetch_json: '[]', web_search: null })
+    expect(await turnRow(r.body.turnId as string)).toMatchObject({ model: 'claude-haiku-5-5', effort: 'low', max_turns: 25, web_fetch_json: 'null', web_search: null })
+  })
+
+  it('an empty t:webfetch with the mode set to list is no host ([]): the Inhouse team can still keep a brand to none (P8a S)', async () => {
+    await setting('t:webfetch', '')
+    await setting('t:webfetch_mode', 'list')
+    const id = `c-${uniq()}`
+    await chat(id, alice)
+    const r = await send(sendPriced, alice, id, { clientTurnKey: key(), text: 'hi', model: 'haiku' })
+    expect(await turnRow(r.body.turnId as string)).toMatchObject({ web_fetch_json: '[]' })
   })
 
   it('open fetch mode (M3-F) is stored on the turn as the JSON text null (any public host), never as SQL NULL (no host)', async () => {

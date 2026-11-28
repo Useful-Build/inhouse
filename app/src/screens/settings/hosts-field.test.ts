@@ -1,7 +1,9 @@
 // The "Websites it may open" field (`t:webfetch`, a host list). Ways it could fail, written first:
 //  - a value the server refuses is saved from here (a URL, a single word, an IP address, more than 50 hosts), so the save fails after it showed;
 //  - a tidy-up that changes what the person meant (case, commas, repeats) or keeps a blank line the server refuses;
-//  - an empty list refused: empty is valid and means any public website (design 4.9).
+//  - an empty list refused: empty is valid and means any public website (design 4.9);
+//  - (M3-J) the row's words or read-only text say an empty list blocks every website while it doesn't (no mode set: any
+//    public website), or say any public website while the Inhouse team set the mode to `list`.
 // The expected values are written out here.
 import { describe, expect, it, vi } from 'vitest'
 
@@ -30,9 +32,26 @@ describe('checkField for a host list', () => {
 })
 
 describe('the read-only text of the row (a phone)', () => {
-  const row = (value: string) => ({ title: 't', desc: '', kind: 'text' as const, value, need: 0, type: 'hosts' as const })
-  it('lists the sites on one line, and says "any" for none', () => {
+  const row = (value: string, display?: string) => ({ title: 't', desc: '', kind: 'text' as const, value, need: 0, type: 'hosts' as const, ...(display ? { display } : {}) })
+  it('lists the sites on one line; none is "No websites" unless the row says the list doesn\'t decide', () => {
     expect(readParts(row('a.example.com\nb.example.com'), false)).toBe('a.example.com, b.example.com')
     expect(readParts(row(''), false)).toBe('No websites')
+    expect(readParts(row('', 'Any public website'), false)).toBe('Any public website')
+  })
+})
+
+describe('the web rows\' words follow the fetch mode (M3-J)', () => {
+  it('no mode: the list narrows, empty is any public website; `list`: empty blocks all; `open`: the list is unused', async () => {
+    const { webFetchWords } = await import('./content')
+    const { webFetchMode } = await import('../../../shared/contract/settings-table')
+    for (const [mode, hosts] of [[undefined, undefined], [undefined, ''], [null, ''], [undefined, 'a.example.com'], ['list', ''], ['list', 'a.example.com'], ['open', ''], ['open', 'a.example.com']] as const) {
+      const w = webFetchWords(mode, hosts)
+      const open = webFetchMode(mode, hosts) === 'open'
+      const at = `${String(mode)} ${String(hosts)}`
+      // Whatever the words, read-only says "Any public website" exactly when the server reads it as open.
+      expect(w.readOnly === 'Any public website', at).toBe(open)
+      expect(/block all websites/.test(w.list), at).toBe(mode === 'list')
+    }
+    expect(webFetchWords(undefined, '').list).toBe('Enter one website name per line to allow only those. Leave empty to allow any public website.')
   })
 })
