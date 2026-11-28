@@ -9,7 +9,10 @@
 //  - a failed read says nothing, or Activity's reads fail without a word in the console;
 //  - an admin's view of a member's card is listed as the admin's own, or speaks as if it were ("You said no");
 //  - "Stop allowing this" on a member's action offers another member's permission on the same account;
-//  - the Inhouse team (routes 110, 120 and 140 refuse them) gets a read, and so a refusal banner, on any of these screens.
+//  - the Inhouse team (routes 110, 120 and 140 refuse them) gets a read, and so a refusal banner, on any of these screens;
+//  - (Stage 1 M3-U) a member's admins card that this admin may answer is filed under "Waiting on your team" (as if it
+//    weren't theirs to act on), or doesn't say who asked; a batch answered here leaves the items that joined meanwhile
+//    unseen (the list isn't read again), or the read drops the answered card from the page.
 import { createElement } from 'react'
 import { act } from 'react'
 import { createRoot } from 'react-dom/client'
@@ -18,13 +21,13 @@ import type { ActionCard, Permission, Question } from '../../agent/types'
 import { AgentError } from '../../agent/types'
 
 const fake = vi.hoisted(() => ({
-  actions: vi.fn(), questions: vi.fn(), answerQuestion: vi.fn(), permissions: vi.fn(), removePermission: vi.fn(),
+  actions: vi.fn(), questions: vi.fn(), answerQuestion: vi.fn(), permissions: vi.fn(), removePermission: vi.fn(), answerAction: vi.fn(),
   toasts: [] as string[], opened: [] as string[], settings: [] as string[],
 }))
 vi.mock('../../agent', () => ({
   agent: {
     actions: fake.actions, questions: fake.questions, answerQuestion: fake.answerQuestion, permissions: fake.permissions, removePermission: fake.removePermission,
-    action: vi.fn(), answerAction: vi.fn(), undoAction: vi.fn(), resolveAction: vi.fn(), onActionUpdated: () => () => undefined,
+    action: vi.fn(), answerAction: fake.answerAction, undoAction: vi.fn(), resolveAction: vi.fn(), onActionUpdated: () => () => undefined,
     me: () => ({ memberId: 'm_Admin' }),
   },
 }))
@@ -73,7 +76,7 @@ const permission = (o: Partial<Permission> = {}): Permission => ({
 let host: HTMLDivElement
 let root: ReturnType<typeof createRoot>
 beforeEach(() => {
-  for (const f of [fake.actions, fake.questions, fake.answerQuestion, fake.permissions, fake.removePermission]) f.mockReset()
+  for (const f of [fake.actions, fake.questions, fake.answerQuestion, fake.permissions, fake.removePermission, fake.answerAction]) f.mockReset()
   fake.toasts = []; fake.opened = []; fake.settings = []; badge.reads = 0; badge.published = []; badge.brandPerson = true
   host = document.createElement('div'); document.body.append(host); root = createRoot(host)
 })
@@ -125,6 +128,41 @@ describe('Approvals: questions and actions', () => {
     expect(team.textContent).toContain('Waiting for Dana Kim')
     expect(team.textContent).toContain('Tag order 7')
     expect(team.querySelectorAll('button')).toHaveLength(0)
+  })
+  test("a member's admins card this admin may answer is theirs: under Actions for you, saying who asked", async () => {
+    fake.actions.mockResolvedValue([card({ id: 'ac_HHHHHHHHHHHHHHHHHHHHHH', kind: 'exact', askedBy: 'm_Dana', title: 'Refund $5.00 (USD) on order 9001', approverKind: 'admins', can: { ...NONE, approve: true, deny: true } })])
+    fake.questions.mockResolvedValue([])
+    await show(createElement(AgentAsks))
+    expect(host.querySelector('#agent-team-actions')).toBeNull()
+    const mine = host.querySelector('[aria-labelledby="agent-actions"]')!
+    expect(mine.textContent).toContain('Dana Kim asks an admin')
+    expect(buttons(mine)).toEqual(['Approve', 'No'])
+  })
+  test('a batch answered here reads the list again: the card that took its later items joins the end, the answered one stays', async () => {
+    const batch = (id: string, n: number, o: Partial<ActionCard> = {}) => card({
+      id, kind: 'exact', title: `${n} changes in Shopify`, lines: [], can: { ...NONE, approve: true, deny: true },
+      batch: { itemCount: n, firstLines: [], firstRows: [], totals: { records: n, units: n, unitsLabel: 'orders' } }, ...o,
+    })
+    fake.actions.mockResolvedValueOnce([batch('ac_JJJJJJJJJJJJJJJJJJJJJJ', 12)]).mockResolvedValueOnce([batch('ac_KKKKKKKKKKKKKKKKKKKKKK', 3)])
+    fake.questions.mockResolvedValue([])
+    fake.answerAction.mockResolvedValue(batch('ac_JJJJJJJJJJJJJJJJJJJJJJ', 12, { rev: 2, state: 'denied', can: NONE }))
+    await show(createElement(AgentAsks))
+    await press('No', host)
+    expect(fake.answerAction).toHaveBeenCalledWith('ac_JJJJJJJJJJJJJJJJJJJJJJ', 1, 'deny', { upTo: 12, totals: { records: 12, units: 12 } })
+    expect([...host.querySelectorAll('[data-action-id]')].map(e => e.getAttribute('data-action-id'))).toEqual(['ac_JJJJJJJJJJJJJJJJJJJJJJ', 'ac_KKKKKKKKKKKKKKKKKKKKKK'])
+    expect(host.textContent).toContain('You said no. Nothing went out.')
+  })
+  test("issue 580: a member's Needs a check the admin may resolve, and an admins card in its hold they may undo, are theirs", async () => {
+    fake.actions.mockResolvedValue([
+      card({ id: 'ac_LLLLLLLLLLLLLLLLLLLLLL', askedBy: 'm_Dana', title: 'Tag order 8', state: 'needs_check', can: { ...NONE, resolve: true } }),
+      card({ id: 'ac_MMMMMMMMMMMMMMMMMMMMMM', kind: 'exact', askedBy: 'm_Dana', title: 'Refund order 9', approverKind: 'admins', state: 'approved', sendAt: instant(12_000), can: { ...NONE, undo: true } }),
+      card({ id: 'ac_NNNNNNNNNNNNNNNNNNNNNN', askedBy: 'm_Dana', title: 'Tag order 10', can: NONE }),
+    ])
+    fake.questions.mockResolvedValue([])
+    await show(createElement(AgentAsks))
+    const ids = (sel: string) => [...host.querySelectorAll(`${sel} [data-action-id]`)].map(e => e.getAttribute('data-action-id'))
+    expect(ids('[aria-labelledby="agent-actions"]')).toEqual(['ac_LLLLLLLLLLLLLLLLLLLLLL', 'ac_MMMMMMMMMMMMMMMMMMMMMM'])
+    expect(ids('[aria-labelledby="agent-team-actions"]')).toEqual(['ac_NNNNNNNNNNNNNNNNNNNNNN'])
   })
   test('both sections show with their counts; a failed read says so and reads again', async () => {
     fake.actions.mockResolvedValue([card()]); fake.questions.mockResolvedValue([question()])
@@ -179,7 +217,7 @@ describe('Settings: Always allowed', () => {
     fake.permissions.mockResolvedValue([permission(), permission({ id: 'pg_DDDDDDDDDDDDDDDDDDDDDD', holder: { kind: 'member', memberId: 'm_Dana' }, title: 'Post in a channel', can: { remove: false } })])
     fake.removePermission.mockResolvedValue([permission({ id: 'pg_DDDDDDDDDDDDDDDDDDDDDD', holder: { kind: 'member', memberId: 'm_Dana' }, title: 'Post in a channel', can: { remove: false } })])
     await show(createElement(Permissions))
-    expect(host.textContent).toContain('Shopify · Store A · Up to 50 a day')
+    expect(host.textContent).toContain('Shopify · Store A · Up to 50 orders a day, 1 at a time')
     expect(host.textContent).toContain('For Dana Kim')
     expect(buttons()).toEqual(['Remove: Add tags to orders'])
     await press('Remove: Add tags to orders', host)

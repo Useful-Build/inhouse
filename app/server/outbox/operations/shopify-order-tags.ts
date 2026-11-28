@@ -4,6 +4,7 @@
 // item, so its line names every order in it (at most the bulk threshold, 5). The hub checks the arguments again,
 // strictly, and takes at most 5 orders in one call (hub/connectors/shopify/write/ops/tags.ts).
 import { z } from 'zod'
+import { andList, countOf } from './count-words.ts'
 import type { ResolveFacts } from '../../permissions/types.ts'
 
 /** A Shopify order's GraphQL id, the form the read tools return. */
@@ -42,6 +43,20 @@ export function tagsItemLine(verb: 'add' | 'remove', a: OrderTagsArgs, f: Resolv
   const shop = f.accounts.shopify?.shop
   const orders = a.orderIds.map(orderNumber).join(', ')
   return `${a.orderIds.length === 1 ? 'Order' : 'Orders'} ${orders}${shop ? ` (${shop})` : ''}: ${verb} ${a.tags.join(', ')}`
+}
+
+/** Stage 1 M3-U (N33): an item as a row: its orders ("#1042", "#1042, #1043") and the change ("add VIP, rush"). */
+export const tagsItemRow = (verb: 'add' | 'remove', a: OrderTagsArgs) =>
+  ({ ref: a.orderIds.map(id => `#${orderNumber(id)}`).join(', '), change: `${verb} ${a.tags.join(', ')}` })
+
+/**
+ * Stage 1 M3-U (N33): a batch's title. Every item with the same tags: "Tag 450 orders as VIP" ("Remove VIP from 450
+ * orders"); else "Add tags to 450 orders" ("Remove tags from 450 orders").
+ */
+export function tagsBatchTitle(verb: 'add' | 'remove', records: number, same: OrderTagsArgs | null): string {
+  const orders = countOf(records, 'order', 'orders')
+  if (verb === 'add') return same ? `Tag ${orders} as ${andList(same.tags)}` : `Add tags to ${orders}`
+  return same ? `Remove ${andList(same.tags)} from ${orders}` : `Remove tags from ${orders}`
 }
 
 /** The card: one order in the title as M2's; several orders named in a line of their own. */

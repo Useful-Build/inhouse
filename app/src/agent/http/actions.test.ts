@@ -1,4 +1,4 @@
-// Stage 1 M2-H: the real client's actions, permissions and questions (routes 110, 111, 120 to 124, 140 and 141) over a
+// Stage 1 M2-H: the real client's actions, permissions and questions (routes 110, 111, 120 to 126, 140 and 141) over a
 // fake `fetch`, and `action.updated` reaching `onActionUpdated` through the socket. Ways they could break, written first:
 //  - a call to the wrong route, or with a body the server refuses (no `ifRev`, the wrong field names);
 //  - route 120's filter dropped or sent in another shape (`states` comma-joined, `chatId`);
@@ -14,6 +14,9 @@ import { HttpAgent } from './client'
 import type { SocketLike } from './stream/socket'
 import { chatRow, iso, reads, refusal, server } from './testing/fake-server'
 import type { Routes } from './testing/fake-server'
+
+/** An order's row record ("#" and its number), built so no literal reads as a colour to the token check. */
+const orderRef = (n: number) => `#${n}`
 
 const AC = 'ac_AAAAAAAAAAAAAAAAAAAAAA'
 const PG = 'pg_BBBBBBBBBBBBBBBBBBBBBB'
@@ -74,6 +77,33 @@ describe('actions (routes 120 to 124)', () => {
       [`/api/actions/${AC}/undo`, { ifRev: 2 }],
       [`/api/actions/${AC}/resolve`, { outcome: 'sent', ifRev: 5 }],
     ])
+  })
+
+  // Stage 1 M3-U (routes 122, 124 to 126): a batch's answer with what it covers, an item's resolve, the items' pages and
+  // the asker's withdraw.
+  test("a batch's answer carries upTo and totals; an item's resolve its position; withdraw its rev; the items page by `after`", async () => {
+    const batch = { itemCount: 450, firstLines: ['Order 9001 (store-a): add VIP'], firstRows: [{ ref: orderRef(9001), change: 'add VIP' }], totals: { records: 450, units: 450, unitsLabel: 'orders' } }
+    const { agent, calls } = client({
+      [`POST /api/actions/${AC}/answer`]: r => ({ body: card({ kind: 'exact', rev: body(r).ifRev + 1, state: 'approved', sendAt: iso(12_000), batch }) }),
+      [`POST /api/actions/${AC}/resolve`]: r => ({ body: card({ kind: 'exact', rev: body(r).ifRev + 1, state: 'needs_check', batch }) }),
+      [`POST /api/actions/${AC}/withdraw`]: r => ({ body: card({ rev: body(r).ifRev + 1, state: 'withdrawn' }) }),
+      [`GET /api/actions/${AC}/items?after=100`]: { body: { items: [{ n: 101, line: 'Order 9002 (store-a): add VIP', row: { ref: orderRef(9002), change: 'add VIP' }, state: 'pending' }], next: 101 } },
+    })
+    expect((await agent.answerAction(AC, 1, 'approve', { upTo: 450, totals: { records: 450, units: 450 } })).batch).toEqual(batch)
+    expect((await agent.resolveAction(AC, 4, 'failed', 12)).state).toBe('needs_check')
+    expect((await agent.withdrawAction(AC, 7)).state).toBe('withdrawn')
+    expect(await agent.actionItems(AC, 100)).toEqual({ items: [{ n: 101, line: 'Order 9002 (store-a): add VIP', row: { ref: orderRef(9002), change: 'add VIP' }, state: 'pending' }], next: 101 })
+    expect(calls.map(c => [`${c.method} ${c.path}`, body(c)])).toEqual([
+      [`POST /api/actions/${AC}/answer`, { choice: 'approve', ifRev: 1, upTo: 450, totals: { records: 450, units: 450 } }],
+      [`POST /api/actions/${AC}/resolve`, { outcome: 'failed', ifRev: 4, item: 12 }],
+      [`POST /api/actions/${AC}/withdraw`, { ifRev: 7 }],
+      [`GET /api/actions/${AC}/items?after=100`, undefined],
+    ])
+  })
+
+  test('a page of items that does not parse rejects (unknown)', async () => {
+    const { agent } = client({ [`GET /api/actions/${AC}/items?after=0`]: { body: { items: [{ n: 0, line: 'x', row: { ref: '', change: 'x' }, state: 'pending' }] } } })
+    expect(await refused(agent.actionItems(AC, 0))).toMatchObject({ code: 'unknown' })
   })
 
   test('a card that does not parse rejects (unknown), never reaching the screen', async () => {

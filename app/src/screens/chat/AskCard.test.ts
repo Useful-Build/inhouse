@@ -11,6 +11,15 @@
 //  - a refusal with no card in it leaves the old buttons up without reading the card again; a card gone offers buttons;
 //  - Undo after Always allow doesn't say the permission stays; the keyboard is lost when the pressed button goes;
 //  - someone else's card (an admin's view) speaks as if it were the viewer's.
+// Stage 1 M3-U (N22, N25, N33):
+//  - a batch hides lines past its first 10 without saying how many more, shows no totals, or its Approve doesn't name
+//    the count and totals it covers;
+//  - a batch's answer sends another count or totals than the card on screen when the press began (it grew meanwhile),
+//    or sends none; a single card's sends any;
+//  - a waiting batch never reads itself (items joining keep its rev), or a single card polls;
+//  - a batch that needs a check offers to settle every item at once instead of one at a time in its list;
+//  - an admins card offers its asker an answer, or no Withdraw; Withdraw sends another rev; an admin who may answer it
+//    isn't told who asked; its outcome claims "you" said no.
 import { createElement } from 'react'
 import { act } from 'react'
 import { createRoot } from 'react-dom/client'
@@ -18,11 +27,16 @@ import { afterEach, beforeEach, describe, expect, test, vi } from 'vitest'
 import type { ActionCard } from '../../agent/types'
 import { AgentError } from '../../agent/types'
 
+/** An order's row record ("#" and its number), built so no literal reads as a colour to the token check. */
+const orderRef = (n: number) => `#${n}`
+
 const fake = vi.hoisted(() => ({
   action: vi.fn(),
   answerAction: vi.fn(),
   undoAction: vi.fn(),
   resolveAction: vi.fn(),
+  withdrawAction: vi.fn(),
+  actionItems: vi.fn(),
   listeners: new Set<(u: { actionId: string; rev: number }) => void>(),
   toasts: [] as string[],
   role: 'member' as string,
@@ -30,6 +44,7 @@ const fake = vi.hoisted(() => ({
 vi.mock('../../agent', () => ({
   agent: {
     action: fake.action, answerAction: fake.answerAction, undoAction: fake.undoAction, resolveAction: fake.resolveAction,
+    withdrawAction: fake.withdrawAction, actionItems: fake.actionItems,
     onActionUpdated: (l: (u: { actionId: string; rev: number }) => void) => { fake.listeners.add(l); return () => fake.listeners.delete(l) },
     subscribe: () => () => undefined,
     me: () => ({ role: fake.role }),
@@ -62,7 +77,7 @@ beforeEach(() => {
   vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout', 'Date'] })
   // The browser's clock is far from the server's: the countdown must not care.
   vi.setSystemTime(NOW + 3 * 60 * 60_000)
-  for (const f of [fake.action, fake.answerAction, fake.undoAction, fake.resolveAction]) f.mockReset()
+  for (const f of [fake.action, fake.answerAction, fake.undoAction, fake.resolveAction, fake.withdrawAction, fake.actionItems]) f.mockReset()
   fake.listeners.clear(); fake.toasts = []
   host = document.createElement('div'); document.body.append(host); root = createRoot(host)
 })
@@ -119,7 +134,7 @@ describe('answering', () => {
     fake.answerAction.mockResolvedValue(card({ rev: 2, state: 'approved', sendAt: instant(NOW + 10_000), can: { ...NONE, undo: true } }))
     await show({ actionId: AC, initial: card() })
     await press('Allow once')
-    expect(fake.answerAction).toHaveBeenCalledWith(AC, 1, 'once')
+    expect(fake.answerAction).toHaveBeenCalledWith(AC, 1, 'once', undefined)
     expect(fake.toasts).toEqual(['Allowed once. It goes out in a few seconds.'])
     // The sidebar's badge reads again after an answer.
     expect(badge.reads).toBeGreaterThan(0)
@@ -141,7 +156,7 @@ describe('answering', () => {
     await show({ actionId: AC, initial: card({ rev: 4, state: 'needs_check', result: 'It isn’t clear whether this went out.', can: { ...NONE, resolve: true } }) })
     expect(buttons()).toEqual(['It went out', "It didn't go out"])
     await press("It didn't go out")
-    expect(fake.resolveAction).toHaveBeenCalledWith(AC, 4, 'failed')
+    expect(fake.resolveAction).toHaveBeenCalledWith(AC, 4, 'failed', undefined)
     expect(text()).toContain('It didn’t go out.')
   })
   test('a conflict shows the card as it is now and says so; a refusal says why and keeps the card', async () => {
@@ -332,5 +347,163 @@ describe('reading the card again', () => {
     expect(text()).toContain('Sent.')
     await tick(120_000)
     expect(fake.action).toHaveBeenCalledTimes(SLOW)
+  })
+})
+
+describe('batches (Stage 1 M3-U)', () => {
+  const LINES = Array.from({ length: 10 }, (_, i) => `Order ${3901 + i} (store-a): add VIP`)
+  const ROWS = Array.from({ length: 10 }, (_, i) => ({ ref: `#${3901 + i}`, change: 'add VIP' }))
+  const batch = (n: number, o: Partial<ActionCard> = {}): ActionCard => card({
+    kind: 'exact', guardrail: 'bulk', title: `Tag ${n} orders as VIP`, lines: LINES, records: n, can: { ...NONE, approve: true, deny: true },
+    batch: { itemCount: n, firstLines: LINES, firstRows: ROWS, totals: { records: n, units: n, unitsLabel: 'orders' } }, ...o,
+  })
+  const rowTexts = () => [...host.querySelectorAll('[data-card-rows] [data-row]')].map(r => r.textContent)
+  test('a quiet summary: the title, one line under it, 3 rows, "and N more" with See all, and Approve all', async () => {
+    await show({ actionId: AC, initial: batch(450) })
+    expect(host.querySelector('h3')?.textContent).toBe('Tag 450 orders as VIP')
+    expect(host.querySelector('[data-card-subtitle]')?.textContent).toBe('Shopify · One approval covers all 450')
+    expect(rowTexts()).toEqual([3901, 3902, 3903].map(n => `${orderRef(n)}add VIP`))
+    expect(host.querySelector('[data-card-more]')?.textContent).toBe('and 447 moreSee all 450')
+    expect(buttons()).toEqual(['See all 450', 'Approve all 450', 'No'])
+    // No badges, no kicker, no "In all".
+    expect(text()).not.toContain('Changes many records')
+    expect(text()).not.toContain('Needs your approval')
+    expect(text()).not.toContain('In all')
+  })
+  test('a stock batch (the server sends column heads) is a table, its total once in the header, 5 rows under the heads', async () => {
+    const rows = Array.from({ length: 10 }, (_, i) => ({ ref: `Item ${8001 + i}`, change: 'Location 601 · restock', amount: `+${10 * (i + 1)}` }))
+    await show({ actionId: AC, initial: batch(12, { title: 'Restock 12 items', batch: { itemCount: 12, firstLines: LINES, firstRows: rows, heads: { ref: 'Item', change: 'Where and why', amount: 'Stock' }, totals: { records: 12, units: 900, unitsLabel: 'stock units' } } }) })
+    expect(host.querySelector('[data-card-total]')?.textContent).toBe('12 changes · 900 stock units')
+    expect([...host.querySelectorAll('th')].map(t => t.textContent)).toEqual(['Item', 'Where and why', 'Stock'])
+    expect(host.querySelectorAll('tbody tr')).toHaveLength(5)
+    expect(host.querySelector('tbody tr')?.textContent).toBe('Item 8001Location 601 · restock+10')
+    // The total once, in the header: the line under the title is the tool alone.
+    expect(host.querySelector('[data-card-subtitle]')?.textContent).toBe('Shopify')
+    expect(buttons()).toEqual(['See all 12', 'Approve all 12', 'No'])
+  })
+  test('a tag batch whose rows carry amounts (richer rows) stays a list: the table is chosen by the operation', async () => {
+    const rows = ROWS.map(r => ({ ...r, amount: '$642.10' }))
+    await show({ actionId: AC, initial: batch(450, { batch: { itemCount: 450, firstLines: LINES, firstRows: rows, totals: { records: 450, units: 450, unitsLabel: 'orders' } } }) })
+    expect(host.querySelector('table')).toBeNull()
+    expect(rowTexts()[0]).toBe(`${orderRef(3901)}add VIP$642.10`)
+  })
+  test('one item: a plain Approve, and the subtitle names what it covers', async () => {
+    await show({ actionId: AC, initial: batch(1, { lines: LINES.slice(0, 1), batch: { itemCount: 1, firstLines: LINES.slice(0, 1), firstRows: ROWS.slice(0, 1), totals: { records: 1, units: 1, unitsLabel: 'orders' } } }) })
+    expect(buttons()).toEqual(['Approve', 'No'])
+    expect(host.querySelector('[data-card-subtitle]')?.textContent).toBe('Shopify · One approval covers 1 order')
+  })
+  test('Approve sends the count and totals on the card; No does too', async () => {
+    fake.answerAction.mockResolvedValueOnce(batch(450, { rev: 2, state: 'approved', sendAt: instant(NOW + 10_000), can: { ...NONE, undo: true } }))
+    await show({ actionId: AC, initial: batch(450) })
+    await press('Approve all 450')
+    expect(fake.answerAction).toHaveBeenCalledWith(AC, 1, 'approve', { upTo: 450, totals: { records: 450, units: 450 } })
+    expect(fake.toasts).toEqual(['Approved 450. They start going out in a few seconds.'])
+    fake.answerAction.mockResolvedValueOnce(batch(12, { id: 'ac_BBBBBBBBBBBBBBBBBBBBBB', rev: 2, state: 'denied', can: NONE }))
+    await show({ actionId: 'ac_BBBBBBBBBBBBBBBBBBBBBB', initial: batch(12, { id: 'ac_BBBBBBBBBBBBBBBBBBBBBB' }) })
+    await press('No')
+    expect(fake.answerAction).toHaveBeenLastCalledWith('ac_BBBBBBBBBBBBBBBBBBBBBB', 1, 'deny', { upTo: 12, totals: { records: 12, units: 12 } })
+  })
+  test('a waiting batch reads itself every few seconds; its count grows on screen; a single card never polls', async () => {
+    fake.action.mockResolvedValue(batch(452))
+    await show({ actionId: AC, initial: batch(450) })
+    await tick(5000)
+    await flush()
+    expect(fake.action).toHaveBeenCalledTimes(1)
+    expect(buttons()).toContain('Approve all 452')
+    await tick(5000)
+    await flush()
+    expect(fake.action).toHaveBeenCalledTimes(2)
+    fake.action.mockReset()
+    await show({ actionId: 'ac_BBBBBBBBBBBBBBBBBBBBBB', initial: card({ id: 'ac_BBBBBBBBBBBBBBBBBBBBBB' }) })
+    await tick(15_000)
+    expect(fake.action).not.toHaveBeenCalled()
+  })
+  test('a press that began before the card grew answers for the card it began on', async () => {
+    fake.action.mockResolvedValue(batch(460))
+    fake.answerAction.mockResolvedValueOnce(batch(450, { rev: 2, state: 'approved', sendAt: instant(NOW + 10_000), can: { ...NONE, undo: true } }))
+    await show({ actionId: AC, initial: batch(450) })
+    const approve = [...host.querySelectorAll('button')].find(b => label(b) === 'Approve all 450')!
+    await act(async () => { approve.dispatchEvent(new PointerEvent('pointerdown', { bubbles: true })) })
+    // The card reads itself and grows to 460 before the click lands.
+    await tick(5000)
+    await flush()
+    expect(buttons()).toContain('Approve all 460')
+    await act(async () => { approve.click() })
+    await flush()
+    expect(fake.answerAction).toHaveBeenCalledWith(AC, 1, 'approve', { upTo: 450, totals: { records: 450, units: 450 } })
+    // The 10 that joined meanwhile are named, and where they wait.
+    expect(host.querySelector('[data-left-over]')?.textContent).toBe("10 more arrived while you looked. They wait for their own OK. They're in Approvals.")
+  })
+  test('Space on Approve: the press begins at keydown, so items joining before the keyup click are not covered', async () => {
+    fake.action.mockResolvedValue(batch(453))
+    fake.answerAction.mockResolvedValueOnce(batch(450, { rev: 2, state: 'approved', sendAt: instant(NOW + 10_000), can: { ...NONE, undo: true } }))
+    await show({ actionId: AC, initial: batch(450) })
+    const approve = [...host.querySelectorAll('button')].find(b => label(b) === 'Approve all 450')!
+    await act(async () => { approve.dispatchEvent(new KeyboardEvent('keydown', { key: ' ', bubbles: true })) })
+    await tick(5000)
+    await flush()
+    expect(buttons()).toContain('Approve all 453')
+    await act(async () => { approve.dispatchEvent(new KeyboardEvent('keyup', { key: ' ', bubbles: true })); approve.click() })
+    await flush()
+    expect(fake.answerAction).toHaveBeenCalledWith(AC, 1, 'approve', { upTo: 450, totals: { records: 450, units: 450 } })
+  })
+  test('a press dragged off its button leaves nothing behind: a later press answers for the card as it is then', async () => {
+    fake.action.mockResolvedValue(batch(453))
+    fake.answerAction.mockResolvedValueOnce(batch(453, { rev: 2, state: 'denied', can: NONE }))
+    await show({ actionId: AC, initial: batch(450) })
+    const approve = [...host.querySelectorAll('button')].find(b => label(b) === 'Approve all 450')!
+    await act(async () => { approve.dispatchEvent(new PointerEvent('pointerdown', { bubbles: true })); approve.dispatchEvent(new PointerEvent('pointercancel', { bubbles: true })) })
+    await tick(5000)
+    await flush()
+    // A press on another button (No, by keyboard) never takes the abandoned press's card.
+    const no = [...host.querySelectorAll('button')].find(b => label(b) === 'No')!
+    await act(async () => { no.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true })); no.click() })
+    await flush()
+    expect(fake.answerAction).toHaveBeenCalledWith(AC, 1, 'deny', { upTo: 453, totals: { records: 453, units: 453 } })
+  })
+  test('on a touch screen the click can come long after the release: the press still answers for the card it began on', async () => {
+    fake.action.mockResolvedValue(batch(456))
+    fake.answerAction.mockResolvedValueOnce(batch(450, { rev: 2, state: 'approved', sendAt: instant(NOW + 10_000), can: { ...NONE, undo: true } }))
+    await show({ actionId: AC, initial: batch(450) })
+    const approve = [...host.querySelectorAll('button')].find(b => label(b) === 'Approve all 450')!
+    await act(async () => { approve.dispatchEvent(new PointerEvent('pointerdown', { bubbles: true })); approve.dispatchEvent(new PointerEvent('pointerup', { bubbles: true })) })
+    // The card grows while the tap's click is still on its way.
+    await tick(5000)
+    await flush()
+    expect(buttons()).toContain('Approve all 456')
+    await act(async () => { approve.click() })
+    await flush()
+    expect(fake.answerAction).toHaveBeenCalledWith(AC, 1, 'approve', { upTo: 450, totals: { records: 450, units: 450 } })
+  })
+  test('a batch that needs a check is settled item by item in its list, never all at once from the card', async () => {
+    await show({ actionId: AC, initial: batch(40, { state: 'needs_check', result: '38 went out. 2 are unclear.', can: { ...NONE, resolve: true } }) })
+    expect(buttons()).toEqual(['See all 40', 'Check each change'])
+  })
+})
+
+describe('admins cards (Stage 1 M3-U, N25)', () => {
+  const refund = (o: Partial<ActionCard> = {}): ActionCard => card({
+    kind: 'exact', guardrail: 'money', reachesCustomer: true, reversible: false, title: 'Refund $5.00 (USD) on order 9001', lines: ['1 item, shipping $0.00.'],
+    approverKind: 'admins', ...o,
+  })
+  test('its asker sees whom it waits for and may withdraw it, at the rev read, but not answer it', async () => {
+    fake.withdrawAction.mockResolvedValueOnce(refund({ rev: 2, state: 'withdrawn', can: NONE }))
+    await show({ actionId: AC, initial: refund({ waitingFor: 'an admin', can: { ...NONE, withdraw: true } }) })
+    expect(text()).toContain('Waiting for an admin')
+    expect(buttons()).toEqual(['Withdraw'])
+    await press('Withdraw')
+    expect(fake.withdrawAction).toHaveBeenCalledWith(AC, 1)
+    expect(fake.toasts).toEqual(['Withdrawn. Nothing goes out.'])
+    expect(text()).toContain('It was withdrawn. Nothing went out.')
+    expect(buttons()).toEqual([])
+  })
+  test('an admin who may answer it is told who asked; a No reads as not approved, never "you said no"', async () => {
+    fake.answerAction.mockResolvedValueOnce(refund({ rev: 2, state: 'denied', chatId: null, can: NONE }))
+    await show({ actionId: AC, initial: refund({ chatId: null, can: { ...NONE, approve: true, deny: true } }), whose: 'Dana Kim' })
+    expect(text()).toContain('Dana Kim asks an admin')
+    expect(buttons()).toEqual(['Approve', 'No'])
+    await press('No')
+    expect(fake.answerAction).toHaveBeenCalledWith(AC, 1, 'deny', undefined)
+    expect(text()).toContain("It wasn't approved. Nothing went out.")
   })
 })

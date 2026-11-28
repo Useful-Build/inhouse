@@ -196,6 +196,30 @@
       ]
     },
     {
+      "id": "vip-tags",
+      "title": "VIP tags for big spenders",
+      "at": "-3d 15:40",
+      "turns": [
+        {
+          "user": "Tag everyone who spent over $500 this year as VIP."
+        },
+        {
+          "agent": [
+            {
+              "type": "text",
+              "text": "450 customers spent over $500 this year. I've put one VIP tag on each of their latest orders into one card, so you can check the list and approve it in one go."
+            },
+            {
+              "type": "ask",
+              "actionId": "ac_demoVipTagBatch0000000"
+            }
+          ],
+          "trace": "vip-tags",
+          "model": "sonnet"
+        }
+      ]
+    },
+    {
       "id": "meta",
       "title": "Meta Ads on low-stock products",
       "at": "-3d 15:10",

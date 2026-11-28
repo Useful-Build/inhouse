@@ -21,7 +21,7 @@ import type { ActiveRun, SendTurnResult } from '../../shared/contract/runs'
 import type { ChatList, ChatPage } from '../../shared/contract/chats'
 import type { AttachmentRef } from '../../shared/contract/attachments'
 import type { RunFrame } from '../../shared/contract/run-event'
-import type { ActionCard, ActionChoice, ActionFilter, ActionResolution } from '../../shared/contract/actions'
+import type { ActionAnswerTotals, ActionCard, ActionChoice, ActionFilter, ActionItemsPage, ActionResolution } from '../../shared/contract/actions'
 import type { Permission } from '../../shared/contract/permissions'
 import type { CeilingList, CeilingRow, UpdateCeilingInput } from '../../shared/contract/ceiling'
 import type { Question } from '../../shared/contract/questions'
@@ -58,7 +58,13 @@ export type { LibraryKind, LibraryPlace, DocPreview, LibraryLink, LibraryFile } 
 export type { ApprovalRecord, ApproveResult, TeamRequest, StampRecord, SetAsideReason, SetAsideRecord, AgentState } from '../../shared/contract/state'
 export type { AgentNotice, NoticePage, AgentNotification } from '../../shared/contract/notice'
 export type { AgentData } from '../../shared/contract/data'
-export type { ActionCard, ActionChoice, ActionFilter, ActionKind, ActionResolution, ActionState } from '../../shared/contract/actions'
+export type { ActionCard, ActionChoice, ActionFilter, ActionItem, ActionItemsPage, ActionKind, ActionResolution, ActionState } from '../../shared/contract/actions'
+
+/**
+ * Stage 1 M3 (N22, N33): what a batch's answer covers: items 1 to `upTo` and their totals, exactly as the card that was
+ * answered showed them. The server refuses it (a conflict: its totals changed) when they no longer match.
+ */
+export interface BatchCovers { upTo: number; totals: ActionAnswerTotals }
 export type { Guardrail, Permission, PermissionHolder } from '../../shared/contract/permissions'
 export type { CeilingList, CeilingMeasure, CeilingRow, CeilingValues, UpdateCeilingInput } from '../../shared/contract/ceiling'
 export type { Question } from '../../shared/contract/questions'
@@ -301,13 +307,25 @@ export interface AgentClient {
   /**
    * Route 122: answers a waiting card at the rev it was read at: `once` and `always` an ask card, `approve` an exact one,
    * `deny` either. Resolves to the card after the answer. A stale rev, or a card another answer moved first, rejects with
-   * `conflict` and the card as it is now in `current`; one this person may not answer with `forbidden`.
+   * `conflict` and the card as it is now in `current`; one this person may not answer with `forbidden`. A batch's answer
+   * (Stage 1 M3) carries `covers`, the items and totals the card showed; a single card's never does. Items after `upTo`
+   * (added while it was open) move to a new card.
    */
-  answerAction(id: string, ifRev: number, choice: ActionChoice): Promise<ActionCard>
+  answerAction(id: string, ifRev: number, choice: ActionChoice, covers?: BatchCovers): Promise<ActionCard>
   /** Route 123: takes an approved action back during its hold. Once it started going out: `conflict` with the card as it is now. */
   undoAction(id: string, ifRev: number): Promise<ActionCard>
-  /** Route 124: says whether a "Needs a check" action went out (`sent`) or not (`failed`). The approver or an admin only. */
-  resolveAction(id: string, ifRev: number, outcome: ActionResolution): Promise<ActionCard>
+  /**
+   * Route 124: says whether a "Needs a check" action went out (`sent`) or not (`failed`). The approver or an admin only. A
+   * batch's unclear items are settled one at a time: `item` is its position (Stage 1 M3); a single card's takes none.
+   */
+  resolveAction(id: string, ifRev: number, outcome: ActionResolution, item?: number): Promise<ActionCard>
+  /**
+   * Route 126 (Stage 1 M3, N25): the asker takes back their own waiting single card (`can.withdraw`, an admins card they
+   * can't answer). A card no longer waiting: `conflict` with the card as it is now.
+   */
+  withdrawAction(id: string, ifRev: number): Promise<ActionCard>
+  /** Route 125 (Stage 1 M3, N22): one page of a batch's items after position `after` (0 for the first). A single card has none (not found). */
+  actionItems(id: string, after: number): Promise<ActionItemsPage>
   /**
    * Called with each `action.updated` the runs this client follows carry (an action of a followed chat changed): the card
    * reads it again. Returns the unsubscribe. The demo never calls it.

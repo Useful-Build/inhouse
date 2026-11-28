@@ -9,7 +9,7 @@ import { NOT_FOUND, REASON } from '../../../shared/contract/error-codes'
 import { meetsRule, settingRow } from '../../../shared/contract/settings-table'
 import { AgentError, CHAT_TITLE_MAX } from '../types'
 import type {
-  ActivityLine, AgentClient, AgentData, AgentErrorCode, AgentNotice, AgentNotification, AgentState, AuditLine, LinkState, ErrorReason, Instant, LibraryFile, Me,
+  ActivityLine, AgentClient, AgentData, BatchCovers, AgentErrorCode, AgentNotice, AgentNotification, AgentState, AuditLine, LinkState, ErrorReason, Instant, LibraryFile, Me,
   MemberRecord, MemoryData, MemoryLine, ModelMode, WaitingMemory, PauseState, RefreshList, ResourceKey, ResourceStatus, RoutineDef, RoutineRun, SkillDef, SupportGrant, ToolsData, Trace, UsageData,
 } from '../types'
 import type { ChatSummary } from '../../../shared/contract/chats'
@@ -37,7 +37,7 @@ import { postToolConnect, postToolDisconnect, putToolPaused, readTools } from '.
 import { readUsage, readUsageMonths } from './usage'
 import { checkDataExport, dataExportUrl as dataExportPath } from './data-access'
 import type { AvailableChannels, NotifyChannelList, PutNotifyChannels } from '../../../shared/contract/notify-slack'
-import type { ActionCard, ActionChoice, ActionFilter, ActionResolution } from '../../../shared/contract/actions'
+import type { ActionCard, ActionChoice, ActionFilter, ActionItemsPage, ActionResolution } from '../../../shared/contract/actions'
 import type { Permission } from '../../../shared/contract/permissions'
 import type { CeilingList, CeilingRow, UpdateCeilingInput } from '../../../shared/contract/ceiling'
 import type { Question } from '../../../shared/contract/questions'
@@ -1273,9 +1273,11 @@ export class HttpAgent implements AgentClient {
   }
   actions = (filter?: ActionFilter): Promise<ActionCard[]> => this.m2(async m => (await m.readActions(this.http, filter)).items)
   action = (id: string): Promise<ActionCard> => this.m2(m => m.readAction(this.http, id))
-  answerAction = (id: string, ifRev: number, choice: ActionChoice): Promise<ActionCard> => this.m2((m, k) => m.postAnswer(this.http, k, id, ifRev, choice), 'actionCard')
+  answerAction = (id: string, ifRev: number, choice: ActionChoice, covers?: BatchCovers): Promise<ActionCard> => this.m2((m, k) => m.postAnswer(this.http, k, id, ifRev, choice, covers), 'actionCard')
   undoAction = (id: string, ifRev: number): Promise<ActionCard> => this.m2((m, k) => m.postUndo(this.http, k, id, ifRev), 'actionCard')
-  resolveAction = (id: string, ifRev: number, outcome: ActionResolution): Promise<ActionCard> => this.m2((m, k) => m.postResolve(this.http, k, id, ifRev, outcome), 'actionCard')
+  resolveAction = (id: string, ifRev: number, outcome: ActionResolution, item?: number): Promise<ActionCard> => this.m2((m, k) => m.postResolve(this.http, k, id, ifRev, outcome, item), 'actionCard')
+  withdrawAction = (id: string, ifRev: number): Promise<ActionCard> => this.m2((m, k) => m.postWithdraw(this.http, k, id, ifRev), 'actionCard')
+  actionItems = (id: string, after: number): Promise<ActionItemsPage> => this.m2(m => m.readActionItems(this.http, id, after))
   permissions = (): Promise<Permission[]> => this.m2(m => m.readPermissions(this.http))
   removePermission = (id: string, ifRev: number): Promise<Permission[]> => this.m2((m, k) => m.postRemovePermission(this.http, k, id, ifRev), 'permission')
   questions = (): Promise<Question[]> => this.m2(m => m.readQuestions(this.http))

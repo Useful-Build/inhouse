@@ -67,6 +67,23 @@ export interface OperationBase<A> {
    * in server words ("Order 1042 (store-a): add VIP, rush"). Nothing a person approves may be cut from it.
    */
   itemLine(item: A, f: ResolveFacts): string
+  /**
+   * Stage 1 M3-U (N33): one item as a row of the batch card and its full list: the record, the change and, where it has
+   * one, its amount or quantity. Server words; the item's `line` stays the full form. Every operation that coalesces
+   * defines it (operations.test.ts).
+   */
+  itemRow?(item: A): { ref: string; change: string; amount?: string }
+  /**
+   * Stage 1 M3-U: the rows' column heads, in the person's words, for an operation whose batch shows as a table (its rows
+   * carry quantities or money: stock). Left out, the batch is a plain list, whatever its rows carry.
+   */
+  rowHeads?: { ref: string; change: string; amount: string }
+  /**
+   * Stage 1 M3-U (N33): a batch card's title, what happens with its count ("Tag 450 orders as VIP"). `same` is an item's
+   * arguments when every item of the batch has the same value at `titleKey` (a JSON path, such as the tags), else null.
+   */
+  batchTitle?(c: { records: number; units: number }, same: A | null): string
+  titleKey?: string
   /** M2: no automatic resend. */
   idempotent: false
   /** Server words only. */
