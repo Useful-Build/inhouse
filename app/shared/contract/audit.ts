@@ -11,6 +11,7 @@ import { GuardrailSchema, PermissionIdSchema } from './permissions.ts'
 import { QuestionIdSchema } from './questions.ts'
 import type { WriteOperationKey } from '../../hub/index/contract.ts'
 import { SettingKeySchema, SettingScopeSchema, SettingValueSchema, settingSpec } from './settings.ts'
+import { ConnectionIdSchema } from './connections.ts'
 
 /** An audit row formatted for display, also used by the demo. */
 export const AuditEntrySchema = z.object({ at: InstantSchema, who: z.string(), what: z.string(), detail: z.string() })
@@ -63,6 +64,10 @@ export const AuditActionSchema = z.enum([
   'question.asked', 'question.answered', 'question.expired',
   // Stage 1 M3 (N26): the Inhouse team changed an operation's ceiling (M3-C's route; the test build's fakes hook).
   'ceiling.changed',
+  // Stage 1 M4 (M4-A; N35 to N49): a tool connected by address. Its sign-in, pause and disconnect reuse P5's `tools.*`
+  // lines with the connection's account id (`mcp:<slug>`).
+  'connection.prepared', 'connection.changed', 'connection.trusted', 'connection.credential', 'connection.tools_confirmed',
+  'connection.tool_changed', 'connection.removed',
 ])
 export type AuditAction = z.infer<typeof AuditActionSchema>
 
@@ -160,8 +165,16 @@ export const ConnectOutcomeSchema = z.enum([
   'ok', 'invalid_args', 'unknown_tool', 'write_refused', 'not_configured', 'credentials_rejected', 'scope_mismatch',
   'key_unavailable', 'upstream_unavailable', 'upstream_rejected', 'upstream_version_mismatch', 'rate_limited',
   'result_too_large', 'internal', 'state_invalid', 'workspace_mismatch', 'connect_stale', 'connect_refused', 'paused',
+  // Stage 1 M4 (M4-A)
+  'needs_key', 'definition_changed', 'needs_input', 'leak', 'client_fault', 'not_built', 'connections_off',
 ])
 export type ConnectOutcome = z.infer<typeof ConnectOutcomeSchema>
+// Stage 1 M4 (M4-A): a connection by address. Its account id (connections.ts `ConnectionIdSchema`), a revision, a count.
+const ConnectionAccountArgSchema = ConnectionIdSchema
+const CONNECTION_REV = z.number().int().min(1).max(999_999_999)
+const CONNECTION_TOOLS = z.number().int().min(0).max(200)
+/** What a connection edit changed (route 163), never the new text. */
+export const ConnectionChangeSchema = z.enum(['name', 'about', 'admin_may_sign_in', 'settings'])
 // P5 (p5-w4): notices. Ids, closed codes, a length and a hash only; never the notice's text, a title or a name.
 export const NotifySourceSchema = z.enum(['agent', 'approvals', 'questions', 'routines'])
 /** The server's own notice kinds (p5-w4 section 3a); `question_asked` is stored as `question_waiting`. */
@@ -416,6 +429,31 @@ const otherLines = [
   // Stage 1 M3 (N26). The operation and its values before and after: switches and counts only. `old` is null when the
   // operation had no row. The actor is the line's own.
   line('ceiling.changed', { operation: WriteOperationArgSchema, old: CeilingValuesSchema.nullable(), new: CeilingValuesSchema }),
+  // Stage 1 M4 (M4-A). The connection's account id, revisions, closed codes and counts only: never an address, a name or
+  // about line, a server's text, a key or a secret. `tool` is our own name for a tool (N45), never the server's.
+  /** Route 161 (M4-R2): the Inhouse team prepared a connection. */
+  line('connection.prepared', { accountId: ConnectionAccountArgSchema, transport: z.enum(['https', 'connector']), path: z.enum(['none', 'signin', 'key']), generation: CONNECTION_REV }),
+  /** Route 163 (M4-R2): which parts changed, each once (never the new name or about line). */
+  line('connection.changed', {
+    accountId: ConnectionAccountArgSchema,
+    changed: z.array(ConnectionChangeSchema).min(1).max(4).refine(c => new Set(c).size === c.length, 'Each part once'),
+  }),
+  /** Route 164 (M4-L): trust flipped, and the policy revision it made (N49). */
+  line('connection.trusted', { accountId: ConnectionAccountArgSchema, trusted: z.boolean(), policyRev: CONNECTION_REV }),
+  /** Route 166 (M4-B, M4-X): a key or an app's id and secret given, and how its check ended. Never the value. */
+  line('connection.credential', { accountId: ConnectionAccountArgSchema, kind: z.enum(['key', 'client']), outcome: ConnectOutcomeSchema }),
+  /** Route 169 (M4-H): a confirm, as counts by mode. */
+  line('connection.tools_confirmed', {
+    accountId: ConnectionAccountArgSchema, generation: CONNECTION_REV, policyRev: CONNECTION_REV,
+    read: CONNECTION_TOOLS, write: CONNECTION_TOOLS, off: CONNECTION_TOOLS,
+  }),
+  /** The sync (M4-H, N35): one line per (connection, tool, definition hash) change, written once. The actor is `m_system`. */
+  line('connection.tool_changed', {
+    accountId: ConnectionAccountArgSchema, tool: z.string().regex(/^[a-z][a-z0-9_]{0,49}$/), defHash: z.string().regex(/^[0-9a-f]{64}$/),
+    change: z.enum(['new', 'changed', 'gone', 'rejected']),
+  }),
+  /** Route 171 (M4-R2): removed, and whether its login was revoked at its source. */
+  line('connection.removed', { accountId: ConnectionAccountArgSchema, revoked: z.boolean() }),
 ] as const
 
 /**

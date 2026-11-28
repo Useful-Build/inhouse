@@ -333,7 +333,7 @@ describe('the outbox at the answer and the claim (L5, L6)', () => {
     const ctx = requestCtx({ nowMs: T0 })
     const f = await outboxFacts({ db, hubAccounts: async () => HUB_FACTS }).decideFacts(
       { operation: 'shopify.order.tag_add', args: tagArgs(1), accountId: 'shopify:store', accountGen: SHOP_GEN, scope: { shop: 'store-a' }, scopeKey: 'shop=store-a',
-        records: 1, units: 1, effects: { money: false, customer: false, destructive: false, access: false }, memberMay: true, payloadHash: '0'.repeat(64), policyRev: POLICY_REV },
+        records: 1, units: 1, effects: { money: false, customer: false, destructive: false, access: false, unreviewed: false }, memberMay: true, payloadHash: '0'.repeat(64), policyRev: POLICY_REV },
       ctx,
     )
     expect(f.ceiling['shopify.order.tag_add']).toEqual({ enabled: true, perDayMax: 40, loweredRev: 3, unitsMax: 7, bulkThreshold: 2, batchMax: 120, rev: 4 })

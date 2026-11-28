@@ -3,7 +3,13 @@
 import { describe, expect, expectTypeOf, it } from 'vitest'
 import type { z } from 'zod'
 import type { AccountStatus, AccountSummary, CallerScope, CallToolOptions, CardFacts, CardFactsRequest, HubError, HubErrorCode, HubResult, Instant, SignInState, ToolInfo, WriteOperationKey, WriteRequest, WriteResult } from './contract'
-import { THROTTLE_WAIT_MS, WRITE_OPERATIONS } from './contract'
+import type {
+  CallToolValue, ConfirmToolsRequest, ConnectGateway, ConnectionActor, ConnectionBindingInput, ConnectionCredential, ConnectionDestinations, ConnectionKeyPlace,
+  ConnectionListFreshness, ConnectionState, ConnectionSummary, ConnectionTool, ConnectionTools, ConnectionView, DetectResult, PrepareConnectionRequest,
+  ScriptProposal, ToolTrust, UpdateConnectionRequest, WriteToolInfo,
+} from './contract'
+import { CONNECTION_CAPS, SCRIPT_PROPOSALS_MAX, THROTTLE_WAIT_MS, WRITE_OPERATIONS } from './contract'
+import { isHubErrorCode } from './errors'
 import {
   AccountStatusSchema,
   AccountSummarySchema,
@@ -20,7 +26,34 @@ import {
   WriteResultSchema,
   CardFactsRequestSchema,
   CardFactsSchema,
+  CallToolValueSchema,
+  ConfirmToolsRequestSchema,
+  ConnectionActorSchema,
+  ConnectionBindingInputSchema,
+  ConnectionCredentialSchema,
+  ConnectionDestinationsSchema,
+  ConnectionKeyPlaceSchema,
+  ConnectionListFreshnessSchema,
+  ConnectionRefRequestSchema,
+  ConnectionStateSchema,
+  ConnectionSummarySchema,
+  ConnectionToolSchema,
+  ConnectionToolsSchema,
+  ConnectionViewSchema,
+  DetectRequestSchema,
+  DetectResultSchema,
+  PrepareConnectionRequestSchema,
+  ReturnIssSchema,
+  ScriptProposalSchema,
+  SetCredentialRequestSchema,
+  SetTrustedRequestSchema,
+  ToolTrustSchema,
+  UpdateConnectionRequestSchema,
+  WriteToolInfoSchema,
 } from './schemas'
+
+type Flat<T> = { [K in keyof T]: T[K] }
+type Req<M extends keyof ConnectGateway> = ConnectGateway[M] extends (scope: CallerScope, req: infer R) => unknown ? R : never
 
 describe('schemas.ts mirrors contract.ts', () => {
   it('types agree', () => {
@@ -32,7 +65,7 @@ describe('schemas.ts mirrors contract.ts', () => {
     expectTypeOf<z.infer<typeof SignInStateSchema>>().toEqualTypeOf<SignInState>()
     expectTypeOf<z.infer<typeof AccountStatusSchema>>().toEqualTypeOf<AccountStatus>()
     expectTypeOf<z.infer<typeof AccountSummarySchema>>().toEqualTypeOf<AccountSummary>()
-    expectTypeOf<z.infer<typeof CallToolOptionsSchema>>().toEqualTypeOf<CallToolOptions>()
+    expectTypeOf<Flat<z.infer<typeof CallToolOptionsSchema>>>().toEqualTypeOf<Flat<CallToolOptions>>()
     const toolList = hubResultSchema(ToolInfoSchema.array())
     expectTypeOf<z.infer<typeof toolList>>().toEqualTypeOf<HubResult<ToolInfo[]>>()
     expectTypeOf<z.infer<typeof WriteOperationKeySchema>>().toEqualTypeOf<WriteOperationKey>()
@@ -40,6 +73,41 @@ describe('schemas.ts mirrors contract.ts', () => {
     expectTypeOf<z.infer<typeof WriteResultSchema>>().toEqualTypeOf<WriteResult>()
     expectTypeOf<z.infer<typeof CardFactsRequestSchema>>().toEqualTypeOf<CardFactsRequest>()
     expectTypeOf<z.infer<typeof CardFactsSchema>>().toEqualTypeOf<CardFacts>()
+    // Stage 1 M4 (M4-A)
+    expectTypeOf<z.infer<typeof ToolTrustSchema>>().toEqualTypeOf<ToolTrust>()
+    expectTypeOf<z.infer<typeof ScriptProposalSchema>>().toEqualTypeOf<ScriptProposal>()
+    expectTypeOf<z.infer<typeof CallToolValueSchema>>().toEqualTypeOf<CallToolValue>()
+    expectTypeOf<z.infer<typeof ConnectionActorSchema>>().toEqualTypeOf<ConnectionActor>()
+    expectTypeOf<z.infer<typeof ConnectionStateSchema>>().toEqualTypeOf<ConnectionState>()
+    expectTypeOf<z.infer<typeof ConnectionDestinationsSchema>>().toEqualTypeOf<ConnectionDestinations>()
+    expectTypeOf<z.infer<typeof DetectResultSchema>>().toEqualTypeOf<DetectResult>()
+    expectTypeOf<z.infer<typeof ConnectionKeyPlaceSchema>>().toEqualTypeOf<ConnectionKeyPlace>()
+    expectTypeOf<z.infer<typeof ConnectionBindingInputSchema>>().toEqualTypeOf<ConnectionBindingInput>()
+    expectTypeOf<z.infer<typeof ConnectionCredentialSchema>>().toEqualTypeOf<ConnectionCredential>()
+    expectTypeOf<z.infer<typeof ConnectionListFreshnessSchema>>().toEqualTypeOf<ConnectionListFreshness>()
+    expectTypeOf<z.infer<typeof ConnectionViewSchema>>().toEqualTypeOf<ConnectionView>()
+    expectTypeOf<z.infer<typeof ConnectionToolSchema>>().toEqualTypeOf<ConnectionTool>()
+    expectTypeOf<z.infer<typeof ConnectionToolsSchema>>().toEqualTypeOf<ConnectionTools>()
+    // The contract writes it as the view and its tools (an intersection); compared field by field.
+    expectTypeOf<Flat<z.infer<typeof ConnectionSummarySchema>>>().toEqualTypeOf<Flat<ConnectionSummary>>()
+    expectTypeOf<z.infer<typeof WriteToolInfoSchema>>().toEqualTypeOf<WriteToolInfo>()
+    expectTypeOf<z.infer<typeof PrepareConnectionRequestSchema>>().toEqualTypeOf<PrepareConnectionRequest>()
+    expectTypeOf<z.infer<typeof UpdateConnectionRequestSchema>>().toEqualTypeOf<UpdateConnectionRequest>()
+    expectTypeOf<z.infer<typeof ConfirmToolsRequestSchema>>().toEqualTypeOf<ConfirmToolsRequest>()
+    // Each new ConnectGateway method's request is the schema the entrypoint will parse it with.
+    expectTypeOf<z.infer<typeof DetectRequestSchema>>().toEqualTypeOf<Req<'detectConnection'>>()
+    expectTypeOf<z.infer<typeof PrepareConnectionRequestSchema>>().toEqualTypeOf<Req<'prepareConnection'>>()
+    expectTypeOf<z.infer<typeof ConnectionRefRequestSchema>>().toEqualTypeOf<Req<'getConnection'>>()
+    expectTypeOf<z.infer<typeof UpdateConnectionRequestSchema>>().toEqualTypeOf<Req<'updateConnection'>>()
+    expectTypeOf<z.infer<typeof SetTrustedRequestSchema>>().toEqualTypeOf<Req<'setTrusted'>>()
+    expectTypeOf<z.infer<typeof ConnectionRefRequestSchema>>().toEqualTypeOf<Req<'startConnectionSignIn'>>()
+    expectTypeOf<z.infer<typeof SetCredentialRequestSchema>>().toEqualTypeOf<Req<'setConnectionCredential'>>()
+    expectTypeOf<z.infer<typeof ConnectionRefRequestSchema>>().toEqualTypeOf<Req<'checkConnection'>>()
+    expectTypeOf<z.infer<typeof ConnectionRefRequestSchema>>().toEqualTypeOf<Req<'listConnectionTools'>>()
+    expectTypeOf<z.infer<typeof ConfirmToolsRequestSchema>>().toEqualTypeOf<Req<'confirmConnectionTools'>>()
+    expectTypeOf<z.infer<typeof ConnectionRefRequestSchema>>().toEqualTypeOf<Req<'removeConnection'>>()
+    expectTypeOf<z.infer<typeof ReturnIssSchema>>().toEqualTypeOf<NonNullable<Req<'completeConnect'>['iss']>>()
+    expectTypeOf<z.infer<typeof ReturnIssSchema>>().toEqualTypeOf<NonNullable<Req<'failConnect'>['iss']>>()
   })
 
   it('caller scopes parse strictly', () => {
@@ -114,5 +182,97 @@ describe('schemas.ts mirrors contract.ts', () => {
     expect(WriteResultSchema.safeParse({ ...throttled, error: { ...throttled.error, upstream: 'body' } }).success).toBe(false)
     expect(THROTTLE_WAIT_MS.min).toBeLessThanOrEqual(THROTTLE_WAIT_MS.default)
     expect(THROTTLE_WAIT_MS.default).toBeLessThanOrEqual(THROTTLE_WAIT_MS.max)
+  })
+  // Stage 1 M4 (M4-A): the codes, the call options, the answer and the write pins. Ways they can go wrong, written first:
+  // a new code missing from the schema; `propose` or `name` taking a non-boolean or an empty name; proposals that ride
+  // in `data` or past the cap; an MCP write pinned by one or two of its three facts, or by a hash that isn't hex.
+  it('M4 codes, call options and proposals parse strictly', () => {
+    for (const code of ['needs_key', 'definition_changed', 'needs_input', 'leak', 'client_fault', 'not_built', 'connections_off'])
+      expect(HubErrorCodeSchema.safeParse(code).success, code).toBe(true)
+    // The hub's text table (errors.ts) knows every code and nothing else (app/server/contract-coverage.test.ts checks the
+    // product's lists against the same set).
+    for (const code of HubErrorCodeSchema.options) expect(isHubErrorCode(code), code).toBe(true)
+    for (const other of ['ok', 'quota_exceeded', 'toString', '__proto__']) expect(isHubErrorCode(other), other).toBe(false)
+    expect(CallToolOptionsSchema.safeParse({ propose: true }).success).toBe(true)
+    expect(CallToolOptionsSchema.safeParse({ name: 'helpdesk_search' }).success).toBe(true)
+    for (const bad of [{ propose: 'yes' }, { name: '' }, { name: 'x'.repeat(201) }, { propose: true, proposals: [] }])
+      expect(CallToolOptionsSchema.safeParse(bad).success, JSON.stringify(bad)).toBe(false)
+    expect(CallToolValueSchema.safeParse({ data: { ok: 1 } }).success).toBe(true)
+    expect(CallToolValueSchema.safeParse({ data: null, proposals: [{ tool: 'shopify_order_tag_add', args: { orderId: '1' } }] }).success).toBe(true)
+    const many = Array.from({ length: SCRIPT_PROPOSALS_MAX.proposals + 1 }, () => ({ tool: 'shopify_order_tag_add', args: {} }))
+    expect(CallToolValueSchema.safeParse({ data: null, proposals: many }).success).toBe(false)
+    expect(CallToolValueSchema.safeParse({ data: null, proposals: [{ tool: 'x', args: {}, key: 'k' }] }).success).toBe(false)
+    expect(AccountStatusSchema.shape.kind.options).toEqual(['client_credentials', 'oauth_mcp', 'mcp_runtime'])
+    const tool = { name: 'orders_search', connector: 'shopify', description: 'Orders', inputSchema: {} }
+    expect(ToolInfoSchema.safeParse(tool).success).toBe(true)
+    expect(ToolInfoSchema.safeParse({ ...tool, source: 'mcp:helpdesk', trust: 'untrusted' }).success).toBe(true)
+    expect(ToolInfoSchema.safeParse({ ...tool, trust: 'yes' }).success).toBe(false)
+  })
+
+  it('an MCP write pins generation, defHash and policyRev together, or none of them', () => {
+    const req = { actionId: 'ac_1', attempt: 1, requestId: 'ac_1:1', accountId: 'shopify:store', expect: { connectedAtMs: 5 }, operation: 'shopify.order.tag_add', args: {} }
+    const pins = { generation: 3, defHash: 'a'.repeat(64), policyRev: 7 }
+    expect(WriteRequestSchema.safeParse(req).success).toBe(true)
+    expect(WriteRequestSchema.safeParse({ ...req, expect: { connectedAtMs: 5, ...pins } }).success).toBe(true)
+    for (const k of Object.keys(pins) as (keyof typeof pins)[]) {
+      const { [k]: _, ...rest } = pins
+      expect(WriteRequestSchema.safeParse({ ...req, expect: { connectedAtMs: 5, ...rest } }).success, k).toBe(false)
+    }
+    for (const bad of [{ defHash: 'A'.repeat(64) }, { defHash: 'a'.repeat(63) }, { generation: 0 }, { policyRev: 1.5 }])
+      expect(WriteRequestSchema.safeParse({ ...req, expect: { connectedAtMs: 5, ...pins, ...bad } }).success, JSON.stringify(bad)).toBe(false)
+  })
+
+  // Connections (N35 to N46). Ways they can go wrong, written first: an address that isn't exact https (http, a user
+  // part, a query, a fragment, a space); a reserved or odd slug; a key header that could smuggle (Host, Cookie,
+  // Content-Length, any Mcp-*, a CR or LF in the prefix, Authorization with no scheme); an actor that isn't the Inhouse
+  // team or an Admin; a credential with control characters; a confirm naming a tool twice or a mode of `new`.
+  it('connection requests and answers parse strictly', () => {
+    const actor = { kind: 'inhouse', memberId: 'm_1' }
+    const destinations = {
+      mcp: 'https://mcp.example.com/mcp', metadata: ['https://mcp.example.com/.well-known/oauth-protected-resource/mcp'], issuer: 'https://login.example.com',
+      authorize: 'https://login.example.com/authorize', token: 'https://login.example.com/token', registration: null, revoke: null,
+    }
+    expect(DetectRequestSchema.safeParse({ actor, url: 'https://mcp.example.com:8443/v1/mcp' }).success).toBe(true)
+    for (const url of ['http://mcp.example.com/mcp', 'https://user@mcp.example.com/mcp', 'https://mcp.example.com/mcp?x=1', 'https://mcp.example.com/mcp#f', 'https://mcp.example.com/m cp', 'mcp.example.com', ''])
+      expect(DetectRequestSchema.safeParse({ actor, url }).success, url).toBe(false)
+    for (const kind of ['member', 'system']) expect(ConnectionActorSchema.safeParse({ kind, memberId: 'm_1' }).success, kind).toBe(false)
+    const binding = { transport: 'https', path: 'key', destinations, key: { header: 'Authorization', prefix: 'Bearer ' }, settings: {} }
+    const prepare = { actor, slug: 'helpdesk', adminMaySignIn: false, binding }
+    expect(PrepareConnectionRequestSchema.safeParse(prepare).success).toBe(true)
+    expect(PrepareConnectionRequestSchema.safeParse({ ...prepare, binding: { transport: 'connector', connector: 'rest-fixture', settings: {} } }).success).toBe(true)
+    for (const slug of ['shopify', 'slack', 'code', 'inhouse', 'member', 'index', 'Help', 'help-desk', 'h', '1help', 'a'.repeat(25)])
+      expect(PrepareConnectionRequestSchema.safeParse({ ...prepare, slug }).success, slug).toBe(false)
+    expect(ConnectionKeyPlaceSchema.safeParse({ header: 'X-Api-Key', prefix: '' }).success).toBe(true)
+    for (const key of [{ header: 'Host', prefix: '' }, { header: 'cookie', prefix: '' }, { header: 'Content-Length', prefix: '' }, { header: 'Mcp-Session-Id', prefix: '' },
+      { header: 'X-Api-Key', prefix: 'a\r\nX: y' }, { header: 'Authorization', prefix: '' }, { header: 'X Key', prefix: '' }])
+      expect(ConnectionKeyPlaceSchema.safeParse(key).success, JSON.stringify(key)).toBe(false)
+    expect(SetCredentialRequestSchema.safeParse({ actor, accountId: 'mcp:helpdesk', credential: { kind: 'key', key: 'sk_live_abc' } }).success).toBe(true)
+    for (const credential of [{ kind: 'key', key: '' }, { kind: 'key', key: 'a\nb' }, { kind: 'client', clientId: 'c', clientSecret: 'a b' }, { kind: 'token', key: 'x' }])
+      expect(SetCredentialRequestSchema.safeParse({ actor, accountId: 'mcp:helpdesk', credential }).success, JSON.stringify(credential)).toBe(false)
+    for (const accountId of ['mcp:helpdesk', 'mcp:h2'])
+      expect(ConnectionRefRequestSchema.safeParse({ actor, accountId }).success, accountId).toBe(true)
+    for (const accountId of ['slack:workspace', 'shopify', 'mcp:', 'mcp:Help', 'helpdesk'])
+      expect(ConnectionRefRequestSchema.safeParse({ actor, accountId }).success, accountId).toBe(false)
+    const hash = 'b'.repeat(64)
+    const confirm = { actor, accountId: 'mcp:helpdesk', generation: 2, ifRev: 4, tools: [{ name: 'search', defHash: hash, mode: 'read' }, { name: 'reply', defHash: hash, mode: 'write' }] }
+    expect(ConfirmToolsRequestSchema.safeParse(confirm).success).toBe(true)
+    expect(ConfirmToolsRequestSchema.safeParse({ ...confirm, tools: [confirm.tools[0], confirm.tools[0]] }).success).toBe(false)
+    expect(ConfirmToolsRequestSchema.safeParse({ ...confirm, tools: [{ ...confirm.tools[0], mode: 'new' }] }).success).toBe(false)
+    expect(ConfirmToolsRequestSchema.safeParse({ ...confirm, tools: [] }).success).toBe(false)
+    expect(UpdateConnectionRequestSchema.safeParse({ actor, accountId: 'mcp:helpdesk', ifRev: 1, adminMaySignIn: true }).success).toBe(true)
+    expect(UpdateConnectionRequestSchema.safeParse({ actor, accountId: 'mcp:helpdesk', ifRev: 1, trusted: true }).success).toBe(false)
+    expect(SetTrustedRequestSchema.safeParse({ actor, accountId: 'mcp:helpdesk', trusted: true, ifRev: 2 }).success).toBe(true)
+    const view = {
+      accountId: 'mcp:helpdesk', slug: 'helpdesk', generation: 1, policyRev: 1, transport: 'https', path: 'signin', connector: null, destinations, era: 'modern',
+      settings: {}, trusted: false, adminMaySignIn: true, paused: false, state: 'waiting_signin', list: null,
+    }
+    expect(ConnectionViewSchema.safeParse(view).success).toBe(true)
+    expect(ConnectionViewSchema.safeParse({ ...view, key: 'sk_live_abc' }).success).toBe(false)
+    expect(ConnectionSummarySchema.safeParse({ ...view, tools: [{ name: 'search', hubName: 'helpdesk_search', defHash: hash, mode: 'new', hidden: null }] }).success).toBe(true)
+    expect(DetectResultSchema.safeParse({ outcome: 'blocked', reason: 'redirected', era: null, destinations }).success).toBe(true)
+    expect(DetectResultSchema.safeParse({ outcome: 'blocked', reason: 'Redirected to <a>', era: null, destinations }).success).toBe(false)
+    expect(WriteToolInfoSchema.safeParse({ accountId: 'mcp:helpdesk', name: 'reply', hubName: 'helpdesk_reply', description: 'Replies', inputSchema: {}, defHash: hash, generation: 1, policyRev: 2, trusted: false }).success).toBe(true)
+    expect(ReturnIssSchema.safeParse(['https://login.example.com', 'https://login.example.com']).success).toBe(true)
+    expect(CONNECTION_CAPS).toEqual({ perBrand: 20, snapshotTools: 200, confirmedTools: 100 })
   })
 })

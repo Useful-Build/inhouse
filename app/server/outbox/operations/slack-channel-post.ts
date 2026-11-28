@@ -71,7 +71,7 @@ export const slackChannelPost: OperationEntry<PostArgs> & { key: 'slack.channel.
     if (!c) throw new Error('slack.channel.post: item line asked for an unlisted channel')
     return `#${c.name}: ${a.title === undefined ? a.text : `${a.title}\n${a.text}`}`
   },
-  effects: { money: false, customer: false, destructive: false, access: false },
+  effects: { money: false, customer: false, destructive: false, access: false, unreviewed: false },
   memberMay: true,
   reversible: false,
   idempotent: false,

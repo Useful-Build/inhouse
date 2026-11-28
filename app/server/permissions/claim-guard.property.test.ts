@@ -66,10 +66,15 @@ const rowOf = (r: Resolved, ctx: DecideCtx & { asker: Asker }, over: Partial<Row
 // ---------- generators: the real operations with made-up flags (the guard reads them from the table it's given, so its
 // `memberMay` and effect branches run), random everything else ----------
 
-const NO_EFFECTS = { money: false, customer: false, destructive: false, access: false }
+const NO_EFFECTS = { money: false, customer: false, destructive: false, access: false, unreviewed: false } as const
 const flagsArb = fc.record({
   memberMay: fc.oneof({ weight: 3, arbitrary: fc.constant(true) }, { weight: 1, arbitrary: fc.constant(false) }),
-  effects: fc.oneof({ weight: 3, arbitrary: fc.constant(NO_EFFECTS) }, { weight: 1, arbitrary: fc.record({ money: fc.boolean(), customer: fc.boolean(), destructive: fc.boolean(), access: fc.boolean() }) }),
+  effects: fc.oneof(
+    { weight: 3, arbitrary: fc.constant(NO_EFFECTS) },
+    { weight: 1, arbitrary: fc.record({ money: fc.boolean(), customer: fc.boolean(), destructive: fc.boolean(), access: fc.boolean(), unreviewed: fc.constant(false as const) }) },
+    // Stage 1 M4 (N46): an unreviewed tool's write sets that flag alone (its operation class).
+    { weight: 1, arbitrary: fc.constant({ money: false, customer: false, destructive: false, access: false, unreviewed: true } as const) },
+  ),
 })
 const tableArb: fc.Arbitrary<GuardTable> = fc.record({ shop: flagsArb, slack: flagsArb, untag: flagsArb, draft: flagsArb, restock: flagsArb, reduce: flagsArb, refund: flagsArb })
   .map(({ shop, slack, untag, draft, restock, reduce, refund }) => ({
@@ -188,7 +193,7 @@ describe('claimGuardSql agrees with decideCore', () => {
 describe('the claim\'s own checks (D3)', () => {
   const r: Resolved = {
     operation: 'slack.channel.post', args: {}, accountId: 'slack:workspace', accountGen: 2_000, scope: { channelId: CHANNEL },
-    scopeKey: `channelId=${CHANNEL}`, records: 1, units: 1, effects: { money: false, customer: false, destructive: false, access: false },
+    scopeKey: `channelId=${CHANNEL}`, records: 1, units: 1, effects: { money: false, customer: false, destructive: false, access: false, unreviewed: false },
     memberMay: true, payloadHash: '0'.repeat(64), policyRev: POLICY_REV,
   }
   const ctx = { asker: { memberId: ASKER, role: 'member' as const }, origin: 'chat' as const, chatId: 'c_claim', nowMs: 10 }
@@ -247,7 +252,7 @@ describe('the guard\'s own grant checks, every perturbation (review round 2: sam
   const PERTURB = ['none', 'holder_other', 'holder_brand_member', 'holder_brand_admin', 'account', 'gen', 'operation', 'scope', 'policy', 'role', 'ceiling', 'revoked'] as const
   const base: Resolved = {
     operation: 'shopify.order.tag_add', args: {}, accountId: 'shopify:store', accountGen: 1_000, scope: { shop: 'store-a' }, scopeKey: 'shop=store-a',
-    records: 1, units: 1, effects: { money: false, customer: false, destructive: false, access: false }, memberMay: true, payloadHash: '0'.repeat(64), policyRev: POLICY_REV,
+    records: 1, units: 1, effects: { money: false, customer: false, destructive: false, access: false, unreviewed: false }, memberMay: true, payloadHash: '0'.repeat(64), policyRev: POLICY_REV,
   }
   it('passes a grant-backed row exactly when the one grant still covers the asker', async () => {
     let n = 0
@@ -279,7 +284,7 @@ describe('the guard\'s own grant checks, every perturbation (review round 2: sam
 describe('an admins card at the claim (D5, Stage 1 M3-X)', () => {
   const r: Resolved = {
     operation: 'shopify.order.tag_add', args: {}, accountId: 'shopify:store', accountGen: 1_000, scope: { shop: 'store-a' }, scopeKey: 'shop=store-a',
-    records: 1, units: 1, effects: { money: true, customer: true, destructive: false, access: false }, memberMay: false, payloadHash: '0'.repeat(64), policyRev: POLICY_REV,
+    records: 1, units: 1, effects: { money: true, customer: true, destructive: false, access: false, unreviewed: false }, memberMay: false, payloadHash: '0'.repeat(64), policyRev: POLICY_REV,
   }
   // Made-up flags for a real key: money and customer, admins only (the guard reads them from the table it's given).
   const table: GuardTable = { ...OPERATIONS, [r.operation]: { connector: 'shopify', memberMay: false, effects: r.effects } }
@@ -321,7 +326,7 @@ describe('an admins card at the claim (D5, Stage 1 M3-X)', () => {
 describe('the guard\'s limits (D4, Stage 1 M3-L)', () => {
   const r: Resolved = {
     operation: 'shopify.order.tag_add', args: {}, accountId: 'shopify:store', accountGen: 1_000, scope: { shop: 'store-a' }, scopeKey: 'shop=store-a',
-    records: 3, units: 3, effects: { money: false, customer: false, destructive: false, access: false }, memberMay: true, payloadHash: '0'.repeat(64), policyRev: POLICY_REV,
+    records: 3, units: 3, effects: { money: false, customer: false, destructive: false, access: false, unreviewed: false }, memberMay: true, payloadHash: '0'.repeat(64), policyRev: POLICY_REV,
   }
   const ctx = { asker: { memberId: ASKER, role: 'member' as const }, origin: 'chat' as const, chatId: 'c_claim', nowMs: 10 }
   const grant: GrantFacts = {

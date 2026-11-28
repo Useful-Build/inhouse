@@ -25,7 +25,7 @@ export const shopifyOrderTagAdd: OperationEntry<TagAddArgs> & { key: 'shopify.or
   itemRow: a => tagsItemRow('add', a),
   batchTitle: (c, same) => tagsBatchTitle('add', c.records, same),
   titleKey: '$.tags',
-  effects: { money: false, customer: false, destructive: false, access: false },
+  effects: { money: false, customer: false, destructive: false, access: false, unreviewed: false },
   memberMay: true,
   reversible: true,
   idempotent: false,
