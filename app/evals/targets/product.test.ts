@@ -7,7 +7,7 @@
 //  - a turn that answered, or ended with an end row, reads the questions at all.
 import { describe, expect, test } from 'vitest'
 import { GRADED_PROMPT_APP, GRADED_PROMPT_VERSION } from '../prompt-version.ts'
-import { QUESTION_ASK, parkedAnswer, parkedQuestionOf, productSession } from './product.ts'
+import { API_TIMEOUT_MS, QUESTION_ASK, createProductTarget, parkedAnswer, parkedQuestionOf, productSession } from './product.ts'
 import type { Api } from './product.ts'
 
 const TURN = 't_AAAAAAAAAAAAAAAAAAAAAA'
@@ -94,5 +94,30 @@ describe('a turn parked on a question', () => {
   test('parkedQuestionOf takes only an open question of this chat', () => {
     expect(parkedQuestionOf([open('c_1', { state: 'expired' }), open('c_2')], 'c_1')).toBeNull()
     expect(parkedQuestionOf([open('c_1')], 'c_1')).toEqual(QUESTION)
+  })
+})
+
+describe('#672: every call to the eval deployment has a deadline', () => {
+  const env = { INHOUSE_EVAL_BRAND: '1', INHOUSE_EVAL_RUN: '1-1', INHOUSE_EVAL_ORIGIN: 'https://eval.example', INHOUSE_EVAL_ACCESS_CLIENT_ID: 'id', INHOUSE_EVAL_ACCESS_CLIENT_SECRET: 's' }
+  const target = (seen: (AbortSignal | null | undefined)[], hang = false) => createProductTarget({
+    paid: true, budgetUsd: 1, env, signIn: async () => ({}),
+    fetch: (async (_u: unknown, init?: RequestInit) => {
+      seen.push(init?.signal)
+      const signal = init!.signal!
+      if (hang) await new Promise((_, reject) => (signal.aborted ? reject(signal.reason) : signal.addEventListener('abort', () => reject(signal.reason))))
+      return new Response('{}')
+    }) as typeof fetch,
+  })
+
+  test('a call with no signal of its own still gets one; a caller\'s cancel still ends it', async () => {
+    const seen: (AbortSignal | null | undefined)[] = []
+    await target(seen).call('lena', 'GET', '/api/me')
+    expect(seen[0]).toBeInstanceOf(AbortSignal)
+    expect(seen[0]!.aborted).toBe(false)
+    const cancel = new AbortController()
+    const hung = target(seen, true).call('lena', 'GET', '/api/me', { signal: cancel.signal })
+    cancel.abort(new Error('cancelled'))
+    await expect(hung).rejects.toThrow('cancelled')
+    expect(API_TIMEOUT_MS).toBeLessThanOrEqual(60_000)
   })
 })

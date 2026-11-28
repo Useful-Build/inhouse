@@ -15,8 +15,8 @@
 //    the run's close disconnects Slack (#583), so a later suite's tools don't change.
 // Planting in the store or a web page needs a per-case dataset on the eval hub, not built: those cases are listed as not
 // served here (their twins W31 to W37 plant the same attacks through a file or a memory hit).
-import { accessHeaders, createProductTarget, EVAL_AUD_VAR, testIssuerSignIn, type ProductTarget, type ProductTargetOptions } from '../targets/product.ts'
-import { connectSlack, disconnectSlack, type InhouseApi } from '../targets/slack-door.ts'
+import { accessHeaders, createProductTarget, EVAL_AUD_VAR, JOB_END_TIMEOUT_MS, testIssuerSignIn, type ProductTarget, type ProductTargetOptions } from '../targets/product.ts'
+import { connectSlack, disconnectSlack, slackShown, type InhouseApi } from '../targets/slack-door.ts'
 import { SEED_INHOUSE } from '../../server/seed/brand.ts'
 import { createSessionReader, type SessionReader } from '../read-side/product/r2.ts'
 import { EVAL_BUCKET } from '../exfiltration/store-data/transcripts.ts'
@@ -32,8 +32,31 @@ import { PRODUCT_PLANTS, type EvAction, type HarnessAnswer, type InjectionCase, 
 export const CLOCK_SLACK_MS = 2_000
 /** How long the control's card may take to appear after the turn, and its send after the answer (the 10 s hold and the send). */
 export const CONTROL_WAIT_MS = 90_000
-/** How long a close waits for the running repeat to end (#663): its turn is already stopped, so this is its quiesce and reset. */
-export const REPEAT_END_WAIT_MS = 150_000
+/**
+ * How long a close waits for the running repeat to end (#663): its turn is already stopped, so this is the runner's
+ * quiesce, then reset()'s own quiesce (each up to JOB_END_TIMEOUT_MS), then the reset's few calls (#672: the cap covers both
+ * quiesces with a margin).
+ */
+export const REPEAT_END_WAIT_MS = 2 * JOB_END_TIMEOUT_MS + 90_000
+/**
+ * How long a close waits for a case setup in flight (#672): the setup stops at its next step once the close begins, and
+ * every call in it has its own deadline (API_TIMEOUT_MS, WRANGLER_TIMEOUT_MS), so this covers the step it is in.
+ */
+export const SETUP_WAIT_MS = 180_000
+
+/** A case that connects Slack at its start: it posts there, or its plant is there. */
+const needsSlack = (c: InjectionCase): boolean => c.needs.includes('slack_post') || c.plant?.via === 'slack'
+
+/** Waits for `p` up to `ms`; true if it settled (either way), false if the time ran out. */
+async function settledWithin(p: Promise<unknown>, ms: number): Promise<boolean> {
+  let timer: ReturnType<typeof setTimeout> | undefined
+  const late = new Promise<false>((r) => { timer = setTimeout(() => r(false), ms) })
+  try {
+    return await Promise.race([p.then(() => true, () => true), late])
+  } finally {
+    clearTimeout(timer)
+  }
+}
 
 /** A sleep a cancel ends at once (#664). */
 const abortableSleep = async (sleep: (ms: number) => Promise<void>, ms: number, signal?: AbortSignal): Promise<void> => {
@@ -118,6 +141,8 @@ export interface ProductInjectionOptions extends Pick<ProductTargetOptions, 'pai
   now?: () => number
   /** How long a close waits for the running repeat to end (tests); default REPEAT_END_WAIT_MS. */
   repeatEndWaitMs?: number
+  /** How long a close waits for a case setup in flight (tests); default SETUP_WAIT_MS. */
+  setupWaitMs?: number
 }
 
 export function createProductInjectionTarget(o: ProductInjectionOptions): InjectionTarget {
@@ -213,13 +238,21 @@ export function createProductInjectionTarget(o: ProductInjectionOptions): Inject
     serves: (c) => (c.plant && !plants.includes(c.plant.via) ? `planting through ${c.plant.via} needs a per-case dataset on the eval hub (not built)` : null),
     spentUsd: () => base.spentUsd?.() ?? 0,
     notes: () => [...notes],
-    async preflight() {
+    async preflight(cases) {
       // The product target's own checks first (the eval brand, the lease, the cap: targets/product.ts setup), which make
       // its doors; then one read through each door the run uses, and one R2 LIST of the session transcripts (as the
       // read-side and store-data suites do). A refusal throws here, before any paid turn.
+      // A Slack case without the Inhouse app would fail at its own start, after the paid turns before it (#671).
+      const slackCases = cases.filter(needsSlack)
+      if (slackCases.length && !inhouse) throw new Error(`${slackCases.map((c) => c.id).join(', ')} need the Inhouse app (${EVAL_INHOUSE_ORIGIN_VAR} and ${EVAL_INHOUSE_AUD_VAR}), which is not set`)
       await base.ready()
       await base.writeDoor().now()
-      if (inhouse) await base.slackDoor().read()
+      if (inhouse) {
+        await base.slackDoor().read()
+        // One read-only call through the Inhouse app the Slack connect uses (route 70, the Tools page), so a wrong origin
+        // or aud stops the run here, not at the first Slack case (#671).
+        await slackShown(inhouse)
+      }
       sessions ??= createSessionReader({ env: o.env, bucket: EVAL_BUCKET })
       await sessions.preflight()
     },
@@ -228,9 +261,11 @@ export function createProductInjectionTarget(o: ProductInjectionOptions): Inject
       const failed: unknown[] = []
       // A start in flight (seeding, connecting, listing) ends first, refused at its next step and undone by itself; its
       // failure is start()'s to report (#663). Then a connect in flight.
-      await Promise.all([...starting].map((p) => p.then(() => undefined, () => undefined)))
+      // Bounded (#672): a setup still going after SETUP_WAIT_MS is named, and the close goes on without it.
+      const setupWaitMs = o.setupWaitMs ?? SETUP_WAIT_MS
       const connectInFlight = connecting as Promise<void> | null
-      if (connectInFlight) await connectInFlight.then(() => undefined, () => undefined)
+      const inFlight = [...starting, ...(connectInFlight ? [connectInFlight] : [])]
+      if (inFlight.length && !(await settledWithin(Promise.allSettled(inFlight), setupWaitMs))) failed.push(new Error(`a case setup did not end within ${setupWaitMs / 1000} s of the close`))
       try {
         // The running repeat's turns stop before the lease goes back.
         await active?.stopTurns?.()
@@ -240,14 +275,8 @@ export function createProductInjectionTarget(o: ProductInjectionOptions): Inject
       // The running repeat's own quiesce, evidence and reset (the runner keeps them going after the cancel aborts its
       // turn) end before the lease goes back and Slack is left, so none of its writes lands after (#663). Bounded: a
       // runner that never resets can't hold the close forever.
-      if (repeatDone) {
-        const waitMs = o.repeatEndWaitMs ?? REPEAT_END_WAIT_MS
-        let timer: ReturnType<typeof setTimeout> | undefined
-        const late = new Promise<'late'>((r) => { timer = setTimeout(() => r('late'), waitMs) })
-        const ended = await Promise.race([repeatDone.then(() => 'ended' as const), late])
-        clearTimeout(timer)
-        if (ended === 'late') failed.push(new Error(`the running repeat did not end within ${waitMs / 1000} s of the close`))
-      }
+      const waitMs = o.repeatEndWaitMs ?? REPEAT_END_WAIT_MS
+      if (repeatDone && !(await settledWithin(repeatDone, waitMs))) failed.push(new Error(`the running repeat did not end within ${waitMs / 1000} s of the close`))
       try {
         // #583: leave the shared eval deployment without Slack (a cancel mid-repeat lands here too).
         await leaveSlack()
@@ -277,7 +306,7 @@ export function createProductInjectionTarget(o: ProductInjectionOptions): Inject
   async function startCase(c: InjectionCase, run: { rep: number; canary: string }): Promise<InjectionSession> {
     {
       if (closed) throw closingRefusal()
-      const slackCase = c.needs.includes('slack_post') || c.plant?.via === 'slack'
+      const slackCase = needsSlack(c)
       const plant: ExfilSpec | undefined = c.plant && c.plant.via !== 'slack' ? { kind: 'memory', via: c.plant.via as ExfilSpec['via'], hosts: [], plant: c.plant.text } : undefined
       const session = await base.seed([], { caseId: c.id, rep: run.rep, canary: run.canary, writes: true }, plant)
       active = session

@@ -63,7 +63,7 @@ export interface InjectionTarget {
    * Before any paid turn (#662): every door the run reads is read once (the deployment's D1, the session transcripts in
    * R2), so a missing permission stops the run with its reason before it spends anything.
    */
-  preflight?(): Promise<void>
+  preflight?(cases: readonly InjectionCase[]): Promise<void>
   close?(): Promise<void>
 }
 
@@ -191,7 +191,7 @@ export async function runInjection(o: { target: InjectionTarget; cases: Injectio
   const spent = () => target.spentUsd?.() ?? summed
 
   // Every door the run reads, read once before any paid turn (#662): a refusal throws here, before anything is spent.
-  if (ordered.length > 0) await target.preflight?.()
+  if (ordered.length > 0) await target.preflight?.(ordered)
   for (const c of ordered) {
     for (let rep = 1; rep <= o.reps; rep++) {
       // A cancel (#612): no repeat starts after it, so the close never races a Slack case's connect.

@@ -242,7 +242,10 @@ export function createProductTarget(opts: ProductTargetOptions): ProductTarget {
     let body: BodyInit | undefined
     if (o.json !== undefined) { body = JSON.stringify(o.json); headers['Content-Type'] = 'application/json' }
     else if (o.bytes !== undefined) { body = o.bytes as unknown as BodyInit; headers['Content-Type'] = headers['Content-Type'] ?? 'application/octet-stream' }
-    const res = await doFetch(`${origin}${path}`, { method, headers, body, signal: o.signal })
+    // A default deadline on the request and its body read (#672); a caller's own signal (a cancel) ends it sooner.
+    const deadline = AbortSignal.timeout(API_TIMEOUT_MS)
+    const signal = o.signal ? AbortSignal.any([o.signal, deadline]) : deadline
+    const res = await doFetch(`${origin}${path}`, { method, headers, body, signal })
     const text = await res.text()
     let json: unknown = null
     try { json = JSON.parse(text) } catch { /* not JSON */ }
@@ -518,6 +521,8 @@ export interface SessionDeps {
 
 /** How long quiesce waits for the session's runs, jobs and sends to end (#450). */
 export const JOB_END_TIMEOUT_MS = 120_000
+/** Every call to the eval deployment ends within this, the caller's own signal or not (#672: a hung call can't hang a close). */
+export const API_TIMEOUT_MS = 60_000
 
 /** Route 33's cost is whole cents, rounded to the nearest: the true figure is under half a cent more, so it is booked at that upper bound. */
 export const cents = (minor: number): number => (minor + 0.5) / 100
