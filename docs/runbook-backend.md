@@ -107,8 +107,11 @@ later deletions don't reach). The switch is a separate, separately approved chan
 ### 2. Snapshot, write and prove (`app/ops/backup/restore.ts`)
 Run the restore against a freshly migrated target database. Pass each Durable Object's recovery time from point-in-time
 recovery. It runs, in order: snapshot the live audit log and the deletion log list to `restore/<restoreId>/snapshot/`;
-check the backup (manifest, format, migration level, every part's rows and sha256); check the target is fresh; write
-each part; re-read and prove every table against the manifest; write the restore record.
+check the backup (manifest, format, the same set of applied migrations as the target, every part's rows and sha256);
+check the target is fresh; write each part; re-read and prove every table against the manifest; write the restore
+record. The migration check compares names, not the order they were applied in: a backup taken before a later
+migration, even an additive one, is refused on a target that has it, and the reason names each migration missing or
+extra on the target. Migrate the target to exactly the backup's migrations.
 
 The result is `restored_unreconciled`. That is not done. If the live database can't be read, the snapshot records the
 gap and the audit lines come from the daily copy, so lines after the last copied one are lost.
