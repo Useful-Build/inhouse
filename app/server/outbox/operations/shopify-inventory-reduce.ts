@@ -3,7 +3,7 @@
 // put back by us, so it's an exact approval every time, never covered by a grant and never collected into a batch (the
 // 6th waiting card in a chat is refused `too_many_waiting`). A member may approve it (section 0 Q2). N24: no grant;
 // 500 stock units at most in one call. Shared shape: ./shopify-inventory.ts.
-import { ReduceArgsSchema, stockCard, stockItemLine, type ReduceArgs } from './shopify-inventory.ts'
+import { ReduceArgsSchema, stockCard, stockItemLine, stockItemRow, STOCK_ROW_HEADS, type ReduceArgs } from './shopify-inventory.ts'
 import { shopScope } from './shopify-order-tags.ts'
 import type { OperationEntry } from './types.ts'
 
@@ -18,6 +18,8 @@ export const shopifyInventoryReduce: OperationEntry<ReduceArgs> & { key: 'shopif
   units: a => a.quantity,
   unitsLabel: 'stock units',
   itemLine: (a, f) => stockItemLine('-', a, f),
+  itemRow: a => stockItemRow('-', a),
+  rowHeads: STOCK_ROW_HEADS,
   effects: { money: false, customer: false, destructive: true, access: false },
   memberMay: true,
   reversible: false,

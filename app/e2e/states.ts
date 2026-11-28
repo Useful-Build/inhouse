@@ -56,13 +56,47 @@ export const STATES: UiState[] = [
   page_('act-loading', 'Act', 'Loading', '#/today', 'Reading your tools'),
   page_('act-cap-today', 'Act', 'Cap reached', '#/today', 'Spending cap reached.'),
   page_('act-today', 'Act', 'Normal', '#/today', '6 things need you. Drafts are ready.', true),
-  page_('act-approvals', 'Act', 'Normal', '#/approvals', 'Waiting for you', true),
+  // Stage 1 M3-U: the agent's action cards (the demo's batch and a teammate's refund) sit above the drafts.
+  page_('act-approvals', 'Act', 'Normal', '#/approvals', 'Actions for you', true),
   page_('act-library', 'Act', 'Normal', '#/library', 'All files', true),
   // PR 6: the Library with nothing in it yet, and while it loads.
   page_('act-library-first-day', 'Act', 'First day', '#/library', 'No files yet', true),
   page_('act-library-loading', 'Act', 'Loading', '#/library', 'All files', true),
   page_('act-chat-stuck', 'Act', 'Normal', '#/chats/stuck', '3 orders · $556', true),
   page_('act-chats-all', 'Act', 'Normal', '#/chats/all', 'Kestrel delivery times', true),
+  // Stage 1 M3-U: a 450-change batch card in its chat, and its full list.
+  page_('act-chat-batch', 'Act', 'Normal', '#/chats/vip-tags', 'and 447 more', true),
+  {
+    name: 'pop-batch-sheet', stage: 'Act', scenario: 'Normal', hash: '#/chats/vip-tags', ready: 'and 447 more', a11y: true,
+    act: async page => {
+      // The chat behind the sheet has settled first (no scroller moved for 3 frames), so the shot's background is the same
+      // every run; then the sheet opens from the keyboard with a focus that doesn't scroll (a click would scroll the chat
+      // by however far the button sits under the composer).
+      await page.evaluate(() => new Promise<void>((resolve, reject) => {
+        const scrollers = () => [...document.querySelectorAll<HTMLElement>('*')].filter(e => e.scrollHeight > e.clientHeight && /auto|scroll/.test(getComputedStyle(e).overflowY))
+        const measure = () => scrollers().map(e => e.scrollTop).join(',')
+        let prev = measure()
+        let same = 0
+        let frames = 0
+        const tick = () => {
+          const now = measure()
+          same = now === prev ? same + 1 : 0
+          prev = now
+          if (same >= 3) return resolve()
+          if (++frames > 240) return reject(new Error(`The chat behind the sheet never settled (last ${now})`))
+          requestAnimationFrame(tick)
+        }
+        requestAnimationFrame(tick)
+      }))
+      await page.getByRole('button', { name: /^See all 450: / }).evaluate(el => (el as HTMLElement).focus({ preventScroll: true }))
+      await page.keyboard.press('Enter')
+      const sheet = page.getByRole('dialog', { name: 'Tag 450 orders as VIP' })
+      await expect(sheet.locator('[data-item]').first()).toBeVisible()
+      await expect(sheet.getByRole('button', { name: 'Approve all 450' })).toBeVisible()
+      // The list reads more as it scrolls: wait until the first page is in and nothing is loading.
+      await expect(sheet.getByRole('status')).toHaveCount(0)
+    },
+  },
   {
     name: 'pop-notifications', stage: 'Act', scenario: 'Normal', hash: '#/today', ready: '6 things need you', a11y: true,
     act: async page => {

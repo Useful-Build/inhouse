@@ -74,7 +74,10 @@ export function cardOf(row: OutboxActionRow, viewer: Viewer, nowMs: number, batc
     rev: row.rev,
     kind,
     state: row.state,
-    title: batch === undefined || row.tool_use_id !== null ? stored.title : batchTitle(row.items_n, stored.label),
+    // Stage 1 M3-U (N33): a batch's title says what happens, with its count ("Tag 450 orders as VIP").
+    title: batch === undefined ? stored.title
+      : entry.batchTitle ? entry.batchTitle({ records: row.records, units: row.units }, batch.same)
+        : row.tool_use_id !== null ? stored.title : batchTitle(row.items_n, stored.label),
     lines: batch === undefined ? stored.lines : batch.firstLines,
     tool: { accountId: row.account_id, label: stored.label },
     records: row.records,
@@ -103,7 +106,8 @@ export function cardOf(row: OutboxActionRow, viewer: Viewer, nowMs: number, batc
     ...(batch !== undefined
       ? {
         batch: {
-          itemCount: row.items_n, firstLines: batch.firstLines, totals: { records: row.records, units: row.units, unitsLabel: entry.unitsLabel },
+          itemCount: row.items_n, firstLines: batch.firstLines, firstRows: batch.firstRows, ...(entry.rowHeads ? { heads: entry.rowHeads } : {}),
+          totals: { records: row.records, units: row.units, unitsLabel: entry.unitsLabel },
           ...(batch.firstDetails.some(x => x !== null) ? { firstDetails: batch.firstDetails } : {}),
         },
       }
@@ -116,7 +120,7 @@ export function cardOf(row: OutboxActionRow, viewer: Viewer, nowMs: number, batc
 
 /** Cards for a list of rows, each batch's first lines read in one go. */
 export async function cardsOf(db: D1Database, rows: readonly OutboxActionRow[], viewer: Viewer, nowMs: number): Promise<ActionCard[]> {
-  const lines = await batchSummaries(db, rows.filter(r => r.kind === 'batch').map(r => r.id))
+  const lines = await batchSummaries(db, rows.filter(r => r.kind === 'batch'))
   return rows.map(r => cardOf(r, viewer, nowMs, r.kind === 'batch' ? lines.get(r.id) : undefined))
 }
 

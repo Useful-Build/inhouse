@@ -27,7 +27,7 @@ import {
   AgentDataSchema, AgentErrorCodeSchema, AgentNoticeSchema, AgentNotificationSchema, AgentStateSchema, ApproveResultSchema, ErrorReasonSchema, InstantSchema,
   ActiveRunSchema, ChatListSchema, ChatPageSchema, ChatSummarySchema, LibraryFileSchema, MeSchema, MemberRecordSchema, MessageIdSchema, RoutineRunSchema, RunEventSchema, RunFrameSchema, SendTurnResultSchema, SettingRecordSchema, SupportGrantSchema, ToolSetupSchema, TraceSchema,
 } from '../../../shared/contract'
-import { ActionCardSchema, JobSchema, PermissionSchema, QuestionSchema } from '../../../shared/contract'
+import { ActionCardSchema, ActionItemsPageSchema, JobSchema, PermissionSchema, QuestionSchema } from '../../../shared/contract'
 import type { AgentClient, AgentNotice, AgentState, RunEvent, RunFrame, Scenario, SendPriority, SendTurnResult, Stage } from '../types'
 import { AgentError, SCENARIOS, STAGES } from '../types'
 import type { ContractTarget, WriteMethod } from './targets'
@@ -1106,17 +1106,20 @@ describe.each(targets)('contract: $name', (t: ContractTarget) => {
     // another rev, or (stale) applies instead of rejecting with the card as it is now; a hold not drawn from the server's
     // own `sendAt` and `serverNow`; Undo after the hold, or no Undo in it; Always allow that leaves no permission, or a
     // permission that a stale Remove takes away; a "Needs a check" that can't be resolved by its approver.
-    const ACTIONS = ['actions', 'action', 'answerAction', 'undoAction', 'resolveAction', 'permissions', 'removePermission', 'questions', 'answerQuestion'] as const
+    const ACTIONS = ['actions', 'action', 'answerAction', 'undoAction', 'resolveAction', 'withdrawAction', 'actionItems', 'permissions', 'removePermission', 'questions', 'answerQuestion'] as const
     only(...ACTIONS)('actions, permissions and questions: every list parses; with nothing seeded an answer is refused', async () => {
       const c = t.client
       for (const a of await c.actions()) parse(ActionCardSchema, a, 'an action')
       for (const p of await c.permissions()) parse(PermissionSchema, p, 'a permission')
       for (const q of await c.questions()) parse(QuestionSchema, q, 'a question')
       if (!t.seedAction) {
-        // The demo: nothing to list, and nothing it could answer.
-        expect([await c.actions(), await c.permissions(), await c.questions()]).toEqual([[], [], []])
+        // The demo: no permission or question to list; its actions are its sample cards (Stage 1 M3-U: a batch and a
+        // restock and a teammate's refund), and nothing it doesn't have can be answered.
+        expect([await c.permissions(), await c.questions()]).toEqual([[], []])
+        expect((await c.actions()).map(a => [a.approverKind, a.batch?.itemCount ?? null])).toEqual([['person', 450], ['person', 12], ['admins', null]])
         for (const refused of [c.action('ac_AAAAAAAAAAAAAAAAAAAAAA'), c.answerAction('ac_AAAAAAAAAAAAAAAAAAAAAA', 1, 'once'), c.undoAction('ac_AAAAAAAAAAAAAAAAAAAAAA', 1),
-          c.resolveAction('ac_AAAAAAAAAAAAAAAAAAAAAA', 1, 'sent'), c.removePermission('pg_AAAAAAAAAAAAAAAAAAAAAA', 1)]) {
+          c.resolveAction('ac_AAAAAAAAAAAAAAAAAAAAAA', 1, 'sent'), c.withdrawAction('ac_AAAAAAAAAAAAAAAAAAAAAA', 1), c.actionItems('ac_AAAAAAAAAAAAAAAAAAAAAA', 0),
+          c.removePermission('pg_AAAAAAAAAAAAAAAAAAAAAA', 1)]) {
           const e = await refused.then(() => null, (x: unknown) => x)
           expect(e).toBeInstanceOf(AgentError)
           expect(e).toMatchObject({ code: 'not_found' })
@@ -1190,6 +1193,36 @@ describe.each(targets)('contract: $name', (t: ContractTarget) => {
       const card = await c.action(id)
       const denied = await c.answerAction(id, card.rev, 'deny')
       expect(denied).toMatchObject({ id, state: 'denied', can: { allowOnce: false, alwaysAllow: false, approve: false, deny: false, undo: false, resolve: false } })
+    })
+
+    // Stage 1 M3-U (N22, N33). Ways it could break: a batch's pages skip, repeat or reorder items, or end early; its card's
+    // first lines aren't its first items; an answer without what it covers is taken, or one naming totals the card never
+    // showed goes through; an approval covers anything but the items it named; Undo in the hold doesn't take it back.
+    ;(t.seedBatch ? only(...ACTIONS) : test.skip)('a batch: its items page in order, its answer names what it covers, stale totals are refused', async () => {
+      const c = t.client
+      const id = await t.seedBatch!()
+      const card = parse(ActionCardSchema, await c.action(id), 'the batch')
+      const b = card.batch!
+      expect(b.itemCount).toBeGreaterThan(b.firstLines.length)
+      const items: { n: number; line: string; state: string }[] = []
+      for (let after = 0; ;) {
+        const page = parse(ActionItemsPageSchema, await c.actionItems(id, after), 'a page of items')
+        items.push(...page.items)
+        if (page.next === undefined) break
+        expect(page.next).toBe(page.items.at(-1)!.n)
+        after = page.next
+      }
+      expect(items.map(i => i.n)).toEqual(Array.from({ length: b.itemCount }, (_, i) => i + 1))
+      expect(items.slice(0, b.firstLines.length).map(i => i.line)).toEqual(b.firstLines)
+      expect(new Set(items.map(i => i.state))).toEqual(new Set(['pending']))
+      const bare = await c.answerAction(id, card.rev, 'approve').then(() => null, (x: unknown) => x)
+      expect(bare).toMatchObject({ code: 'invalid' })
+      const totals = { records: b.totals.records, units: b.totals.units }
+      const stale = await c.answerAction(id, card.rev, 'approve', { upTo: b.itemCount, totals: { ...totals, units: totals.units + 1 } }).then(() => null, (x: unknown) => x)
+      expect(stale).toMatchObject({ code: 'conflict', reason: 'totals_changed' })
+      const approved = parse(ActionCardSchema, await c.answerAction(id, card.rev, 'approve', { upTo: b.itemCount, totals }), 'the approved batch')
+      expect(approved).toMatchObject({ id, state: 'approved', batch: { itemCount: b.itemCount, totals }, can: { undo: true } })
+      expect(await c.undoAction(id, approved.rev)).toMatchObject({ id, state: 'undone' })
     })
 
     ;(t.seedAction && t.failNextSend ? only(...ACTIONS) : test.skip)('a send whose result is unclear needs a check, and its approver says it did not go out', async () => {

@@ -535,7 +535,8 @@ test('Facts agree across screens: PO-1187, the waiting count and the stuck-order
   await start(fx)
   // The waiting count: Today, the nav badge, the bell and Approvals.
   await expect(page.getByRole('heading', { level: 1 })).toContainText('6 things need you')
-  await expect(page.getByRole('navigation', { name: 'Main' }).getByRole('button', { name: /Approvals/ })).toContainText('6')
+  // The badge adds the demo's three agent cards waiting on Sam (Stage 1 M3-U: two batches and a teammate's refund).
+  await expect(page.getByRole('navigation', { name: 'Main' }).getByRole('button', { name: /Approvals/ })).toContainText('9')
   await page.getByRole('button', { name: /^Notifications/ }).click()
   await expect(page.getByRole('dialog', { name: 'Notifications' })).toContainText('6 drafts are waiting for your approval.')
   await page.keyboard.press('Escape')

@@ -11,12 +11,14 @@ async function start(page: Page, stage: 'Watch' | 'Act' | 'Run', scenario = 'Nor
 }
 
 const badge = (page: Page) => page.getByRole('navigation', { name: 'Main' }).getByRole('button', { name: /Approvals/ })
+/** Stage 1 M3-U: the demo's three agent cards (two batches and a teammate's refund) wait on Sam too, beside the drafts. */
+const ASKS = 3
 const card = (page: Page, title: string) => page.getByRole('article').filter({ hasText: title })
 
 test('Act: money drafts need a review, the Kestrel reorder holds 10 s then is final, the restock keeps Undo, counts agree', async ({ page }) => {
   await start(page, 'Act')
   await expect(page.getByRole('heading', { level: 1 })).toContainText('6 things need you. Drafts are ready.')
-  await expect(badge(page)).toContainText('6')
+  await expect(badge(page)).toContainText(String(6 + ASKS))
 
   // Money: no one-tap approve on the card.
   const kestrel = card(page, 'Ridge 30L Pack runs out in 9 days')
@@ -38,7 +40,7 @@ test('Act: money drafts need a review, the Kestrel reorder holds 10 s then is fi
   await expect(panel.getByRole('heading', { level: 2 })).not.toHaveText('Ridge 30L Pack runs out in 9 days')
   await page.keyboard.press('Escape')
   await expect(page.getByRole('heading', { level: 1 })).toContainText('5 left to approve today.')
-  await expect(badge(page)).toContainText('5')
+  await expect(badge(page)).toContainText(String(5 + ASKS))
   await expect(kestrel).toContainText(/Approved by Sam at \d{1,2}:\d\d\s[AP]M · going out/)
   // Opened again during the hold, its window says what was approved.
   await kestrel.click({ position: { x: 12, y: 12 } })
@@ -59,7 +61,7 @@ test('Act: money drafts need a review, the Kestrel reorder holds 10 s then is fi
   await returns.getByRole('button', { name: 'Approve and restock', exact: true }).click()
   await expect(page.getByRole('status').filter({ hasText: '11 units restocked on Shopify' })).toBeVisible()
   await expect(page.getByRole('heading', { level: 1 })).toContainText('4 left to approve today.')
-  await expect(badge(page)).toContainText('4')
+  await expect(badge(page)).toContainText(String(4 + ASKS))
 
   await badge(page).click()
   await expect(page.getByText('Waiting for you')).toBeVisible()

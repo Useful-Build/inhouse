@@ -48,6 +48,8 @@ describe('buttons follow can and state (1, 2)', () => {
         expect(card.can[key[b.choice]]).toBe(true)
       } else if (b.kind === 'undo') {
         expect([card.state, card.can.undo]).toEqual(['approved', true])
+      } else if (b.kind === 'withdraw') {
+        expect([card.state, card.can.withdraw]).toEqual(['waiting', true])
       } else {
         expect([card.state, card.can.resolve]).toEqual(['needs_check', true])
       }

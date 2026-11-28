@@ -1,4 +1,4 @@
-// Today's first load has a 257 KB gzip budget (scripts/check-bundle.mjs) with little room. Walks the static import graph
+// Today's first load has a 272 KB gzip budget (scripts/check-bundle.mjs) with little room. Walks the static import graph
 // from the entry (src/main.tsx, both clients) and checks what must stay out of it: the command palette and cmdk (loaded
 // when the palette first opens, or on idle) and the base Code Block (only the trace window's drawer and the markdown
 // renderer use it, both lazy). Ways they come back, written first: App.tsx or another file imports CommandPalette at run

@@ -6,6 +6,7 @@ import { z } from 'zod'
 import { detailOf, PRODUCTS_UNREAD_TEXT, variantRow } from '../detail.ts'
 import { shopScope, TagsSchema } from './shopify-order-tags.ts'
 import type { OperationEntry } from './types.ts'
+import { countOf } from './count-words.ts'
 
 const VARIANT_ID = /^gid:\/\/shopify\/ProductVariant\/[1-9][0-9]{0,19}$/
 /** A staff note: up to 500 characters, line breaks allowed, no other control or format character (bidi, zero-width). */
@@ -47,6 +48,12 @@ export const shopifyDraftOrderCreate: OperationEntry<DraftOrderArgs> & { key: 's
   detail: (a, f) => detailOf(a.lines.map(l => variantRow(f, l.variantId, l.quantity))),
   // #575: when the product names couldn't be read, the card says so rather than show bare variant ids alone.
   unreadNote: PRODUCTS_UNREAD_TEXT,
+  // Stage 1 M3-U (N33): a draft as a row: its products and quantities, the note and the tags (the title says they're drafts).
+  itemRow: a => ({
+    ref: '',
+    change: [a.lines.map(lineWords).join(', '), ...(a.note !== undefined ? [`note: ${a.note}`] : []), ...(a.tags !== undefined ? [`tags: ${a.tags.join(', ')}`] : [])].join('; '),
+  }),
+  batchTitle: c => `Create ${countOf(c.records, 'draft order', 'draft orders')}`,
   effects: { money: false, customer: false, destructive: false, access: false },
   memberMay: true,
   reversible: true,
