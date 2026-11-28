@@ -3,6 +3,12 @@
   "recent": 4,
   "chats": [
     {
+      "id": "catalog-audit",
+      "title": "Full catalog margin review",
+      "at": "0d 07:56",
+      "turns": []
+    },
+    {
       "id": "stuck",
       "title": "Stuck orders over 3 days",
       "at": "0d 07:42",
@@ -253,6 +259,24 @@
           "model": "sonnet"
         }
       ]
+    },
+    {
+      "id": "seasonal-restock",
+      "title": "Winter restock plan across stores",
+      "at": "-3d 15:30",
+      "turns": []
+    },
+    {
+      "id": "ad-spend-audit",
+      "title": "Multi-channel ad spend audit",
+      "at": "-3d 15:25",
+      "turns": []
+    },
+    {
+      "id": "competitor-prices",
+      "title": "Competitor bottle pricing",
+      "at": "-3d 15:20",
+      "turns": []
     },
     {
       "id": "meta",

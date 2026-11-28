@@ -59,9 +59,9 @@ test('Chats: reopening the open chat keeps what was added, from See all and from
 
   // The newest chat is open with no id yet (#/chats): the highlighted row must keep a question too.
   await page.goto('/?demo#/chats')
-  await expect(page.getByRole('banner')).toContainText('Stuck orders over 3 days')
+  await expect(page.getByRole('banner')).toContainText('Full catalog margin review')
   await askInChat(page, 'Which one is oldest?')
-  const newest = side(page).getByRole('button', { name: 'Stuck orders over 3 days', exact: true })
+  const newest = side(page).getByRole('button', { name: 'Full catalog margin review', exact: true })
   await expect(newest).toHaveAttribute('aria-current', 'page')
   await newest.click()
   await expect(main(page).getByText('Which one is oldest?', { exact: true })).toBeVisible()
@@ -192,8 +192,8 @@ test('Chat URLs: See all and each chat have their own address, Back and Forward 
   await main(page).getByRole('button', { name: /Why did refunds jump/ }).click()
   expect(await hash(page)).toBe('#/chats/refunds')
   await expect(page.getByRole('banner')).toContainText('Why did refunds jump?')
-  await side(page).getByRole('button', { name: 'Amazon payout gap', exact: true }).click()
-  expect(await hash(page)).toBe('#/chats/payout')
+  await side(page).getByRole('button', { name: "What to feature in Friday's email", exact: true }).click()
+  expect(await hash(page)).toBe('#/chats/friday')
 
   await page.goBack()
   await expect(page.getByRole('banner')).toContainText('Why did refunds jump?')
@@ -210,11 +210,11 @@ test('Chat URLs: See all and each chat have their own address, Back and Forward 
 
   // The old link and a stale one open the newest chat.
   await page.goto('/?demo#/chats')
-  await expect(page.getByRole('banner')).toContainText('Stuck orders over 3 days')
-  await expect.poll(() => hash(page)).toBe('#/chats/stuck')
+  await expect(page.getByRole('banner')).toContainText('Full catalog margin review')
+  await expect.poll(() => hash(page)).toBe('#/chats/catalog-audit')
   await page.goto('/?demo#/chats/not-a-chat')
-  await expect(page.getByRole('banner')).toContainText('Stuck orders over 3 days')
-  await expect.poll(() => hash(page)).toBe('#/chats/stuck')
+  await expect(page.getByRole('banner')).toContainText('Full catalog margin review')
+  await expect.poll(() => hash(page)).toBe('#/chats/catalog-audit')
 
   // A chat that was just started is reachable with Back after the first question, and Back skips the empty chat.
   await page.goto('/?demo#/today')

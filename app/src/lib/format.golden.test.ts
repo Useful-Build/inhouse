@@ -296,7 +296,8 @@ test('the C1 formatters write exactly the golden strings for every time, amount,
     // 688: the review's High 1 (#726) took the agent-made PO, customer email and ShipBob note out of the Library (3 files, 6
     // strings), moved the PO-1187 file to Dana's uploads (its date is now Nov 2) and reworded the Monday reorder routine's
     // last run and the approval notice in the bell (the Summit Fleece reorder became a refund); one key renamed.
-    expect(Object.keys(out).length).toBe(688)
+    // 819: added the 4 job/web chats (8), 2 job bell notices (2) and 12 job/helper/web traces (121) to the 688 strings.
+    expect(Object.keys(out).length).toBe(819)
     expect(out).toEqual(golden)
   } finally {
     vi.useRealTimers()

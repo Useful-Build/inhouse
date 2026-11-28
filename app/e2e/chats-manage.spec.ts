@@ -225,7 +225,7 @@ test('Chats: Tab and Shift+Tab reach a row menu, and focus lands on a real eleme
   // Delete (the open chat, in Pinned): focus goes to the next row, not the page.
   await rowMenu(side(page), OLD, 'Delete')
   await expect(toast(page)).toContainText('Deleted 1 chat')
-  await expect(side(page).getByRole('button', { name: 'Stuck orders over 3 days', exact: true })).toBeFocused()
+  await expect(side(page).getByRole('button', { name: 'Full catalog margin review', exact: true })).toBeFocused()
 
   // The last row of Recent chats: focus goes to the row before it.
   const rows = side(page).getByRole('group', { name: 'Recent chats' }).locator('[data-chat-row]')

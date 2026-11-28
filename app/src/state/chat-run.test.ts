@@ -93,8 +93,6 @@ describe('what the spending rules say', () => {
 
   test.each([
     ['capReached', "Your team has reached its spending cap, so this answer didn't run."],
-    ['turnBudget', 'This answer reached the spending limit for one answer, so it stopped.'],
-    ['maxTurns', 'This answer needed more steps than your team allows, so it stopped. Ask again, or raise the limit in Settings.'],
     ['budgetBusyThenFail', "This answer waited for others to finish and didn't get its turn. Try again in a minute."],
   ] as const)('%s ends with its own words', async (kind, words) => {
     const l = await load()
@@ -102,6 +100,19 @@ describe('what the spending rules say', () => {
     void l.ui().ask(Q)
     await run(200_000)
     expect(texts(l)).toContain(words)
+    expect(Object.keys(l.ui().runs)).toEqual([])
+  })
+
+  test.each(['turnBudget', 'maxTurns'] as const)('%s carries on as a long job instead of failing', async kind => {
+    const l = await load()
+    l.mock.scriptNextTurn(kind)
+    void l.ui().ask(Q)
+    await run(200_000)
+    const cid = open(l)
+    expect(texts(l)).toContain('Your Inhouse agent carried on with this task by itself.')
+    expect(l.ui().extras.some(m => m.role === 'agent' && m.part.type === 'error')).toBe(false)
+    const job = await l.mock.job(cid)
+    expect(job).toMatchObject({ state: 'ended', outcome: 'done' })
     expect(Object.keys(l.ui().runs)).toEqual([])
   })
 })
@@ -208,7 +219,7 @@ describe('Try again', () => {
     const sent: { replacesRun?: string; quote?: string }[] = []
     const real = l.mock.send.bind(l.mock)
     vi.spyOn(l.mock, 'send').mockImplementation(async (chatId, input) => { sent.push({ replacesRun: input.replacesRun, quote: input.quote }); return real(chatId, input) })
-    l.mock.scriptNextTurn('turnBudget')
+    l.mock.scriptNextTurn('crash')
     void l.ui().ask(Q, { quote: 'a quoted line' })
     await run(60_000)
     const failedTurn = l.ui().extras.find(m => m.role === 'agent' && m.id.endsWith('.f'))
