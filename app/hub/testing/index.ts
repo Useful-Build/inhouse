@@ -21,6 +21,7 @@ import { dataset as shopifyFixtureDataset } from '../../test/upstreams/shopify/r
 import { STORE_DATA_UPSTREAMS } from '../../test/upstreams/shopify/datasets/exfiltration/upstreams'
 import { READ_SIDE_UPSTREAMS } from '../../test/upstreams/shopify/datasets/read-side/upstreams'
 import { evalSlackWorkspace, type EvalSlackEnv } from './eval-slack'
+import { createMcpFixtures, MCP_FIXTURE_HOSTS } from '../../test/upstreams/mcp/index'
 import { bindWriteStore, type FakeKv, type WriteStore } from './write-store'
 
 /** Found in the test bundle, never in the deployable one (the bundle scan looks for this exact value). */
@@ -99,6 +100,14 @@ testUpstreams.set('slack.com', req => {
 // The read-side set (P6a W4): one invented shop per Shopify case, its instruction planted in the field the case names
 // (evals/read-side/shops.ts).
 for (const [host, upstream] of Object.entries(READ_SIDE_UPSTREAMS)) testUpstreams.set(host, upstream)
+
+// Stage 1 M4-F (N52): M4's fixture MCP servers (2026-07-28, 2025-11-25, the helpdesk), their login server, detect's
+// addresses and Path C's REST API, one fetch for every host under mcp-fixtures.example.com (and the private-address trap).
+// The login server fetches a Client ID Metadata Document through this seam, so a test serves one by registering its host.
+// Exported for the test-fakes hook (./fakes.ts): `state` reads their logs, `reset` clears them, `set` revokes a key.
+export const mcpFixtures = createMcpFixtures()
+mcpFixtures.as.fetchClientDocument = req => testUpstreamFetch(req)
+for (const host of MCP_FIXTURE_HOSTS) testUpstreams.set(host, mcpFixtures.fetch)
 
 /**
  * One upstream request through the seam. `env` is the hub's (the singleton test-fakes DO passes its own, signin.ts): on

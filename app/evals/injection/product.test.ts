@@ -7,6 +7,7 @@ import type { CeilingLimits, CeilingRow, GrantRow, OutboxRows, ShopifyAccountRow
 import type { ChatResult, Session } from '../types.ts'
 import { INJECTION_CASES } from './cases.ts'
 import { createProductInjectionTarget, slackEvidence } from './product.ts'
+import { StartUndoFailed } from './runner.ts'
 import { gradeWrites } from './grade.ts'
 import { writeProvides } from '../targets/write-door.ts'
 import { customerEmail } from './cases.ts'
@@ -61,6 +62,8 @@ function stand(o: { writes: FakeWrites; onAnswer?: (who: string, body: unknown) 
     name: 'product', people: { current: ASKER, tom: 'm_t', lena: 'm_l' }, provides: new Set(['tag_ops', 'stock_ops', 'refund']),
     async seed(_m: unknown, run: { personName?: string; writes?: boolean }) { calls.push(`seed writes=${run.writes} name=${run.personName ?? '-'}`); return session },
     writeDoor: () => o.writes as unknown as WriteDoor,
+    // A clean eval Slack by default (never connected, nothing in the workspace): #612's start check finds nothing to do.
+    slackDoor: () => ({ account: async () => null, read: async () => ({ channels: [], messages: [], listed: [] }), reset: async () => { calls.push('slack reset') } }),
     async addTeammate(t: { name: string }) { calls.push(`teammate ${t.name}`); return 'm_named' },
     async removeTeammate(id: string) { calls.push(`remove ${id}`) },
     async call(_who: string, method: string, path: string, opts?: { json?: unknown }) {
@@ -226,7 +229,7 @@ describe('the Slack cases on the eval deployment (#577)', () => {
     async seed(w: { messages: { channel: string; text: string }[] }) { this.calls.push(`seed ${w.messages.map((m) => m.channel).join(',')}`); this.messages = w.messages.map((m) => ({ channel: 'C0EVAL0002', ts: '1', user: 'U0TEST0002', text: m.text })) }
     async list(l: { by: string; channels: { name: string }[] }) { this.calls.push(`list ${l.by} ${l.channels.map((c) => c.name).join(',')}`); this.listed = l.channels.map((c) => ({ id: 'C0EVAL0001', name: c.name.replace(/^#/, ''), alerts: false })); return { alertsGrant: null } }
     async read() { return { channels: [], messages: this.messages, listed: this.listed } }
-    async account() { return { lastState: 'connected', connectedAtMs: 1 } }
+    async account() { return { lastState: this.listed.length ? 'connected' : 'disconnected', connectedAtMs: 1 } }
     async reset() { this.calls.push('reset'); this.listed = []; this.messages = [] }
   }
   const wire = (o: { resetThrows?: boolean } = {}) => {
@@ -280,7 +283,7 @@ describe('a Slack case whose seed fails (#602 review)', () => {
       async seed() { this.calls.push('seed') }
       async list() { this.calls.push('list'); throw new Error('the listed channels read back wrong') }
       async read() { return { channels: [], messages: [], listed: [] } }
-      async account() { return { lastState: 'connected', connectedAtMs: 1 } }
+      async account() { return { lastState: this.calls.includes('list') ? 'connected' : 'disconnected', connectedAtMs: 1 } }
       async reset() { this.calls.push('reset') }
     }
     const slack = new ThrowingSlack()
@@ -300,8 +303,8 @@ describe('Slack is on only while a Slack case-repeat runs (Neon\'s #602 review)'
     const slackCalls: string[] = []
     const slack = {
       async seed() { slackCalls.push('seed') }, async list() { slackCalls.push('list'); return { alertsGrant: null } },
-      async read() { return { channels: [], messages: [], listed: [{ id: 'C0EVAL0001', name: 'ops', alerts: false }] } },
-      async account() { return { lastState: 'connected', connectedAtMs: 1 } }, async reset() { slackCalls.push('reset') },
+      async read() { return { channels: [], messages: [], listed: slackCalls.includes('list') && !slackCalls.includes('reset') ? [{ id: 'C0EVAL0001', name: 'ops', alerts: false }] : [] } },
+      async account() { return { lastState: slackCalls.includes('list') ? 'connected' : 'disconnected', connectedAtMs: 1 } }, async reset() { slackCalls.push('reset') },
     }
     const { base } = stand({ writes: new FakeWrites() })
     const target = createProductInjectionTarget({
@@ -327,5 +330,135 @@ describe('Slack is on only while a Slack case-repeat runs (Neon\'s #602 review)'
     const { target, links } = make({ connectFails: true })
     await expect(target.start(kase('P07'), { rep: 1, canary: 'C' })).rejects.toThrow('the connect callback answered 500')
     expect(links).toEqual(['connect', 'disconnect'])
+  })
+})
+
+describe('#612: a run starts from a clean eval Slack', () => {
+  it('Slack left connected and a full workspace from a killed run are put right at the first case, once, disconnect first, and reported', async () => {
+    const order: string[] = []
+    let connected = true
+    let messages = 2
+    const slack = {
+      async account() { return { lastState: connected ? 'connected' : 'disconnected', connectedAtMs: 1 } },
+      async read() { return { channels: [{ id: 'C0EVAL0002', name: 'support', private: false }], messages: Array.from({ length: messages }, () => ({ channel: 'C0EVAL0002', ts: '1', user: 'U0TEST0002', text: 'old plant' })), listed: [] } },
+      async reset() { order.push('empty'); messages = 0 },
+    }
+    const { base } = stand({ writes: new FakeWrites() })
+    const target = createProductInjectionTarget({
+      paid: true, env: {}, base: { ...base, slackDoor: () => slack } as unknown as ProductTarget, inhouse: async () => ({ status: 200, json: null, location: null }),
+      slackLink: { connect: async () => {}, disconnect: async () => { order.push('disconnect'); connected = false } },
+    })
+    const s1 = await target.start(kase('P01'), { rep: 1, canary: 'C' })
+    await s1.reset()
+    const s2 = await target.start(kase('W06'), { rep: 1, canary: 'C' })
+    await s2.reset()
+    expect(order).toEqual(['disconnect', 'empty'])
+    expect(target.notes!()).toEqual(['At the run\'s start an earlier run\'s Slack state was put right: Slack disconnected, the eval workspace emptied (1 channels, 2 messages, 0 listed).'])
+  })
+
+  it('Slack left connected with no Inhouse app to disconnect it fails the first case by name', async () => {
+    const slack = { async account() { return { lastState: 'connected', connectedAtMs: 1 } }, async read() { return { channels: [], messages: [], listed: [] } }, async reset() {} }
+    const { base } = stand({ writes: new FakeWrites() })
+    const target = createProductInjectionTarget({ paid: true, env: {}, base: { ...base, slackDoor: () => slack } as unknown as ProductTarget, inhouse: null })
+    const e = await target.start(kase('P01'), { rep: 1, canary: 'C' }).then(() => null, (x: unknown) => x)
+    // A failed start-of-run cleanup stops the run (a StartUndoFailed is a reset failure to the runner), naming why.
+    expect(e).toBeInstanceOf(StartUndoFailed)
+    expect(JSON.stringify((e as AggregateError).errors.map((x) => String(x)))).toMatch(/still connected from an earlier run/)
+  })
+
+  it('a Slack case\'s reset disconnects before it empties the workspace', async () => {
+    const order: string[] = []
+    const slack = {
+      async account() { return { lastState: order.includes('list') ? 'connected' : 'disconnected', connectedAtMs: 1 } },
+      async read() { return { channels: [] as { id: string; name: string; private: boolean }[], messages: [] as { channel: string; ts: string; user: string; text: string }[], listed: order.includes('list') ? [{ id: 'C0EVAL0001', name: 'ops', alerts: false }] : [] } },
+      async seed() {}, async list() { order.push('list'); return { alertsGrant: null } }, async reset() { order.push('empty') },
+    }
+    const { base } = stand({ writes: new FakeWrites() })
+    const target = createProductInjectionTarget({
+      paid: true, env: {}, base: { ...base, slackDoor: () => slack } as unknown as ProductTarget, inhouse: async () => ({ status: 200, json: null, location: null }),
+      slackLink: { connect: async () => {}, disconnect: async () => { order.push('disconnect') } },
+    })
+    const s = await target.start(kase('P07'), { rep: 1, canary: 'C' })
+    await s.reset()
+    expect(order).toEqual(['list', 'disconnect', 'empty'])
+  })
+})
+
+describe('Neon\'s #618 review on the product target', () => {
+  const slackStub = (order: string[], o: { resetFailsOnce?: boolean; connectedAtStart?: boolean } = {}) => {
+    let failed = false
+    let connected = o.connectedAtStart === true
+    return {
+      async account() { return { lastState: connected || order.includes('list') ? 'connected' : 'disconnected', connectedAtMs: 1 } },
+      async read() { return { channels: [] as { id: string; name: string; private: boolean }[], messages: [] as { channel: string; ts: string; user: string; text: string }[], listed: order.includes('list') ? [{ id: 'C0EVAL0001', name: 'ops', alerts: false }] : [] } },
+      async seed() {}, async list() { order.push('list'); return { alertsGrant: null } },
+      async reset() { order.push('empty'); if (o.resetFailsOnce && !failed) { failed = true; throw new Error('wrangler failed') } },
+      disconnect() { connected = false },
+    }
+  }
+
+  it('a failed start-of-run cleanup isn\'t marked done: the next start tries it again', async () => {
+    const order: string[] = []
+    const slack = slackStub(order, { connectedAtStart: true, resetFailsOnce: true })
+    const { base } = stand({ writes: new FakeWrites() })
+    const target = createProductInjectionTarget({
+      paid: true, env: {}, base: { ...base, slackDoor: () => slack } as unknown as ProductTarget, inhouse: async () => ({ status: 200, json: null, location: null }),
+      slackLink: { connect: async () => {}, disconnect: async () => { order.push('disconnect'); slack.disconnect() } },
+    })
+    // Slack connected and a workspace left: the disconnect works, the emptying fails; both were tried.
+    slack.read = async () => ({ channels: [{ id: 'C0EVAL0002', name: 'support', private: false }], messages: [], listed: [] })
+    await expect(target.start(kase('P01'), { rep: 1, canary: 'C' })).rejects.toBeInstanceOf(StartUndoFailed)
+    expect(order).toEqual(['disconnect', 'empty'])
+    const s2 = await target.start(kase('P01'), { rep: 2, canary: 'C' })
+    expect(order).toEqual(['disconnect', 'empty', 'empty'])
+    await s2.reset()
+  })
+
+  it('once the close starts no case starts and no Slack connect begins; a connect in flight is waited for, then Slack goes off', async () => {
+    const order: string[] = []
+    const slack = slackStub(order)
+    let connectDone!: () => void
+    const { base } = stand({ writes: new FakeWrites() })
+    const target = createProductInjectionTarget({
+      paid: true, env: {}, base: { ...base, slackDoor: () => slack } as unknown as ProductTarget, inhouse: async () => ({ status: 200, json: null, location: null }),
+      slackLink: { connect: () => new Promise<void>((r) => { order.push('connect'); connectDone = () => { order.push('connected'); r() } }), disconnect: async () => { order.push('disconnect') } },
+    })
+    const starting = target.start(kase('P07'), { rep: 1, canary: 'C' })
+    await new Promise((r) => setTimeout(r, 0))
+    while (!order.includes('connect')) await new Promise((r) => setTimeout(r, 0))
+    const closing = target.close!()
+    await new Promise((r) => setTimeout(r, 0))
+    expect(order).toEqual(['connect'])
+    connectDone()
+    await closing
+    await starting.then((s) => s.reset()).catch(() => {})
+    expect(order.slice(0, 3)).toEqual(['connect', 'connected', 'disconnect'])
+    await expect(target.start(kase('W06'), { rep: 1, canary: 'C' })).rejects.toThrow(/the target is closing/)
+  })
+
+  it('the close stops the running repeat\'s turns before the lease goes back', async () => {
+    const calls: string[] = []
+    const { base } = stand({ writes: new FakeWrites() })
+    const target = createProductInjectionTarget({
+      paid: true, env: {}, inhouse: null,
+      base: { ...base, async seed(...a: Parameters<ProductTarget['seed']>) { const s = await base.seed(...a); return { ...s, async stopTurns() { calls.push('stopTurns') } } }, async close() { calls.push('lease back') } } as unknown as ProductTarget,
+    })
+    await target.start(kase('W06'), { rep: 1, canary: 'C' })
+    await target.close!()
+    expect(calls).toEqual(['stopTurns', 'lease back'])
+  })
+
+  it('the transcript check reads every chat of the repeat; one that holds the plant passes, none fails', async () => {
+    const { base } = stand({ writes: new FakeWrites() })
+    const enc = (v: unknown) => new TextEncoder().encode(JSON.stringify(v))
+    let parts: Uint8Array[] = []
+    const reads: string[] = []
+    const target = createProductInjectionTarget({ paid: true, env: {}, inhouse: null, base, sessions: { preflight: async () => {}, parts: async (id) => { reads.push(id); return parts } } })
+    const s = await target.start(kase('W02'), { rep: 1, canary: 'C' })
+    const plant = kase('W02').plant!.text('C')
+    expect(await s.plantDelivered!(plant)).toMatchObject({ delivered: false })
+    parts = [enc([{ type: 'user', message: { content: [{ type: 'tool_result', tool_use_id: 't', content: JSON.stringify({ facts: [{ text: plant }] }) }] } }])]
+    expect(await s.plantDelivered!(plant)).toEqual({ delivered: true })
+    expect(reads).toEqual(['eval-chat', 'eval-chat'])
   })
 })

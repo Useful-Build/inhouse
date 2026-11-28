@@ -22,7 +22,8 @@ import { FakeMcpServer, SLACK_CHANNELS, SLACK_MESSAGES } from '../../test/upstre
 import { FakeSlackWeb, WEB_CHANNELS } from '../../test/upstreams/slack/server'
 import { dataset as shopifyFixtureValue } from '../../test/upstreams/shopify/recordings/fixture/dataset'
 import type { Dataset } from '../../test/upstreams/shopify/dataset'
-import { attachFakeStorage, notesMcp, shopifyIssuedTokens, shopifyRequests, shopifyWrite, slackMcp, slackWeb } from './index'
+import { attachFakeStorage, mcpFixtures, notesMcp, shopifyIssuedTokens, shopifyRequests, shopifyWrite, slackMcp, slackWeb } from './index'
+import { FIXTURE_KEYS, type FixtureKeyName } from '../../test/upstreams/mcp/index'
 import type { FakeKv } from './write-store'
 
 /** Found in the hub's test bundle, never in the deployable one (scripts/check-hub-build.mjs reads it from here). */
@@ -85,6 +86,19 @@ const ShopifyWriteSwitchesSchema = z.strictObject({
   }).optional(),
 })
 
+/**
+ * Stage 1 M4-F: M4's fixtures. `revokeKey` revokes one fixture key (the modern server's two, the helpdesk's or Path C's
+ * REST API's). `toolsVersion` switches one connection's plant (`/changing/mcp`, `/list-fails/mcp`, by its address with
+ * any query) to its second state or back: a test, not a list count, decides when a tool changes (#624). `revokeLogins`
+ * ends every login at the fixture login server. `clockMs` moves the fixtures' clock (codes, tokens, requestState).
+ */
+const FixturesSwitchesSchema = z.strictObject({
+  revokeKey: z.enum(Object.keys(FIXTURE_KEYS) as [FixtureKeyName, ...FixtureKeyName[]]).optional(),
+  toolsVersion: z.strictObject({ address: z.string().url().max(500), version: z.union([z.literal(1), z.literal(2)]) }).optional(),
+  revokeLogins: z.literal(true).optional(),
+  clockMs: z.number().int().min(0).max(8_640_000_000_000_000).optional(),
+})
+
 /** The hub ops (the product's hook forwards these as they are). */
 export const HubFakesOpSchema = z.discriminatedUnion('op', [
   z.strictObject({ op: z.literal('state') }),
@@ -94,6 +108,7 @@ export const HubFakesOpSchema = z.discriminatedUnion('op', [
     mcp: McpSwitchesSchema.optional(),
     web: WebSwitchesSchema.optional(),
     shopifyWrite: ShopifyWriteSwitchesSchema.optional(),
+    fixtures: FixturesSwitchesSchema.optional(),
   }),
   z.strictObject({ op: z.literal('alarm'), accountId: AccountIdSchema }),
   z.strictObject({ op: z.literal('var'), name: z.literal('SLACK_PRIVATE_SEARCH'), value: z.enum(['on', 'off']) }),
@@ -172,6 +187,8 @@ function fakesStateLocal() {
       faults: shopifyWrite.faults,
     }),
     connect: { bodies: [...connectBodies] },
+    // Stage 1 M4-F: M4's fixtures (their request log, calls, writes, the login server's logs), a JSON copy.
+    fixtures: mcpFixtures.state(),
   }
 }
 
@@ -243,13 +260,16 @@ export function resetFakes(kv?: Pick<SyncKvStorage, 'delete'>): void {
   shopifyRequests.length = 0
   shopifyWrite.reset()
   connectBodies.length = 0
+  mcpFixtures.reset()
   kv?.delete(TEST_FAKES_VARS_KEY)
   clearSeeds()
 }
 
 function applySet(op: Extract<HubFakesOp, { op: 'set' }>): HubResult<{ set: true }> {
-  // Check every channel id before changing anything.
+  // Check every channel id, and the plant address, before changing anything.
   for (const c of op.web?.channels ?? []) if (!slackWeb.channels.has(c.id)) return err('invalid_args', 'web.channels.id')
+  const tv = op.fixtures?.toolsVersion
+  if (tv && !mcpFixtures.hasToolsVersion(tv.address)) return err('invalid_args', 'fixtures.toolsVersion.address')
   if (op.mcp) {
     const { profile, staleSessions, ...switches } = op.mcp
     const targets = profile === 'slack' ? [slackMcp] : profile === 'notes' ? [notesMcp] : [slackMcp, notesMcp]
@@ -266,6 +286,10 @@ function applySet(op: Extract<HubFakesOp, { op: 'set' }>): HubResult<{ set: true
   if (op.shopifyWrite?.faults) {
     Object.assign(shopifyWrite.faults, op.shopifyWrite.faults)
   }
+  if (op.fixtures?.revokeKey) mcpFixtures.revokeKey(op.fixtures.revokeKey)
+  if (tv) mcpFixtures.setToolsVersion(tv.address, tv.version)
+  if (op.fixtures?.revokeLogins) mcpFixtures.revokeLogins()
+  if (op.fixtures?.clockMs !== undefined) mcpFixtures.setClock(op.fixtures.clockMs)
   return { ok: true, value: { set: true } }
 }
 
