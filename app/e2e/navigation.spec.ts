@@ -211,17 +211,17 @@ test('Sidebar: collapse to the rail, move through it by its tooltips, stay colla
 test('Notifications: one read by clicking it drops the count in the bell, Mark all as read shows the empty state', async ({ fx, page }) => {
   await start(page, fx)
   const bell = header(page).getByRole('button', { name: /^Notifications/ })
-  // Unread: Klaviyo, the drafts line and two approval notices (the demo catch-up's PR 1).
-  await expect(bell).toHaveAccessibleName('Notifications, 4 unread')
+  // Unread: Klaviyo, the drafts line, two approval notices (the demo catch-up's PR 1) and a question that waits (PR 3).
+  await expect(bell).toHaveAccessibleName('Notifications, 5 unread')
   await bell.click()
   const pop = page.getByRole('dialog', { name: 'Notifications' })
-  await expect(pop.getByText('Unread')).toHaveCount(4)
+  await expect(pop.getByText('Unread')).toHaveCount(5)
   await pop.getByRole('button', { name: /drafts are waiting for your approval/ }).click()
   await expect.poll(() => hash(page)).toBe('#/approvals')
-  await expect(bell).toHaveAccessibleName('Notifications, 3 unread')
+  await expect(bell).toHaveAccessibleName('Notifications, 4 unread')
 
   await bell.click()
-  await expect(pop.getByText('Unread')).toHaveCount(3)
+  await expect(pop.getByText('Unread')).toHaveCount(4)
   await pop.getByRole('button', { name: 'Mark all as read' }).click()
   // Nothing unread, but the drafts line still says something is waiting, so "all caught up" doesn't show above it (L11).
   await expect(pop.getByText("You're all caught up")).toHaveCount(0)

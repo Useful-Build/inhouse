@@ -28,6 +28,17 @@
       "approval": true
     },
     {
+      "text": "A question is waiting",
+      "who": "Inhouse",
+      "at": "0d 06:12",
+      "unread": true,
+      "opens": "Approvals",
+      "icon": "forum",
+      "waiting": true,
+      "approval": true,
+      "question": true
+    },
+    {
       "drafts": "{pending} drafts are waiting for your approval.",
       "who": "Inhouse agent",
       "at": "0d 06:08",

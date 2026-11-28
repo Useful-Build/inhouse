@@ -349,6 +349,8 @@ function Shell() {
     return () => clearTimeout(t)
   }, [])
   const page = useUi(s => s.page)
+  // The demo's "View as": the screen starts again under the other view, so every list it read is read as that person.
+  const viewAs = useUi(s => s.viewAs)
   // A list page reads its list again when it opens, and the bell its notices: what the agent made since the first read
   // (a file a chat saved, the cards a Run now found) isn't in it. Not the page the app starts on: the first reads cover it,
   // and for the Inhouse team landing there isn't a choice (each read under a grant writes a support.access line). The
@@ -465,7 +467,7 @@ function Shell() {
           <div className={cn(page === 'chats' || (!phone && (page === 'settings' || page === 'library')) ? 'flex min-h-0 flex-1 basis-0 flex-col' : 'flex-none')}>
             {/* Keyed by page; the sub-key (tool, chat, settings tab) resets it too, so moving away clears an error screen.
                 It sits outside Suspense, so a lazy screen that fails to load shows this screen's error, not the app's. */}
-            <RouteBoundary key={page} resetKey={subKey} name={PAGE_LABEL[page]}>
+            <RouteBoundary key={`${page}|${viewAs}`} resetKey={subKey} name={PAGE_LABEL[page]}>
               <Suspense fallback={<PageFallback />}>
                 <Screen />
                 <RouteFocus slug={focusKey} />

@@ -5,6 +5,7 @@ import { demoNow, nextLocalRun } from './demo-clock'
 import { listNames } from '../state/derive'
 import type { RoutineCard, SeedTurn, SkillCard, SkillDef, ToolsData, MessagePart, Instant, ChatThread, AgentState, AgentData, DemoContext } from './types'
 import type { Script, RunInfo } from './mock'
+import { webFetchMode } from '../../shared/contract/settings-table'
 import type { TraceKey } from './data'
 
 const cap1 = (s: string) => s.charAt(0).toUpperCase() + s.slice(1)
@@ -311,16 +312,24 @@ const WEB_ASK = /\b(?:search\b.*\bweb|web search|look up online|competitor price
 const URL_ASK = /https?:\/\/([a-z0-9.-]+)/i
 const LONG_TASK_ASK = /\b(full catalog|deep (?:research|audit|analysis)|audit (?:all|every)|across every sku)\b/i
 
+/** The sites a search reads when any public website is allowed (the demo's invented competitors). */
+const OPEN_SITES = ['trailgear.example.test', 'peaksupply.example.test']
+/** A host a person could mean by "a public website": a name with a dot, never an address or a local name. */
+const isPublicHost = (host: string) => /^[a-z0-9-]+(\.[a-z0-9-]+)+$/.test(host) && !/^\d+(\.\d+)+$/.test(host) && !/\.(local|internal|localhost)$/.test(host)
+
 const webScript = (h: ScriptHost, q: string): Script | null => {
   const urlMatch = URL_ASK.exec(q)
   const webAsk = WEB_ASK.test(q)
   if (!urlMatch && !webAsk) return null
   const searchOn = h.state.toggles['t:websearch'] === true
   const fetchOn = h.state.toggles['t:webfetch_on'] !== false
-  const allowed = (h.state.settings['t:webfetch'] ?? '')
+  // The product's own rule (webFetchMode, M3-J): a list never saved means any public website; a saved empty list means none.
+  const open = webFetchMode(h.state.settings['t:webfetch_mode'], h.state.settings['t:webfetch']) === 'open'
+  const listed = (h.state.settings['t:webfetch'] ?? '')
     .split('\n')
     .map(x => x.trim().toLowerCase())
     .filter(Boolean)
+  const allowed = open ? OPEN_SITES : listed
 
   if (urlMatch) {
     const host = urlMatch[1]!.toLowerCase()
@@ -332,7 +341,15 @@ const webScript = (h: ScriptHost, q: string): Script | null => {
         parts: [{ type: 'text', text: "Read web pages is turned off in Settings, so I can't open that page. Turn on Read web pages under Settings > Inhouse agent and ask again." }],
       }
     }
-    if (!allowed.includes(host)) {
+    if (open && !isPublicHost(host)) {
+      return {
+        thinking: ['Checking the address…'],
+        delayMs: 800,
+        trace: 'generic',
+        parts: [{ type: 'text', text: `${host} isn't a public website, so I can't open it.` }],
+      }
+    }
+    if (!open && !allowed.includes(host)) {
       return {
         thinking: ['Checking allowed websites…'],
         delayMs: 800,
@@ -395,7 +412,7 @@ const webScript = (h: ScriptHost, q: string): Script | null => {
         type: 'table',
         table: {
           title: 'Competitor web check',
-          summary: `${allowed.length} allowed ${allowed.length === 1 ? 'website' : 'websites'} checked`,
+          summary: `${allowed.length} ${open ? '' : 'allowed '}${allowed.length === 1 ? 'website' : 'websites'} checked`,
           icon: 'search',
           rows: allowed.slice(0, 3).map((host, i) => ({
             order: `Web ${i + 1}`,
@@ -408,7 +425,7 @@ const webScript = (h: ScriptHost, q: string): Script | null => {
       },
       {
         type: 'text',
-        text: `Checked the allowed websites:\n\n${links}\n\nOur $34 Cairn Insulated Bottle stays competitive without a discount.`,
+        text: `Checked ${open ? 'these websites' : 'the allowed websites'}:\n\n${links}\n\nOur $34 Cairn Insulated Bottle stays competitive without a discount.`,
       },
     ],
   }

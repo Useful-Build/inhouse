@@ -8,7 +8,8 @@
 //  4. the alerts channel's row doesn't say whether a standing permission exists now, or an admin can't reach Always
 //     allowed from it to remove it (or someone who can't remove it there is sent there);
 //  5. the Inhouse team is told its own mark gives a permission (only an admin's does, D4);
-//  6. the demo's page changes.
+//  6. the demo's page says other than the product's (the demo serves the posting state and the permission too since its
+//     catch-up's PR 3, so a build that leaves the disclosure out is a page a demo viewer reads differently).
 import { describe, expect, it, vi } from 'vitest'
 import type { Me } from '../../../shared/contract/me'
 
@@ -103,13 +104,13 @@ describe("the alerts channel's row (failure 4)", () => {
 })
 
 describe('the demo (failure 6)', () => {
-  it('keeps its own words whatever the list says', () => {
-    for (const posting of [ON, OFF]) {
-      const { rows } = page(view(list(posting, true)), 'admin', false)
-      expect(rows.find(r => r.title === 'Alerts channel')!.desc).toBe('Where approvals, questions and problems are posted.')
-      expect(rows.find(r => r.title === '#ops-alerts')!.desc).toBe('The alerts channel. Approvals, questions and problems post here too.')
-      expect(rows.some(r => r.title === 'Standing permission')).toBe(false)
-      expect(rows.find(r => r.title === 'Alerts channel')!.confirm).toBeUndefined()
+  it("says what the product says, for every posting state, permission and viewer: the product's disclosure, the limit and the way to Always allowed", () => {
+    const words = (l: List, role: Me['role'], product: boolean) => page(view(l), role, product).rows.map(r => [r.title, r.desc, r.kind, r.value, r.confirm?.('#general') ?? null])
+    for (const posting of [ON, OFF]) for (const permission of [false, true]) for (const role of ['admin', 'member', 'inhouse'] as const) {
+      expect(words(list(posting, permission), role, false), `${posting.on} ${permission} ${role}`).toEqual(words(list(posting, permission), role, true))
     }
+    const { rows } = page(view(list(ON, true)), 'admin', false)
+    expect(rows.find(r => r.title === 'Alerts channel')!.desc).toBe(N27(20))
+    expect(rows.find(r => r.title === 'Standing permission')!.value).toBe('Open Always allowed')
   })
 })

@@ -7,7 +7,8 @@
 //  - an `action.updated`, a focus or an answer doesn't read again;
 //  - an answer that lands while a read is out is counted from that older read (the badge keeps the old number);
 //  - a question that arrives (a new notice in the bell's list, after a run) isn't counted until the next focus;
-//  - a socket that comes back live, or a tab shown again, doesn't read again.
+//  - a socket that comes back live, or a tab shown again, doesn't read again;
+//  - the person is shown as another role (the demo's "View as") and the badge keeps the number of the role before.
 import { createElement } from 'react'
 import { act } from 'react'
 import { createRoot } from 'react-dom/client'
@@ -113,6 +114,25 @@ describe('the badge', () => {
     await flush()
     expect(reads()).toBe(start + 2)
     visibility.mockRestore()
+  })
+  test('a change of role reads both lists again, so the badge is the new role\'s (the demo\'s View as)', async () => {
+    fake.actions.mockResolvedValue([card(), card()]); fake.questions.mockResolvedValue([question()])
+    await act(async () => root.render(createElement(Badge)))
+    await flush()
+    expect(shown.at(-1)).toBe(3)
+    const reads = fake.actions.mock.calls.length
+    // As a member: one card of their own waits, and the question is still theirs.
+    fake.actions.mockResolvedValue([card()])
+    fake.role = 'member'
+    await act(async () => { for (const l of fake.meListeners) l() })
+    await flush()
+    expect(fake.actions.mock.calls.length).toBeGreaterThan(reads)
+    expect(shown.at(-1)).toBe(2)
+    // A change that isn't the role's reads nothing more.
+    const after = fake.actions.mock.calls.length
+    await act(async () => { for (const l of fake.meListeners) l() })
+    await flush()
+    expect(fake.actions.mock.calls.length).toBe(after)
   })
   test('one list failing keeps the other\'s number and its own last one', async () => {
     fake.actions.mockResolvedValue([card()]); fake.questions.mockResolvedValue([question(), question()])

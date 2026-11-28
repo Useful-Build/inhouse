@@ -146,9 +146,10 @@ test('Settings: search filters the menu to matching pages and rows', async ({ pa
   const nav = page.getByRole('navigation', { name: 'Settings' })
   const menu = nav.locator('button[data-nav-row]')
   const search = page.getByRole('searchbox', { name: 'Search settings' })
-  // 11 with P5 W4's Slack notices: the sample brand has Slack connected (a brand without it keeps 10). Decision A13 took
-  // Notifications, Who approves what, Run limits and Stage and plan; the demo's permissions brought Always allowed.
-  await expect(menu).toHaveCount(11)
+  // 12 with P5 W4's Slack notices: the sample brand has Slack connected (a brand without it keeps 11). Decision A13 took
+  // Notifications, Who approves what, Run limits and Stage and plan; the demo's permissions brought Always allowed, and the
+  // demo catch-up's PR 3 What the agent can do (an admin's).
+  await expect(menu).toHaveCount(12)
 
   await search.fill('time zone')
   await expect(menu).toHaveCount(1)
@@ -169,7 +170,7 @@ test('Settings: search filters the menu to matching pages and rows', async ({ pa
   // Escape clears the box and the whole menu comes back.
   await search.press('Escape')
   await expect(search).toHaveValue('')
-  await expect(menu).toHaveCount(11)
+  await expect(menu).toHaveCount(12)
 })
 
 test('Chats: there is no Chats item in the nav; New chat and Recent chats stay', async ({ page, fx }) => {
@@ -219,6 +220,8 @@ test('Chats: every seeded answer has its steps line and, opened, its model and s
   type LazyMsg = { role: string; trace?: string; model?: string }
   const seed = json('chat-script.json').seedThread.turns as Turn[]
   const jobsChats = json('jobs.json').chats as Record<string, { messages: LazyMsg[] }>
+  // The chats the agent keeps beside the job chats: the order-tags chat's history (actions.json), before any late follow-up.
+  const keptChats = json('actions.json').chats as Record<string, { messages: LazyMsg[] }>
   const chats = json('chats.json').chats as { id: string; turns: 'seedThread' | Turn[] }[]
   await start(fx)
   for (const c of chats) {
@@ -230,7 +233,7 @@ test('Chats: every seeded answer has its steps line and, opened, its model and s
       ? seed
       : c.turns.length > 0
         ? c.turns
-        : (jobsChats[c.id]?.messages ?? []).map(m => (m.role === 'agent' ? { trace: m.trace, model: m.model } : { user: m.role }))
+        : (jobsChats[c.id]?.messages ?? keptChats[c.id]?.messages ?? []).map(m => (m.role === 'agent' ? { trace: m.trace, model: m.model } : { user: m.role }))
     for (const t of turnsList) {
       if (t.user) { inAnswer = false; continue }
       const tr = traces[t.trace!.split(' ')[0]]
@@ -549,8 +552,8 @@ test('Facts agree across screens: PO-1187, the waiting count and the stuck-order
   // The waiting count: Today, the nav badge, the bell and Approvals.
   await expect(page.getByRole('heading', { level: 1 })).toContainText('3 left to approve today.')
   // The badge adds the demo's six agent cards waiting on Sam: two batches and a teammate's refund (Stage 1 M3-U), two
-  // ask cards and one that needs a check (the demo catch-up's PR 1).
-  await expect(page.getByRole('navigation', { name: 'Main' }).getByRole('button', { name: /Approvals/ })).toContainText('9')
+  // ask cards and one that needs a check (the demo catch-up's PR 1), and the two questions that wait (PR 3).
+  await expect(page.getByRole('navigation', { name: 'Main' }).getByRole('button', { name: /Approvals/ })).toContainText('11')
   await page.getByRole('button', { name: /^Notifications/ }).click()
   await expect(page.getByRole('dialog', { name: 'Notifications' })).toContainText('3 drafts are waiting for your approval.')
   await page.keyboard.press('Escape')

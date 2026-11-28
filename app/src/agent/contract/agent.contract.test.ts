@@ -1049,7 +1049,11 @@ describe.each(targets)('contract: $name', (t: ContractTarget) => {
       expect(open.length).toBeGreaterThan(0)
       const saved = await c.saveNotifyChannels({ channelIds: [open[0]!.channelId], alertsChannelId: open[0]!.channelId, ifRev: start.rev })
       // Stage 1 M3-C (N27): the list carries whether posting is on; saving the list doesn't change it.
-      expect(saved).toEqual({ rev: start.rev + 1, channels: [{ channelId: open[0]!.channelId, name: open[0]!.name, alerts: true }], posting: start.posting })
+      // A target that gives the admin's mark its standing permission (the demo's, with posting on: M2-N, N27) says so on the channel.
+      const { permission, ...channel } = saved.channels[0]!
+      expect({ ...saved, channels: [channel] }).toEqual({ rev: start.rev + 1, channels: [{ channelId: open[0]!.channelId, name: open[0]!.name, alerts: true }], posting: start.posting })
+      if (t.name === 'mock') expect(permission).toMatchObject({ scope: `#${open[0]!.name}`, perDay: start.posting.on ? start.posting.perDay : -1 })
+      else expect(permission).toBeUndefined()
       const stale = await c.saveNotifyChannels({ channelIds: [], ifRev: start.rev }).then(() => null, (e: unknown) => e)
       expect(stale).toBeInstanceOf(AgentError)
       expect(stale).toMatchObject({ code: 'conflict', current: { rev: saved.rev } })
@@ -1106,16 +1110,18 @@ describe.each(targets)('contract: $name', (t: ContractTarget) => {
       for (const a of await c.actions()) parse(ActionCardSchema, a, 'an action')
       for (const p of await c.permissions()) parse(PermissionSchema, p, 'a permission')
       for (const q of await c.questions()) parse(QuestionSchema, q, 'a question')
-      // The demo's lists are its sample data, so only its target knows them: no question; its actions and permissions are
-      // its sample ones (Stage 1 M3-U: a batch, a restock and a teammate's refund; the demo catch-up's PR 1: two ask cards,
-      // a teammate's, one that went out under a permission and one that needs a check; two permissions). Keyed on the
-      // target's name: since the demo seeds an action too, `seedAction` no longer tells the targets apart.
+      // The demo's lists are its sample data, so only its target knows them: its questions, actions and permissions are its
+      // sample ones (Stage 1 M3-U: a batch, a restock and a teammate's refund; the demo catch-up's PR 1: two ask cards, a
+      // teammate's, one that went out under a permission and one that needs a check; two permissions; PR 3: two questions,
+      // a batch that partly went out, a draft order and a stock reduction that went out). Keyed on the target's name: since
+      // the demo seeds an action too, `seedAction` no longer tells the targets apart.
       if (t.name === 'mock') {
-        expect(await c.questions()).toEqual([])
+        expect((await c.questions()).map(q => [q.state, q.chatId, q.options.length])).toEqual([['open', 'order-tags', 2], ['open', null, 2]])
         expect((await c.permissions()).map(p => p.title)).toEqual(['Post messages to a channel', 'Add stock'])
         expect((await c.actions()).map(a => [a.kind, a.state, a.approverKind, a.batch?.itemCount ?? null])).toEqual([
           ['exact', 'waiting', 'person', 450], ['exact', 'waiting', 'person', 12], ['ask', 'waiting', 'person', null], ['exact', 'waiting', 'admins', null],
-          ['ask', 'sent', 'person', null], ['ask', 'waiting', 'person', null], ['ask', 'waiting', 'person', null], ['ask', 'needs_check', 'person', null],
+          ['ask', 'sent', 'person', null], ['exact', 'sent', 'person', 450], ['ask', 'sent', 'person', null], ['exact', 'sent', 'person', null],
+          ['ask', 'waiting', 'person', null], ['ask', 'waiting', 'person', null], ['ask', 'needs_check', 'person', null],
         ])
       }
       // Nothing a target doesn't have can be answered, read or removed: not found, on every target.

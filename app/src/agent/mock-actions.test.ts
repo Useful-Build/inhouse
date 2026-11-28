@@ -23,15 +23,16 @@ function world() {
   let now = Date.UTC(2026, 10, 16, 13, 0)
   let shown = true
   let paused = false
+  let role: 'admin' | 'member' = 'admin'
   const changed: { actionId: string; rev: number }[] = []
   const sentBack: { actionId: string; rev: number; atMs: number }[] = []
   let slack = true
   let listed: string[] = ['ops-alerts']
   const a = new MockActions({
-    now: () => now, shown: () => shown, hasTool: t => t !== 'slack' || slack, listedChannels: () => listed, meId: 'm_sam', memberId: id => `m_${id}`, paused: () => paused,
+    now: () => now, shown: () => shown, hasTool: t => t !== 'slack' || slack, listedChannels: () => listed, meId: 'm_sam', memberId: id => `m_${id}`, role: () => role, session: 'testsession0', paused: () => paused,
     changed: u => { changed.push(u) }, sentBack: u => { sentBack.push(u) },
   })
-  return { a, tick: (ms: number) => { now += ms }, hide: (h: boolean) => { shown = !h }, pause: (p: boolean) => { paused = p }, noSlack: () => { slack = false }, list: (names: string[]) => { listed = names }, changed, sentBack, now: () => now }
+  return { a, tick: (ms: number) => { now += ms }, hide: (h: boolean) => { shown = !h }, pause: (p: boolean) => { paused = p }, as: (r: 'admin' | 'member') => { role = r }, noSlack: () => { slack = false }, list: (names: string[]) => { listed = names }, changed, sentBack, now: () => now }
 }
 const byTitle = (a: MockActions, title: string) => {
   const c = a.list().find(x => x.title === title)
@@ -45,6 +46,8 @@ const POST = 'Post to #ops-alerts in Slack'
 const GIFT = 'Add a tag to order 4377'
 const PRIYA = 'Remove a tag from order 4470'
 const SENT = 'Add 40 units of stock to item 8012'
+const DRAFT = 'Create a draft order of 12 items'
+const REDUCED = 'Remove 40 units of stock from item 8012'
 // The server's words, as sample-data/actions.json holds them (server/outbox/demo-parity.test.ts holds the two equal).
 const SENT_TEXT = 'Sent.'
 const FAILED_TEXT = 'It didn’t go out.'
@@ -56,11 +59,12 @@ describe('the demo actions', () => {
   test("the page size and first lines are the contract's", () => {
     expect([ITEMS_PAGE, FIRST_LINES]).toEqual([ACTION_ITEMS_PAGE, BATCH_FIRST_LINES])
   })
-  test('two batches (a list and a table), an admins card and the single cards, newest first; none where the scenario hides them', () => {
+  test('three batches (a list, a table and one that partly went out), an admins card and the single cards, newest first; none where the scenario hides them', () => {
     const { a, hide } = world()
     expect(a.list().map(c => [c.title, c.approverKind, c.batch?.itemCount ?? null, c.state])).toEqual([
       ['Tag 450 orders as VIP', 'person', 450, 'waiting'], ['Restock 12 items', 'person', 12, 'waiting'], [PRIYA, 'person', null, 'waiting'],
-      ['Refund $238.00 (USD) on order 4838', 'admins', null, 'waiting'], [SENT, 'person', null, 'sent'],
+      ['Refund $238.00 (USD) on order 4838', 'admins', null, 'waiting'], [SENT, 'person', null, 'sent'], ['Tag 450 orders as Loyalty', 'person', 450, 'sent'],
+      [DRAFT, 'person', null, 'sent'], [REDUCED, 'person', null, 'sent'],
       [POST, 'person', null, 'waiting'], [WHOLESALE, 'person', null, 'waiting'], [GIFT, 'person', null, 'needs_check'],
     ])
     for (const c of a.list()) ActionCardSchema.parse(c)
@@ -108,7 +112,7 @@ describe('the demo actions', () => {
     expect(a.answer(card.id, card.rev, 'deny', { upTo: 450, totals: { records: 450, units: 450 } }).state).toBe('denied')
     expect(new Set(a.items(card.id, 0).items.map(i => i.state))).toEqual(new Set(['withdrawn']))
     a.reset()
-    expect(a.list().map(c => c.state)).toEqual(['waiting', 'waiting', 'waiting', 'waiting', 'sent', 'waiting', 'waiting', 'needs_check'])
+    expect(a.list().map(c => c.state)).toEqual(['waiting', 'waiting', 'waiting', 'waiting', 'sent', 'sent', 'sent', 'sent', 'waiting', 'waiting', 'needs_check'])
   })
   test('the admins card: an admin answers it; a stale rev is a conflict with the card as it is now', () => {
     const { a } = world()

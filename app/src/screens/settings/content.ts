@@ -220,12 +220,12 @@ function alertsChannelDesc(c: NotifyChannel, posting: NotifyPosting): string {
 }
 
 /**
- * The Slack notices page (P5 W4, p5-w4.md section 10). No stage words (M2-I; the demo too since A13). `product`: the
- * product build, whose posting state the demo doesn't serve yet.
- * Stage 1 M3-C (N27): in the product it says what the alerts mark gives (`viewer`: who is looking, for whose mark gives a
- * permission) and links an admin to Always allowed, where the permission can be removed.
+ * The Slack notices page (P5 W4, p5-w4.md section 10). No stage words (M2-I; the demo too since A13).
+ * Stage 1 M3-C (N27): it says what the alerts mark gives (`viewer`: who is looking, for whose mark gives a permission) and
+ * links an admin to Always allowed, where the permission can be removed. The demo serves the posting state too (its
+ * channel list carries it, the demo catch-up's PR 3), so it says the same.
  */
-function slackPage(nv: NotifyView, product: boolean, viewer: MemberRole | 'inhouse' | null, openSettings: (tab: string) => void): Page {
+function slackPage(nv: NotifyView, viewer: MemberRole | 'inhouse' | null, openSettings: (tab: string) => void): Page {
   const listed = nv.list?.channels ?? []
   const posting = nv.list?.posting ?? null
   const rules: Section = { label: 'How notices work', rows: [
@@ -244,12 +244,12 @@ function slackPage(nv: NotifyView, product: boolean, viewer: MemberRole | 'inhou
     ] }
   }
   const channelRows = listed.map((c): Row => ({
-    ...R(`#${c.name}`, !c.alerts ? 'Your Inhouse agent can post notices here.' : product && posting ? alertsChannelDesc(c, posting) : 'The alerts channel. Approvals, questions and problems post here too.', 'value'),
+    ...R(`#${c.name}`, !c.alerts ? 'Your Inhouse agent can post notices here.' : posting ? alertsChannelDesc(c, posting) : 'The alerts channel. Approvals, questions and problems post here too.', 'value'),
     ...(nv.canEdit ? { remove: { label: `Remove #${c.name}`, title: `Remove #${c.name}?`, text: 'Your Inhouse agent stops posting there. Notices already posted stay in Slack.', action: 'Remove', go: () => nv.remove(c.channelId), can: 'editBrandSettings' as const } } : {}),
   }))
   // Stage 1 M3-C (N27): where the alerts channel's standing permission is removed. Only an admin sees the brand's
   // permissions there (route 110), so only an admin gets the button.
-  const held = product ? listed.find(c => c.alerts && c.permission) : undefined
+  const held = listed.find(c => c.alerts && c.permission)
   if (held) {
     channelRows.push(viewer === 'admin'
       ? { ...R('Standing permission', `To stop the agent posting to #${held.name} without asking, remove it in Always allowed.`, 'button', 'Open Always allowed', 0, undefined, undefined, () => openSettings('you-permissions')), ariaLabel: 'Open Always allowed to remove the standing permission' }
@@ -274,11 +274,11 @@ function slackPage(nv: NotifyView, product: boolean, viewer: MemberRole | 'inhou
       const current = listed.find(c => c.alerts)
       const who = viewer === 'admin' || viewer === 'inhouse' ? viewer : null
       editRows.push({
-        ...SEL('Alerts channel', product && posting ? alertsDisclosure(posting, who) : 'Where approvals, questions and problems are posted.', 'nc:alerts', current ? `#${current.name}` : 'None', ['None', ...listed.map(c => `#${c.name}`)]),
+        ...SEL('Alerts channel', posting ? alertsDisclosure(posting, who) : 'Where approvals, questions and problems are posted.', 'nc:alerts', current ? `#${current.name}` : 'None', ['None', ...listed.map(c => `#${c.name}`)]),
         can: 'editBrandSettings', keywords: 'slack alerts approvals standing permission',
         save: v => nv.setAlerts(v === 'None' ? null : listed.find(c => `#${c.name}` === v)?.channelId ?? null),
         // Stage 1 M3-C (N27): an admin's mark gives a standing permission while posting is on, so it's said and asked first.
-        ...(product && posting?.on && who === 'admin' ? {
+        ...(posting?.on && who === 'admin' ? {
           confirm: (v: string) => (v === 'None' || v === (current ? `#${current.name}` : 'None') ? null : {
             title: `Mark ${v} for alerts?`, text: alertsDisclosure(posting, 'admin'), action: 'Mark for alerts', gives: true,
           }),
@@ -435,7 +435,7 @@ export function settingsPage(tab: string, env: Env): Page {
     // Stage 1 M2-H: the list of what the agent may do without asking (Permissions.tsx draws it). Its words here are for
     // the settings search.
     'you-permissions': { title: 'Always allowed', sections: [], keywords: 'permissions always allow without asking remove stop allowing' },
-    // Stage 1 M3-C: Ceiling.tsx draws it (the product only); named here for the search.
+    // Stage 1 M3-C: Ceiling.tsx draws it; named here for the search.
     'team-ceiling': { title: 'What the agent can do', sections: [], keywords: 'ceiling limits actions writes switch on off inhouse team per day batch' },
     'team-agent': { title: 'Inhouse agent', sections: [
       { label: 'About', rows: [
@@ -497,7 +497,7 @@ export function settingsPage(tab: string, env: Env): Page {
     ] },
   }
   // P5 W4: built only when it's asked for, from what Settings.tsx read.
-  if (tab === 'team-slack' && hasSlack(data.tools)) return slackPage(env.notify, env.product, env.me?.role ?? null, env.openSettings)
+  if (tab === 'team-slack' && hasSlack(data.tools)) return slackPage(env.notify, env.me?.role ?? null, env.openSettings)
   // A page the product leaves out never renders, even for the frame before a deep link to it is redirected (App.tsx).
   return Object.hasOwn(pages, tab) && pageShown(tab, env.product) ? pages[tab] : pages['you-general']
 }

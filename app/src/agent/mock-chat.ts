@@ -18,6 +18,7 @@ import { dollarsIn } from '../state/derive'
 import { buildScript } from './mock-script'
 import type { ScriptHost } from './mock-script'
 import type { MockJobs } from './mock-jobs'
+import type { MockActions } from './mock-actions'
 import type { MockRun, MockTurn, RunInfo, Script, ScriptedTurn } from './mock'
 
 export type { ScriptedTurn }
@@ -53,6 +54,8 @@ export interface Host {
   traceOf(id: string): import('./types').Trace | null
   loadJobs(): Promise<MockJobs>
   loadedJobs(): MockJobs | null
+  loadActions(): Promise<MockActions>
+  loadedActions(): MockActions | null
 }
 
 const LIVE_JOB_COST_MINOR = 145
@@ -120,15 +123,30 @@ export class ChatEngine {
     return out
   }
   allMessages(id: string): StoredMessage[] {
-    return [...this.seedMessages(id), ...(this.h.loadedJobs()?.messages(id) ?? []), ...(this.h.history.get(id) ?? [])]
+    // What the agent added after a card settled or a question was answered goes in where it happened: after the last message
+    // written by then, so a person's message sent since comes after it, and a later follow-up after an earlier message. One
+    // shared sequence per chat: every message's position is its place in this list, so no two repeat and none goes back.
+    const kept = this.h.loadedActions()
+    const first = [...this.seedMessages(id), ...(this.h.loadedJobs()?.messages(id) ?? []), ...(kept?.messages(id) ?? [])]
+    const sent = [...(this.h.history.get(id) ?? [])]
+    for (const late of kept?.followUps(id) ?? []) {
+      let at = sent.length
+      while (at > 0 && sent[at - 1]!.at.ms > late.at.ms) at--
+      sent.splice(at, 0, late)
+    }
+    return [...first, ...sent].map((m, pos) => ({ ...m, pos }))
+  }
+  /** A chat with no sample turns is one the agent keeps: its history lives in the jobs and actions stores, loaded on first use. */
+  private async keepLoaded(id: string): Promise<void> {
+    if (this.h.k.chats.find(c => c.id === id)?.turns.length !== 0) return
+    if (!this.h.loadedJobs()) await this.h.loadJobs()
+    if (!this.h.loadedActions()) await this.h.loadActions()
   }
 
   async getChat(id: string, cursor?: string): Promise<ChatPage> {
     const base = this.h.chatBase(id) ?? this.h.read().chat.chats.find(c => c.id === id)
     if (!base) return this.h.rejected(NOT_FOUND, "That chat isn't available. It may have been deleted.", true)
-    if (!this.h.loadedJobs() && this.h.k.chats.find(c => c.id === id)?.turns.length === 0) {
-      await this.h.loadJobs()
-    }
+    await this.keepLoaded(id)
     const all = this.allMessages(id)
     let below = all.length
     if (cursor !== undefined) {
@@ -292,7 +310,7 @@ export class ChatEngine {
   /** What the server stores once the turn ends (D1): the question (or server carry-on note) and the parts that were written. */
   project(run: MockRun, turn: MockTurn, parts: { messageId: string; part: MessagePart; at: Instant }[], info: RunInfo, model: string, asEvent = false) {
     const list = this.h.history.get(turn.chatId) ?? []
-    let pos = this.seedMessages(turn.chatId).length + (this.h.loadedJobs()?.messages(turn.chatId).length ?? 0) + list.length
+    let pos = this.allMessages(turn.chatId).length
     const atts = turn.input.attachments?.map(a => ({ name: a.name, meta: '', icon: 'description', fileId: a.fileId }))
     const user: StoredMessage = asEvent
       ? { id: `${turn.turnId}.u`, role: 'event', text: turn.input.text, turnId: turn.turnId, runId: run.runId, pos: pos++, at: turn.queuedAt }
@@ -317,8 +335,8 @@ export class ChatEngine {
     const atCap = usage.capReached !== undefined && usage.cap.minor === cap.minor ? usage.capReached : usage.total.minor >= cap.minor
     const forced = atCap ? 'capReached' : this.h.scripted
     this.h.scripted = null
-    if (!this.h.loadedJobs() && this.h.k.chats.find(c => c.id === turn.chatId)?.turns.length === 0) {
-      await this.h.loadJobs()
+    if (this.h.k.chats.find(c => c.id === turn.chatId)?.turns.length === 0) {
+      await this.keepLoaded(turn.chatId)
       if (this.epoch !== myEpoch) return false
     }
     if (forced === 'capReached') {

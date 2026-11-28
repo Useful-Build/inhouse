@@ -270,8 +270,8 @@ export function Settings() {
   const [inviting, setInviting] = useState(false)
   const [loadingMore, setLoadingMore] = useState(false)
   const more = useRef(single((list: 'audit' | 'members') => agent.loadMore(list), setLoadingMore)).current
-  // The grant (route 16) is for an Admin and the Inhouse team; the demo shows its switch to everyone. Until `me()` loads the product shows none.
-  const showGrant = demo !== null || (!!me && (me.can.grantSupport || me.role === 'inhouse'))
+  // The grant (route 16) is for an Admin and the Inhouse team, in the demo too (its "View as" Member has none). Until `me()` loads there is none.
+  const showGrant = !!me && (me.can.grantSupport || me.role === 'inhouse')
   const contentRef = useRef<HTMLDivElement>(null)
   const [ask, setAsk] = useState<Ask | null>(null)
   // A "Saved" still waiting for typing to stop doesn't follow the person off the page.
@@ -437,7 +437,7 @@ export function Settings() {
           {/* Stage 1 M2-H: Always allowed draws itself (content.ts names it for the search). */}
           {setTab === 'you-permissions' && <Permissions />}
           {/* Stage 1 M3-C: What the agent can do draws itself too. */}
-          {setTab === 'team-ceiling' && demo === null && <Ceiling />}
+          {setTab === 'team-ceiling' && <Ceiling />}
           {page.sections.filter(sec => sec.rows.length > 0 || sec.empty).map((sec, si) => (
             <section key={`${si}|${sec.label}`} className={sec.label ? undefined : 'mt-4.5'}>
               {sec.label && <SectionHeader title={sec.label} className="mt-6 mb-2.5" />}

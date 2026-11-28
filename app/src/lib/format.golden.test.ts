@@ -297,7 +297,8 @@ test('the C1 formatters write exactly the golden strings for every time, amount,
     // strings), moved the PO-1187 file to Dana's uploads (its date is now Nov 2) and reworded the Monday reorder routine's
     // last run and the approval notice in the bell (the Summit Fleece reorder became a refund); one key renamed.
     // 819: added the 4 job/web chats (8), 2 job bell notices (2) and 12 job/helper/web traces (121) to the 688 strings.
-    expect(Object.keys(out).length).toBe(819)
+    // 882: the demo catch-up's PR 3 added the 4 chats it seeded (8), the question's bell notice (1) and 6 traces (54) to the 819.
+    expect(Object.keys(out).length).toBe(882)
     expect(out).toEqual(golden)
   } finally {
     vi.useRealTimers()

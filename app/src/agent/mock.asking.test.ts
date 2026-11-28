@@ -9,7 +9,7 @@
 //  6. a post is still offered once #ops-alerts is unlisted, or goes out when it is unlisted in its hold;
 //  7. a post is approved while the agent is paused, or a Pause in its hold leaves it to go out;
 //  8. a post can be edited; 9. a post sent back says nothing of why, or never reaches the bell.
-import { afterEach, describe, expect, it, vi } from 'vitest'
+import { describe, expect, it, vi } from 'vitest'
 import { hasDraft } from '../state/derive'
 
 const store = new Map<string, string>()
@@ -28,7 +28,6 @@ const POSTS = ['payout', 'stuck']
 const post = (a: InstanceType<typeof MockAgent>, id: string) => a.read().problems.find(p => p.id === id)!
 /** Slack notices with #ops-alerts taken off the list. */
 const unlist = async (a: InstanceType<typeof MockAgent>) => { const l = await a.listNotifyChannels(); await a.saveNotifyChannels({ ifRev: l.rev, channelIds: [] }) }
-afterEach(async () => { (await import('./mock-notify')).demoNotify.reset() })
 
 describe('the mock: asking first and Always allow', () => {
   it('lists the seeded permissions in the Normal scenario only', async () => {
@@ -102,7 +101,7 @@ describe('the mock: asking first and Always allow', () => {
   it("the bell's approval notices show only where the demo shows its actions", () => {
     const a = fresh()
     const approvals = () => a.listNotifications().filter(n => n.link.to === 'page' && n.link.page === 'approvals' && n.who === 'Inhouse').map(n => n.text)
-    expect(approvals()).toEqual(['Approval waiting', 'A send needs a check', 'An approval expired'])
+    expect(approvals()).toEqual(['Approval waiting', 'A send needs a check', 'A question is waiting', 'An approval expired'])
     a.setDemo({ scenario: 'Tool disconnected' })
     expect(approvals()).toEqual([])
   })

@@ -162,11 +162,13 @@ describe('lowering (failure 3)', () => {
 
 describe('the menu (failure 4)', () => {
   const ids = (product: boolean, role?: 'admin' | 'member' | 'inhouse') => menuFor({ connected: [], channels: [] }, product, role).flatMap(s => s.pages).map(p => p.id)
-  it('offers What the agent can do to admins and the Inhouse team in the product, never to a member or in the demo', () => {
+  it('offers What the agent can do to admins and the Inhouse team, in the product and the demo, never to a member', () => {
     expect(ids(true, 'admin')).toContain('team-ceiling')
     expect(ids(true, 'inhouse')).toContain('team-ceiling')
     expect(ids(true, 'member')).not.toContain('team-ceiling')
     expect(ids(true, 'member')).toEqual(ids(true, 'admin').filter(id => id !== 'team-ceiling'))
-    expect(ids(false)).not.toContain('team-ceiling')
+    expect(ids(false)).toContain('team-ceiling')
+    expect(ids(false, 'admin')).toContain('team-ceiling')
+    expect(ids(false, 'member')).not.toContain('team-ceiling')
   })
 })

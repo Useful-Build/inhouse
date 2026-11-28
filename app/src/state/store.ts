@@ -114,6 +114,8 @@ export interface UiState {
   scenario: Scenario
   ambient: Ambient
   animateMark: boolean
+  /** Who the demo shows the signed-in person as: an admin, or a member (their own cards only, no admin controls). */
+  viewAs: 'admin' | 'member'
   /** The demo switches panel is open. */
   demoOpen: boolean
 
@@ -255,7 +257,7 @@ export interface UiActions {
   unapprove(id: string): void
   undoHandled(id: string): void
   togglePause(): void
-  setDemo(p: Partial<Pick<UiState, 'scenario' | 'ambient' | 'animateMark'>>): void
+  setDemo(p: Partial<Pick<UiState, 'scenario' | 'ambient' | 'animateMark' | 'viewAs'>>): void
   resetDemo(): void
 
   /** Approve several drafts at once; the toast's Undo takes back every one that hasn't gone out. */
@@ -294,9 +296,9 @@ export interface UiActions {
 
 const DEMO_KEY = 'inhouse.demo.switches.v1'
 const AMBIENTS: Ambient[] = ['When Inhouse agent works', 'Always', 'Off']
-type DemoSwitches = Pick<UiState, 'scenario' | 'ambient' | 'animateMark'>
+type DemoSwitches = Pick<UiState, 'scenario' | 'ambient' | 'animateMark' | 'viewAs'>
 /** Where a clean demo starts, and where Reset demo puts the scenario back. The demo has no stages, as the product (A13). */
-const DEFAULT_DEMO: DemoSwitches = { scenario: 'Normal', ambient: 'Always', animateMark: true }
+const DEFAULT_DEMO: DemoSwitches = { scenario: 'Normal', ambient: 'Always', animateMark: true, viewAs: 'admin' }
 const saveDemo = (d: DemoSwitches) => {
   try { localStorage.setItem(DEMO_KEY, JSON.stringify(d)) }
   catch (e) { console.warn('Inhouse demo: could not save switches.', e) }
@@ -313,6 +315,7 @@ const loadDemo = (): DemoSwitches => {
       // Earlier versions saved this switch as 'When Ava works' and then 'When agent works'.
       ambient: AMBIENTS.find(x => x === (r.ambient === 'When Ava works' || r.ambient === 'When agent works' ? 'When Inhouse agent works' : r.ambient)) ?? d.ambient,
       animateMark: typeof r.animateMark === 'boolean' ? r.animateMark : d.animateMark,
+      viewAs: r.viewAs === 'member' ? 'member' : d.viewAs,
     }
   } catch (e) { console.warn('Inhouse demo: could not read switches.', e); return d }
 }
@@ -624,7 +627,7 @@ function clearSession() {
 }
 // ---------- end phase 1 memory ----------
 
-const initialUi = (): Omit<UiState, 'stage' | 'scenario' | 'ambient' | 'animateMark' | 'palette' | 'sideCollapsed'> => ({
+const initialUi = (): Omit<UiState, 'stage' | 'scenario' | 'ambient' | 'animateMark' | 'viewAs' | 'palette' | 'sideCollapsed'> => ({
   demoOpen: false, page: 'today', appKey: 'shopify', skillKey: '', setTab: 'you-general', openId: null, queue: [], pop: null,
   team: { type: 'tool', title: '', text: '', shot: true }, teamWithdrawn: [], traceId: null, toasts: [], phone: false, sideOpen: false,
   editing: null, todayDraft: '', chatDraft: '', atts: [], modelSel: null, toolOff: {},
@@ -641,7 +644,7 @@ export const useUi = create<UiState & UiActions>()((set, get) => {
   // The demo's saved switches are the demo's alone. The product starts from the defaults and saves nothing: `scenario`
   // is a placeholder there.
   const demo = demoControls ? loadDemo() : DEFAULT_DEMO
-  demoControls?.setDemo({ scenario: demo.scenario })
+  demoControls?.setDemo({ scenario: demo.scenario, viewAs: demo.viewAs })
   const session = restoreSession(loadSession())
   // The reload note goes into the saved session once, not again on every reload until something else saves.
   saveAfterSetup = !!session.noted
@@ -1156,9 +1159,9 @@ export const useUi = create<UiState & UiActions>()((set, get) => {
       // changes it, the old one's additions go to the stash and the new one's come out, so a save can't overwrite them.
       const was = openChatKey(get(), agent.read())
       set(p)
-      const { scenario, ambient, animateMark } = get()
-      demoControls?.setDemo({ scenario })
-      if (demoControls) saveDemo({ scenario, ambient, animateMark })
+      const { scenario, ambient, animateMark, viewAs } = get()
+      demoControls?.setDemo({ scenario, viewAs })
+      if (demoControls) saveDemo({ scenario, ambient, animateMark, viewAs })
       const now = openChatKey(get(), agent.read())
       if (now !== was) {
         set(s => {
@@ -1178,7 +1181,7 @@ export const useUi = create<UiState & UiActions>()((set, get) => {
       // The scenario goes back to its default with everything else; the dot sweep and mark animation stay.
       const { ambient, animateMark } = get()
       const d = { ...DEFAULT_DEMO, ambient, animateMark }
-      demoControls?.setDemo({ scenario: d.scenario })
+      demoControls?.setDemo({ scenario: d.scenario, viewAs: d.viewAs })
       if (demoControls) saveDemo(d)
       set({ ...initialUi(), ...d, phone: get().phone, demoOpen: get().demoOpen })
       // The brand and channels came from the override at load, so a reload is what drops them.
