@@ -1,6 +1,6 @@
 // The hub's MCP client over the official SDK (Stage 1 M4-C1, N36): @modelcontextprotocol/client 2.4.0, pinned exactly,
-// protocol only. Nothing calls this yet: connectors/mcp/client.ts still serves Slack and the notes fixture until M4-C2
-// moves them here. One operation (a list or a call) is one short-lived Client and transport, closed when it settles.
+// protocol only. The hub's one MCP client: Slack and the notes fixture call it through reviewed-call.ts (M4-C2).
+// One operation (a list or a call) is one short-lived Client and transport, closed when it settles.
 //
 // What it relies on in the SDK (read in the package's own source maps on 2026-11-28; src/client/client.ts,
 // streamableHttp.ts, versionNegotiation.ts, probeClassifier.ts, core-internal shared/protocol.ts):
