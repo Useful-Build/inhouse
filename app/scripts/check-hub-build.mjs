@@ -25,6 +25,11 @@
 //      Fails when any input sits in a `testing/` folder anywhere under app/hub/ (app/hub/testing/, and later ones such
 //      as app/hub/registry/testing/), under app/test/upstreams/, or is a test module (`*.test.ts`). A string scan alone
 //      can't prove a renamed or tree-shaken import is gone.
+//   3. Stage 1 M4-C1 (N36): the official MCP client's modules the hub must never carry, in either bundle: its stdio entry
+//      and `cross-spawn` (a child process), its Node shim and the AJV validator it loads (the hub runs on workerd, whose
+//      export condition picks `shimsWorkerd`), the `validators/*` entries, `ajv` itself, and the official server (a dev
+//      dependency for tests). Unlike parts 1 and 2 this one must be clean in BOTH bundles (the test bundle is built from
+//      the same sources), so it is proven by its fixtures (deploy-sdk-*, and a test bundle carrying one) instead.
 // The metafile's `outputs`, resolved from app/ only, must all be files in the scanned folder: wrangler 4.158.0 resolves `deploy --outdir`
 // against the config's folder (esbuild's absWorkingDir) but writes the README and the metafile against the shell's,
 // so a relative --outdir once put the script one level away from the folder scanned. hub/package.json passes absolute
@@ -249,6 +254,25 @@ const fakesGlobals = ({ files }) =>
     return hits
   })
 
+/** Part 3: the MCP SDK's modules the hub must not carry (paths under node_modules/, matched with forward slashes). */
+const SDK_FORBIDDEN = [
+  ['the stdio entry', /\/node_modules\/@modelcontextprotocol\/client\/dist\/stdio\./],
+  ['the Node shim', /\/node_modules\/@modelcontextprotocol\/client\/dist\/shimsNode\./],
+  ['the AJV validator', /\/node_modules\/@modelcontextprotocol\/client\/dist\/ajvProvider-/],
+  ['a validators entry', /\/node_modules\/@modelcontextprotocol\/client\/dist\/validators\//],
+  ['cross-spawn', /\/node_modules\/cross-spawn\//],
+  ['ajv', /\/node_modules\/ajv(-formats)?\//],
+  ['the official server', /\/node_modules\/@modelcontextprotocol\/server\//],
+]
+function sdkModules({ inputs }) {
+  const hits = []
+  for (const id of inputs) {
+    const paths = candidates(id).map(p => p.split(sep).join('/'))
+    for (const [what, re] of SDK_FORBIDDEN) if (paths.some(p => re.test(p))) hits.push(`${what}: module ${id}`)
+  }
+  return hits
+}
+
 function moduleGraph({ inputs }) {
   return inputs.filter(id => candidates(id).some(forbidden)).map(id => `module ${id}`)
 }
@@ -287,6 +311,15 @@ function main() {
       bad = true
       console.error(`FAIL  ${name}: found nothing in the test bundle (${relative(root, testDir)}), so it proves nothing: it scanned the wrong folder or looks for the wrong thing.`)
     } else console.log(`ok    ${name}: caught the test bundle (${inTest.length} hit${inTest.length === 1 ? '' : 's'}).`)
+  }
+
+  // Part 3 (M4-C1): clean in both bundles.
+  for (const [label, bundle, dir] of [['deployable', deploy, deployDir], ['test', testBundle, testDir]]) {
+    const found = sdkModules(bundle)
+    if (found.length) {
+      bad = true
+      console.error(`FAIL  mcp sdk modules: the ${label} hub bundle (${relative(root, dir)}) carries what the hub must not:\n${show(found)}`)
+    } else console.log(`ok    mcp sdk modules: clean in the ${label} hub bundle.`)
   }
 
   // Every test-fakes needle must be in the test bundle's script, or the guard has gone stale for it.
