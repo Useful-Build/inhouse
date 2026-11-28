@@ -18,7 +18,7 @@ import { demoAt } from './demo-clock'
 import { instantOf as instant } from '../lib/format'
 
 type RawBatch = { id: string; chatId: string; title: string; unitsLabel: string; guardrail: 'bulk' | 'count'; askedAt: string } & (
-  | { kind: 'tags'; count: number; firstOrder: number; tag: string }
+  | { kind: 'tags'; count: number; firstOrder: number; tag: string; customers: [string, string][] }
   | { kind: 'restock'; firstItem: number; location: number; reason: string; quantities: number[] }
 )
 type ToolKey = 'shopify' | 'slack'
@@ -28,12 +28,14 @@ interface RawOperation { title: string; tool: ToolKey; scope: string; unitsLabel
 type RawSingle = {
   id: string; operation: string; chatId: string | null; title: string; lines: string[]; askedAt: string; askedBy?: string
   nudge?: boolean; result?: string; permission?: string
+  /** A tag card's order, as the store described it: its customer and total (#488's card details). */
+  order?: { number: number; customer: string; amount: string }
   state: 'waiting' | typeof NEEDS_CHECK | 'sent'
 }
 type RawPermission = { id: string; operation: string; holder: string; grantedBy: string; grantedAt: string }
 const raw = actionsRaw as {
   tool: string; shop: string; batches: RawBatch[]; batchResult: string
-  refund: { id: string; askedBy: string; title: string; lines: string[]; askedAt: string; result: string }
+  refund: { id: string; askedBy: string; title: string; lines: string[]; askedAt: string; order: number; customer: string; amount: string; result: string }
   tools: Record<ToolKey, { accountId: string; label: string }>
   operations: Record<string, RawOperation>
   singles: RawSingle[]
@@ -88,7 +90,13 @@ function itemsOf(b: RawBatch): { items: Item[]; heads?: { ref: string; change: s
     return {
       items: Array.from({ length: b.count }, (_, i) => {
         const order = b.firstOrder + i
-        return { n: i + 1, line: `Order ${order} (${raw.shop}): add ${b.tag}`, row: { ref: `#${order}`, change: `add ${b.tag}` }, state: 'pending' as const, records: 1, units: 1 }
+        const [customer, total] = b.customers[i % b.customers.length]!
+        return {
+          n: i + 1, line: `Order ${order} (${raw.shop}): add ${b.tag}`, row: { ref: `Order ${order}`, change: `add ${b.tag}` },
+          // What the store said about the order, as the real card's details (server/outbox/detail.ts): its name, customer and total.
+          detail: orderDetail(order, customer, total),
+          state: 'pending' as const, records: 1, units: 1,
+        }
       }),
     }
   }
@@ -103,6 +111,15 @@ function itemsOf(b: RawBatch): { items: Item[]; heads?: { ref: string; change: s
     }),
   }
 }
+
+/** "$1,208.00": a demo amount as the server words it (detail.ts `amountWords`), its digits grouped by hand. */
+function usd(amount: string): string {
+  const [whole, cents = '00'] = amount.split('.')
+  return `$${whole!.replace(/\B(?=(\d{3})+(?!\d))/g, ',')}.${cents.padEnd(2, '0')}`
+}
+/** One order's detail row, as the real card carries it (#488): its name, customer and total. */
+const orderDetail = (order: number, customer: string, amount: string): NonNullable<ActionCard['detail']> =>
+  ({ rows: [{ ref: `Order ${order}`, order: `#${order}`, customer, amount: usd(amount), currency: 'USD' }] })
 
 const sum = (items: Item[], k: 'records' | 'units') => items.reduce((n, i) => n + i[k], 0)
 const visible = ({ records: _r, units: _u, ...item }: Item): ActionItem => item
@@ -120,6 +137,7 @@ function batchRow(h: MockActionsHost, b: RawBatch): Row {
       serverNow: demoAt(b.askedAt), can, nudgeAlways: false, approverKind: 'person',
       batch: {
         itemCount: items.length, firstLines, firstRows: first.map(i => i.row), ...(heads ? { heads } : {}),
+        ...(first.some(i => i.detail) ? { firstDetails: first.map(i => i.detail ?? null) } : {}),
         totals: { records: sum(items, 'records'), units: sum(items, 'units'), unitsLabel: b.unitsLabel },
       },
     },
@@ -135,6 +153,7 @@ function refundRow(h: MockActionsHost): Row {
       id: r.id, rev: 1, kind: 'exact', state: 'waiting', title: r.title, lines: r.lines, tool: TOOL, records: 1, reachesCustomer: true,
       reversible: false, guardrail: 'money', chatId: null, askedBy: h.memberId(r.askedBy), askedAt: demoAt(r.askedAt), serverNow: demoAt(r.askedAt),
       can, nudgeAlways: false, approverKind: 'admins',
+      detail: orderDetail(r.order, r.customer, r.amount),
     },
   }
 }
@@ -159,6 +178,7 @@ function singleRow(h: MockActionsHost, s: RawSingle): Row {
       reversible: op.reversible ?? true, chatId: s.chatId, askedBy: mine ? h.meId : h.memberId(s.askedBy!), askedAt: demoAt(s.askedAt),
       serverNow: demoAt(s.askedAt), can, nudgeAlways: !!s.nudge, approverKind: 'person',
       ...(s.result !== undefined ? { result: s.result } : {}), ...(s.permission ? { permissionId: s.permission } : {}),
+      ...(s.order ? { detail: orderDetail(s.order.number, s.order.customer, s.order.amount) } : {}),
     },
   }
 }

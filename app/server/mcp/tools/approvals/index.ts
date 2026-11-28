@@ -20,6 +20,7 @@ import { first, stmt } from '../../../db/sql.ts'
 import { cardsOf, itemState } from '../../../outbox/card.ts'
 import type { Viewer } from '../../../outbox/card.ts'
 import { outboxFacts } from '../../../outbox/facts.ts'
+import type { CardFactsReader } from '../../../outbox/detail.ts'
 import type { HubAccountFacts } from '../../../outbox/facts.ts'
 import { operationForTool } from '../../../outbox/operations/index.ts'
 import { openOutbox } from '../../../outbox/store.ts'
@@ -46,6 +47,11 @@ export type ApprovalRequestInput = z.output<typeof RequestInput>
 export interface ApprovalsWiring {
   /** The hub's word on each connected account: paused and the label a person reads (outbox/facts.ts). */
   hubAccounts(): Promise<readonly HubAccountFacts[]>
+  /**
+   * Stage 1 M3 (card details, #488): the store's facts for the card's display-only rows (outbox/detail.ts). Absent: the
+   * card shows its ids only. Never part of this tool's answer.
+   */
+  cardFacts?: CardFactsReader
   /**
    * N14's admission: binds this call to an unused call of `approval_request` by the main agent in this live turn, with
    * this input, and marks it used. Null refuses (a helper's call, a hand-made request, a replay with other arguments).
@@ -137,7 +143,7 @@ export function approvalHandlers(wiringOf: (deps: ToolDeps) => ApprovalsWiring |
         if (!system && !asker) return refusal('no_one_to_ask', TEXT.noPerson)
         const port = openOutbox({
           db: deps.db, requestId: scope.requestId, now: () => scope.nowMs, schedule: neverSchedules,
-          facts: outboxFacts({ db: deps.db, hubAccounts: wiring.hubAccounts }),
+          facts: outboxFacts({ db: deps.db, hubAccounts: wiring.hubAccounts, ...(wiring.cardFacts ? { cardFacts: wiring.cardFacts } : {}) }),
         })
         const r = await port.request(
           {

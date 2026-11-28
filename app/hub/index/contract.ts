@@ -111,7 +111,55 @@ export interface ConnectGateway {
    * the test build's hook calls it.
    */
   testFakes?(scope: CallerScope, op: unknown): Promise<HubResult<unknown>>
+  /**
+   * Stage 1 M3 (card details, #488): what an approval card shows beside a write's ids, read from the write store with the
+   * write app's token (never the read app's, which holds no `read_customers`). A `server` scope only; the product's
+   * outbox asks it at request time, through BrandAgent. Test build only, as the writes are: the deployable hub answers
+   * `not_configured` and reads nothing. Display-only: the product never hands these strings to the agent.
+   */
+  cardFacts(scope: CallerScope, req: CardFactsRequest): Promise<HubResult<CardFacts>>
 }
+
+// ---- Stage 1 M3 (card details, #488): the facts an approval card shows ----
+
+/** The most order and variant ids one `cardFacts` call names (a tag call's 100 orders; a draft order's 20 variants). */
+export const CARD_FACTS_MAX = { orders: 100, variants: 20 } as const
+
+/**
+ * `expect` is the write account's generation and store, as a write's (`WriteRequest.expect`): a store or connection that
+ * changed since is refused, so a card never shows another store's customers.
+ */
+export type CardFactsRequest = {
+  accountId: 'shopify:store'
+  expect: { connectedAtMs: number; shop: string }
+  orderIds: string[]
+  variantIds: string[]
+}
+
+/**
+ * One order as the card shows it: its name ("#3901"), its customer's display name (null for a guest order, a deleted
+ * customer, or a write app without `read_customers`) and its current total in the shop's currency (Shopify's decimal
+ * string). `found: false`: no order has that id (deleted, or never existed).
+ */
+export type CardOrderFacts =
+  | { id: string; found: true; name: string; customer: string | null; total: { amount: string; currencyCode: string } | null }
+  | { id: string; found: false }
+
+/** One product variant: its product's title, its own title and its SKU. `found: false`: no variant has that id. */
+export type CardVariantFacts =
+  | { id: string; found: true; product: string; variant: string; sku: string | null }
+  | { id: string; found: false }
+
+/**
+ * Upstream text, capped (`CARD_FACTS_CAPS`) and otherwise as Shopify holds it: the product runs its own text rules on
+ * every string before it stores one. A list is `null` when it wasn't read: none asked, or (variants) the write app lacks
+ * `read_products`. Orders need only `write_orders` (it grants reads); their customers need `read_customers` as well,
+ * and Shopify's protected customer data access for the name.
+ */
+export type CardFacts = { orders: CardOrderFacts[] | null; variants: CardVariantFacts[] | null }
+
+/** The longest string `cardFacts` answers, in UTF-8 bytes of its JSON (as the read tools' caps). */
+export const CARD_FACTS_CAPS = { orderName: 40, customer: 120, product: 120, variant: 40, sku: 64 } as const
 
 // ---- P5 (p5-w4): notices to listed Slack channels ----
 

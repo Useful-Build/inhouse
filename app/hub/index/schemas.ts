@@ -124,3 +124,31 @@ export const WriteResultSchema = z.discriminatedUnion('ok', [
   // Stage 1 M3 (N22): a write's `retryAfterMs` is a whole number of milliseconds up to a day (the batch clamps it).
   z.strictObject({ ok: z.literal(false), error: HubErrorSchema.extend({ retryAfterMs: z.int().min(0).max(86_400_000).optional() }), sent: z.enum(['no', 'unknown']) }),
 ])
+
+// Stage 1 M3 (card details, #488): `ConnectGateway.cardFacts` (contract.ts CardFactsRequest, CardFacts). The ids are the
+// write operations' own id shapes; the answer's strings are capped (CARD_FACTS_CAPS, written out here).
+const ORDER_GID = /^gid:\/\/shopify\/Order\/[1-9][0-9]{0,19}$/
+const VARIANT_GID = /^gid:\/\/shopify\/ProductVariant\/[1-9][0-9]{0,19}$/
+const distinct = (ids: string[]) => new Set(ids).size === ids.length
+
+export const CardFactsRequestSchema = z.strictObject({
+  accountId: z.literal('shopify:store'),
+  expect: z.strictObject({ connectedAtMs: z.int().nonnegative(), shop: z.string().regex(SHOP_HANDLE) }),
+  orderIds: z.array(z.string().regex(ORDER_GID)).max(100).refine(distinct, 'Each order once'),
+  variantIds: z.array(z.string().regex(VARIANT_GID)).max(20).refine(distinct, 'Each variant once'),
+})
+
+const capped = (bytes: number) => z.string().max(bytes)
+export const CardFactsSchema = z.strictObject({
+  orders: z.array(z.discriminatedUnion('found', [
+    z.strictObject({
+      id: z.string().regex(ORDER_GID), found: z.literal(true), name: capped(40), customer: capped(120).nullable(),
+      total: z.strictObject({ amount: z.string().regex(/^-?\d{1,15}(?:\.\d{1,6})?$/), currencyCode: z.string().regex(/^[A-Z]{3}$/) }).nullable(),
+    }),
+    z.strictObject({ id: z.string().regex(ORDER_GID), found: z.literal(false) }),
+  ])).max(100).nullable(),
+  variants: z.array(z.discriminatedUnion('found', [
+    z.strictObject({ id: z.string().regex(VARIANT_GID), found: z.literal(true), product: capped(120), variant: capped(40), sku: capped(64).nullable() }),
+    z.strictObject({ id: z.string().regex(VARIANT_GID), found: z.literal(false) }),
+  ])).max(20).nullable(),
+})

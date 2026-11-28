@@ -91,7 +91,7 @@ describe('a write with no permission: a card, a wait, the answer (failure 1)', (
     expect(text(r)).toBe(`${ACTION_WORDS.sent('vip')} (approval_id: ${idOf(r)})`)
     expect(r.structuredContent).toEqual({ message: text(r), approval_id: idOf(r), status: 'sent' })
     expect(await rowOf(db, idOf(r))).toMatchObject({ state: 'sent', report: 'tool', verdict: 'ask', via: 'tool', origin: 'chat', chat_id: CHAT, turn_id: w.turnId })
-    expect(methods(w.rpc)).toEqual(['admitAction', 'hubAccounts', 'askNoted', 'beginAskWait', 'askTurnLive', 'askTurnLive', 'endAskWait'])
+    expect(methods(w.rpc)).toEqual(['admitAction', 'hubAccounts', 'cardFacts', 'askNoted', 'beginAskWait', 'askTurnLive', 'askTurnLive', 'endAskWait'])
     expect(w.rpc.calls.find(c => c.method === 'admitAction')!.args.slice(0, 2)).toEqual([w.turnId, 'mcp__actions__shopify_order_tag_add'])
     expect(w.rpc.calls.find(c => c.method === 'endAskWait')!.args).toEqual([idOf(r), true])
     // It waited: polled every 2 s until the send, not past it.
@@ -420,7 +420,7 @@ describe('Stage 1 M3-B: a call that joins a batch (N22)', () => {
     expect(text(r)).toBe(`${ACTION_WORDS.collected('the person', 0)} ${ACTION_WORDS.laterNote} (approval_id: ${id}, item 1)`)
     expect(r.structuredContent).toEqual({ message: text(r), approval_id: id, item: 1, status: 'waiting' })
     // No wait for a card other calls share; the turn's ask part and the chat's update name the batch.
-    expect(methods(w.rpc)).toEqual(['admitAction', 'hubAccounts', 'askNoted', 'actionChanged'])
+    expect(methods(w.rpc)).toEqual(['admitAction', 'hubAccounts', 'cardFacts', 'askNoted', 'actionChanged'])
     expect(w.clock.now).toBe(T0)
     // A second call joins it; the words count the others.
     const again = await call(setup(), tagArgs(7))

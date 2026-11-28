@@ -27,7 +27,8 @@ import { rememberTrigger } from '../../ui/dialogs'
 import { fmtCount } from '../../lib/format'
 import { display } from '../../state/display'
 import type { BatchSheetProps } from './BatchSheet'
-import { ItemRowView } from './ItemRow'
+import { ItemRowView, RowLine } from './ItemRow'
+import { detailRows } from './item-detail'
 
 /** How often a waiting batch reads itself: items joining it keep its rev, so no `action.updated` names them. */
 export const BATCH_REFRESH_MS = 5000
@@ -291,7 +292,7 @@ export function AskCard({ actionId, initial, onChange, onOpenChat, whose = null,
         </div>
       ) : (
         <ul className="m-0 mx-4.5 list-none border-t border-divider p-0" data-card-rows>
-          {rows.map((r, i) => <ItemRowView key={i} row={r} />)}
+          {rows.map((r, i) => <ItemRowView key={i} row={r} detail={batch.firstDetails?.[i]} />)}
         </ul>
       ))}
       {!batch && card.lines.length > 0 && (
@@ -299,6 +300,12 @@ export function AskCard({ actionId, initial, onChange, onOpenChat, whose = null,
           {card.lines.map((l, i) => <li key={`${i}|${l}`} className="border-b border-divider py-2.25 leading-prose wrap-anywhere">{l}</li>)}
         </ul>
       )}
+      {!batch && card.detail && card.detail.rows.length > 0 && (
+        <ul className="m-0 mx-4.5 list-none border-t border-divider p-0" data-card-detail>
+          {detailRows(card.detail).map((v, i) => <RowLine key={i} view={v} />)}
+        </ul>
+      )}
+      {!batch && card.detail?.note && <p className="m-0 mx-4.5 mt-2 text-sm text-muted-foreground" data-card-detail-note>{card.detail.note}</p>}
       {batch && (more > 0 || fullList) && (
         <div className="flex min-h-8 items-center justify-between gap-3 px-4.5 pt-1.5 text-sm" data-card-more>
           <span className="text-muted-foreground">{more > 0 ? `and ${fmtCount(more, display())} more` : ''}</span>

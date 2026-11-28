@@ -2,7 +2,7 @@
 // files); the runtime cases check that the schemas accept and refuse what the types say.
 import { describe, expect, expectTypeOf, it } from 'vitest'
 import type { z } from 'zod'
-import type { AccountStatus, AccountSummary, CallerScope, CallToolOptions, HubError, HubErrorCode, HubResult, Instant, SignInState, ToolInfo, WriteOperationKey, WriteRequest, WriteResult } from './contract'
+import type { AccountStatus, AccountSummary, CallerScope, CallToolOptions, CardFacts, CardFactsRequest, HubError, HubErrorCode, HubResult, Instant, SignInState, ToolInfo, WriteOperationKey, WriteRequest, WriteResult } from './contract'
 import { THROTTLE_WAIT_MS, WRITE_OPERATIONS } from './contract'
 import {
   AccountStatusSchema,
@@ -18,6 +18,8 @@ import {
   WriteOperationKeySchema,
   WriteRequestSchema,
   WriteResultSchema,
+  CardFactsRequestSchema,
+  CardFactsSchema,
 } from './schemas'
 
 describe('schemas.ts mirrors contract.ts', () => {
@@ -36,6 +38,8 @@ describe('schemas.ts mirrors contract.ts', () => {
     expectTypeOf<z.infer<typeof WriteOperationKeySchema>>().toEqualTypeOf<WriteOperationKey>()
     expectTypeOf<z.infer<typeof WriteRequestSchema>>().toEqualTypeOf<WriteRequest>()
     expectTypeOf<z.infer<typeof WriteResultSchema>>().toEqualTypeOf<WriteResult>()
+    expectTypeOf<z.infer<typeof CardFactsRequestSchema>>().toEqualTypeOf<CardFactsRequest>()
+    expectTypeOf<z.infer<typeof CardFactsSchema>>().toEqualTypeOf<CardFacts>()
   })
 
   it('caller scopes parse strictly', () => {

@@ -204,6 +204,14 @@ describe('asking first and Always allow (the demo catch-up, PR 1)', () => {
     expect(refused(() => a.removePermission('pg_demoDanaOpsAlerts00000', 1)).code).toBe('not_found')
   })
 
+  test("each card carries what the store said about its order (#488): the batch's rows, the refund's and a tag card's", () => {
+    const { a } = world()
+    expect(a.list()[0]!.batch!.firstDetails![0]).toEqual({ rows: [{ ref: 'Order 3901', order: '#3901', customer: 'Alex Moore', amount: '$642.10', currency: 'USD' }] })
+    expect(byTitle(a, 'Refund $238.00 (USD) on order 4838').detail).toEqual({ rows: [{ ref: 'Order 4838', order: '#4838', customer: 'Nora Lindqvist', amount: '$238.00', currency: 'USD' }] })
+    expect(byTitle(a, WHOLESALE).detail).toEqual({ rows: [{ ref: 'Order 4512', order: '#4512', customer: 'Harbor & Pine', amount: '$1,248.00', currency: 'USD' }] })
+    expect(byTitle(a, SENT).detail).toBeUndefined()
+  })
+
   test('the card that went out yesterday names the permission it ran under', () => {
     const { a } = world()
     expect(byTitle(a, SENT)).toMatchObject({ state: 'sent', result: SENT_TEXT, permissionId: 'pg_demoAddStock0000000000', can: { undo: false } })

@@ -433,9 +433,9 @@ describe('grant-backed batches and their units (failure 3)', () => {
     expect(card!.batch!.firstLines).toHaveLength(7)
     // A tag batch is a plain list: no column heads.
     expect(card!.batch!.heads).toBeUndefined()
-    expect(card!.batch!.firstRows).toEqual(Array.from({ length: 7 }, (_, k) => ({ ref: `#${k + 1}`, change: 'add vip' })))
+    expect(card!.batch!.firstRows).toEqual(Array.from({ length: 7 }, (_, k) => ({ ref: `Order ${k + 1}`, change: 'add vip' })))
     const page = await outboxStore({ db }).items(ME, r.action.id, { after: 0 })
-    expect(page).toEqual({ page: { items: Array.from({ length: 7 }, (_, k) => ({ n: k + 1, line: `Order ${k + 1} (store-a): add vip`, row: { ref: `#${k + 1}`, change: 'add vip' }, state: 'pending' })) } })
+    expect(page).toEqual({ page: { items: Array.from({ length: 7 }, (_, k) => ({ n: k + 1, line: `Order ${k + 1} (store-a): add vip`, row: { ref: `Order ${k + 1}`, change: 'add vip' }, state: 'pending' })) } })
   })
 
   it('a failed item gives its units back once; an item that went out never does; the rest stopped by a revoke go back once', async () => {

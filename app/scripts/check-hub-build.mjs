@@ -7,6 +7,9 @@
 //   1. The canaries: HUB_TEST_CANARY's value (read from app/hub/testing/index.ts), the recorded Shopify upstream's
 //      SHOPIFY_UPSTREAM_CANARY (read from app/test/upstreams/shopify/server.ts), each in any output file but the
 //      metafile, and the recorded MCP upstream's MCP_UPSTREAM_CANARY (P5, read from app/test/upstreams/mcp/server.ts).
+//      Stage 1 M4-F (N52): MCP_FIXTURES_CANARY (read from app/test/upstreams/mcp/index.ts), M4's fixture servers, login
+//      server and REST API, which only the test bundle's seam registers. Its runtime code names it (the unknown-host
+//      answer), so the test bundle must hold it in a script, not only in a source map.
 //      Each is read from its source, so the scan and the code can't drift.
 //      Stage 1 M3-R (N30): the name EvalWriteGateway (EVAL_WRITE_GATEWAY, read from app/hub/testing/eval-write.ts's class),
 //      the eval deployment's credential-free write log, which only the test bundle's main module exports.
@@ -92,6 +95,10 @@ function readCanaries() {
   if (!existsSync(mcpUpstream)) fail(`${relative(root, mcpUpstream)} is missing: there's no MCP upstream canary to look for.`)
   const mcpMatch = read(mcpUpstream).match(/export const MCP_UPSTREAM_CANARY = '([^']+)'/)
   if (!mcpMatch) fail(`no \`export const MCP_UPSTREAM_CANARY = '...'\` in ${relative(root, mcpUpstream)}; the upstream's shape changed.`)
+  const mcpFixtures = join(root, 'test/upstreams/mcp/index.ts')
+  if (!existsSync(mcpFixtures)) fail(`${relative(root, mcpFixtures)} is missing: there's no MCP fixtures canary to look for.`)
+  const mcpFixturesMatch = read(mcpFixtures).match(/export const MCP_FIXTURES_CANARY = '([^']+)'/)
+  if (!mcpFixturesMatch) fail(`no \`export const MCP_FIXTURES_CANARY = '...'\` in ${relative(root, mcpFixtures)}; the fixtures' shape changed.`)
   const fakesHook = join(hubDir, 'testing/fakes.ts')
   if (!existsSync(fakesHook)) fail(`${relative(root, fakesHook)} is missing: there's no test-fakes canary to look for.`)
   const fakesMatch = read(fakesHook).match(/export const HUB_FAKES_CANARY = '([^']+)'/)
@@ -111,6 +118,7 @@ function readCanaries() {
     SHOPIFY_CANARY: shopifyMatch[1],
     SHOPIFY_WRITE_CANARY: shopifyWriteMatch[1],
     MCP_CANARY: mcpMatch[1],
+    MCP_FIXTURES_CANARY: mcpFixturesMatch[1],
     FAKES_CANARY: fakesMatch[1],
   }
 }
@@ -248,13 +256,14 @@ function moduleGraph({ inputs }) {
 function main() {
   const deployDir = flag('--deploy', join(root, 'dist-hub'))
   const testDir = flag('--test', join(root, 'dist-hub-test'))
-  const { CANARY, SHOPIFY_CANARY, SHOPIFY_WRITE_CANARY, MCP_CANARY, FAKES_CANARY, EVAL_WRITE_GATEWAY, EVAL_SLACK_CANARY } = readCanaries()
+  const { CANARY, SHOPIFY_CANARY, SHOPIFY_WRITE_CANARY, MCP_CANARY, MCP_FIXTURES_CANARY, FAKES_CANARY, EVAL_WRITE_GATEWAY, EVAL_SLACK_CANARY } = readCanaries()
 
   const PARTS = [
     ['canary string', canary(CANARY)],
     ['shopify upstream canary', canary(SHOPIFY_CANARY)],
     ['shopify write upstream canary', canary(SHOPIFY_WRITE_CANARY)],
     ['mcp upstream canary', canary(MCP_CANARY)],
+    ['mcp fixtures canary', canary(MCP_FIXTURES_CANARY)],
     ['test-fakes canary', canary(FAKES_CANARY)],
     ['test-fakes globals', fakesGlobals],
     ['eval write gateway', canary(EVAL_WRITE_GATEWAY)],
@@ -294,6 +303,12 @@ function main() {
     bad = true
     console.error(`FAIL  eval slack canary in the script: the test bundle (${relative(root, testDir)}) holds "${EVAL_SLACK_CANARY}" in no script, so hub/testing/eval-slack.ts's runtime code no longer names it.`)
   } else console.log('ok    eval slack canary in the script: the test bundle\'s script holds it.')
+
+  // (M4-F) The MCP fixtures canary must be in the test bundle's script too: the seam's runtime code names it.
+  if (!testScripts.some(f => textOf(f).includes(MCP_FIXTURES_CANARY))) {
+    bad = true
+    console.error(`FAIL  mcp fixtures canary in the script: the test bundle (${relative(root, testDir)}) holds "${MCP_FIXTURES_CANARY}" in no script, so the fixtures' runtime code no longer names it.`)
+  } else console.log('ok    mcp fixtures canary in the script: the test bundle\'s script holds it.')
 
   return bad ? 1 : 0
 }

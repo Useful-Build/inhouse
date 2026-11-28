@@ -1,5 +1,5 @@
 {
-  "note": "The demo's agent actions and permissions: what the real agent's cards and its Always allowed list look like, on invented data, in the Normal scenario (the demo has no stages, as the product). Each batch is one card holding many changes. The VIP batch tags 450 orders, one each, its orders numbered from `firstOrder` up; its lines, rows and title are the server's words for that operation. The restock batch adds stock to 12 items at one location, one quantity each (a table with its total); it needs an exact OK because it's past Sam's Add stock permission (`count`). The refund is a teammate's, so only an admin may approve it. `singles` are one-change cards in the server's words (server/outbox/operations): `ask` ones offer Allow once, Always allow and No (`nudge`: Always allow first, after three Allow onces); one needs a check; one is Priya's, which Sam sees under Waiting on your team; one went out yesterday under Sam's permission. `operations` are each operation's permission title, units and default limits (server/outbox/operations, shared/audit-text.ts), which Always allow grants. `permissions` are the two seeded ones. Times are from the demo's Monday.",
+  "note": "The demo's agent actions and permissions: what the real agent's cards and its Always allowed list look like, on invented data, in the Normal scenario (the demo has no stages, as the product). Each batch is one card holding many changes. The VIP batch tags 450 orders, one each, its orders numbered from `firstOrder` up; its lines, rows and title are the server's words for that operation, and each row carries what the store said about its order (`customers`, invented: a name and the order's total, in turn), as the real card's details do (#488); a tag card's `order` is the same for its one order. The restock batch adds stock to 12 items at one location, one quantity each (a table with its total); it needs an exact OK because it's past Sam's Add stock permission (`count`). The refund is a teammate's, so only an admin may approve it. `singles` are one-change cards in the server's words (server/outbox/operations): `ask` ones offer Allow once, Always allow and No (`nudge`: Always allow first, after three Allow onces); one needs a check; one is Priya's, which Sam sees under Waiting on your team; one went out yesterday under Sam's permission. `operations` are each operation's permission title, units and default limits (server/outbox/operations, shared/audit-text.ts), which Always allow grants. `permissions` are the two seeded ones. Times are from the demo's Monday.",
   "tool": "Shopify",
   "shop": "northline-outdoor",
   "batches": [
@@ -11,6 +11,11 @@
       "count": 450,
       "firstOrder": 3901,
       "tag": "VIP",
+      "customers": [
+        ["Alex Moore", "642.10"], ["Priya Shah", "1208.00"], ["Jonas Weber", "517.45"], ["Mia Lopez", "889.90"], ["Sam Okafor", "730.00"],
+        ["Hana Sato", "560.00"], ["Diego Ramos", "1045.20"], ["Ella Fischer", "612.75"], ["Omar Haddad", "733.10"], ["Grace Kim", "540.00"],
+        ["Lucas Martin", "978.30"], ["Zoe Turner", "505.60"]
+      ],
       "unitsLabel": "orders",
       "guardrail": "bulk",
       "askedAt": "0d 07:58"
@@ -36,6 +41,9 @@
     "title": "Refund $238.00 (USD) on order 4838",
     "lines": ["1 item, shipping $0.00.", "1 × line 48381", "Restock the items: no.", "The customer gets Shopify’s refund email: no."],
     "askedAt": "0d 07:31",
+    "order": 4838,
+    "customer": "Nora Lindqvist",
+    "amount": "238.00",
     "result": "Sent."
     },
   "tools": {
@@ -66,6 +74,7 @@
       "state": "waiting",
       "nudge": false,
       "title": "Add a tag to order 4512",
+      "order": { "number": 4512, "customer": "Harbor & Pine", "amount": "1248.00" },
       "lines": ["Tag: Wholesale"],
       "askedAt": "0d 07:52"
     },
@@ -77,6 +86,7 @@
       "state": "waiting",
       "nudge": false,
       "title": "Remove a tag from order 4470",
+      "order": { "number": 4470, "customer": "Owen Pratt", "amount": "312.50" },
       "lines": ["Tag: Hold"],
       "askedAt": "0d 07:36"
     },
@@ -97,6 +107,7 @@
       "chatId": "order-tags",
       "state": "needs_check",
       "title": "Add a tag to order 4377",
+      "order": { "number": 4377, "customer": "Mia Torres", "amount": "189.00" },
       "lines": ["Tag: Gift"],
       "result": "It isn’t clear whether this went out. Check in the tool, then say whether it did.",
       "askedAt": "-3d 15:48"

@@ -381,7 +381,7 @@ describe('#490: a cached write token is reused only when its grant covers the op
     expect(w.fake.issuedTokens).toHaveLength(1) // write_orders is covered: the old token is reused
     expect(await w.run(req('shopify.inventory.restock', restock()))).toMatchObject({ ok: true })
     expect(w.fake.issuedTokens).toHaveLength(2)
-    expect(w.store.get<WriteTokenRecord>('write_record')!.scopes.sort()).toEqual(['write_draft_orders', 'write_inventory', 'write_orders'])
+    expect(w.store.get<WriteTokenRecord>('write_record')!.scopes.sort()).toEqual(['read_customers', 'read_products', 'write_draft_orders', 'write_inventory', 'write_orders'])
     expect(await w.run(req('shopify.inventory.reduce', reduce(), { idempotencyKey: 'ac_BBBBBBBBBBBBBBBBBBBBBB:1' }))).toMatchObject({ ok: true })
     expect(w.fake.issuedTokens).toHaveLength(2)
   })
