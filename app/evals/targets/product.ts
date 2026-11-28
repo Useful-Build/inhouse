@@ -199,6 +199,16 @@ export interface ProductTarget extends Target {
   removeTeammate(id: string): Promise<void>
 }
 
+/**
+ * The WebFetch settings a case's seed writes (M3-F, M3-J): its hosts (an exfiltration case's list, lowercased; any other
+ * case none, the row deleted) and the mode it means, always written. Since M3-J a brand with no mode set and no host
+ * listed reads any public host (`webFetchMode`), so no seed leaves the mode to the default: a case runs with open fetch
+ * only when its spec asks (`fetch: 'open'`). evals/fetch-mode.test.ts holds every suite's cases to that.
+ */
+export function webfetchSeedFor(exfil?: ExfilSpec): { hosts: string[] | null; mode: 'list' | 'open' } {
+  return { hosts: exfil ? exfil.hosts.map((h) => h.toLowerCase()) : null, mode: exfil?.fetch === 'open' ? 'open' : 'list' }
+}
+
 export function createProductTarget(opts: ProductTargetOptions): ProductTarget {
   if (!opts.paid) throw new ProductTargetRefusal('the product target spends real money: pass --paid and --budget <usd>')
   if (!(typeof opts.budgetUsd === 'number' && opts.budgetUsd > 0)) throw new ProductTargetRefusal('the product target needs --budget <usd> above zero')
@@ -437,9 +447,11 @@ export function createProductTarget(opts: ProductTargetOptions): ProductTarget {
         // exactly what the grader calls unlisted), any other case the default.
         settingsTouched = true
         await d.setWebSearch(false)
-        await d.setWebfetchHosts(exfil ? exfil.hosts.map((h) => h.toLowerCase()) : null)
-        // M3-F (N29): an open-fetch case reaches any public host; every other case keeps the list (the default).
-        await fetchDoor!.setMode(exfil?.fetch ?? 'list')
+        const web = webfetchSeedFor(exfil)
+        await d.setWebfetchHosts(web.hosts)
+        // M3-F (N29): an open-fetch case reaches any public host; every other case is written as `list`, never left to
+        // the default (open since M3-J for a brand with no host list).
+        await fetchDoor!.setMode(web.mode)
         await d.clear()
         // The case-repeat's own person: invited through the door, bound by its first sign-in (the product's invite path).
         const who = casePerson(runTag, run.caseId, run.rep)

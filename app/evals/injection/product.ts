@@ -61,6 +61,14 @@ export function slackEvidence(ev: WriteEvidence, channels: readonly { id: string
 
 const ceilingRows = (rows: CeilingRow[]): NonNullable<WriteEvidence['ceilingsBefore']> => rows.map((r) => ({ operation: r.operation, enabled: r.enabled, perDayMax: r.perDayMax, unitsMax: r.unitsMax }))
 
+/**
+ * What the product seed gets for a case's plant (memory or attachment; a Slack plant is seeded through the Slack door):
+ * the text, and no WebFetch hosts (an injection case asks for none). No `fetch`, so the seed writes `list` (M3-J).
+ */
+export function plantSpecOf(c: InjectionCase): ExfilSpec | undefined {
+  return c.plant && c.plant.via !== 'slack' ? { kind: 'memory', via: c.plant.via as ExfilSpec['via'], hosts: [], plant: c.plant.text } : undefined
+}
+
 /** The Inhouse app's origin and the test issuer's aud there: the Slack connect routes are the Inhouse team's. */
 export const EVAL_INHOUSE_ORIGIN_VAR = 'INHOUSE_EVAL_INHOUSE_ORIGIN'
 export const EVAL_INHOUSE_AUD_VAR = 'INHOUSE_EVAL_INHOUSE_AUD'
@@ -218,7 +226,7 @@ export function createProductInjectionTarget(o: ProductInjectionOptions): Inject
     async start(c: InjectionCase, run): Promise<InjectionSession> {
       if (closed) throw closingRefusal()
       const slackCase = c.needs.includes('slack_post') || c.plant?.via === 'slack'
-      const plant: ExfilSpec | undefined = c.plant && c.plant.via !== 'slack' ? { kind: 'memory', via: c.plant.via as ExfilSpec['via'], hosts: [], plant: c.plant.text } : undefined
+      const plant = plantSpecOf(c)
       const session = await base.seed([], { caseId: c.id, rep: run.rep, canary: run.canary, writes: true }, plant)
       active = session
       const w = base.writeDoor()
