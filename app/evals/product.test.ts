@@ -760,7 +760,7 @@ describe('the memory door', () => {
     expect((err as Error).message).toBe('wrangler d1 execute exited 1')
   })
   it('a wrangler call killed at its deadline is a refusal that says so (#672)', async () => {
-    const hung = wranglerRunner({ database: 'inhouse-sbx-eval-db', config: 'c', readConfig: () => JSON.stringify({ account_id: 'acct', d1_databases: [{ database_name: 'inhouse-sbx-eval-db' }] }), env: { CF_SANDBOX_ACCOUNT_ID: 'acct' }, spawn: () => ({ status: null, stdout: '' }) })
+    const hung = wranglerRunner({ database: 'inhouse-sbx-eval-db', config: 'c', readConfig: () => JSON.stringify({ account_id: 'acct', d1_databases: [{ database_name: 'inhouse-sbx-eval-db' }] }), env: { CF_SANDBOX_ACCOUNT_ID: 'acct' }, spawn: () => ({ status: null, stdout: '' }), retry: { sleep: async () => {}, onRetry: () => {} } })
     await expect(hung('SELECT 1')).rejects.toThrow(new DoorRefusal(`wrangler d1 execute did not end (killed after ${WRANGLER_TIMEOUT_MS / 1000} s, or by a signal)`))
   })
   it.each([

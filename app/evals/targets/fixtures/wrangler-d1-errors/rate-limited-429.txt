@@ -1,0 +1,22 @@
+exit 1
+--- stdout
+
+{
+  "error": {
+    "text": "A request to the Cloudflare API (/accounts/0123456789abcdef0123456789abcdef/d1/database/00000000-0000-4000-8000-000000000000/query) failed.",
+    "notes": [
+      {
+        "text": "Please wait and consider throttling your request speed [code: 971]"
+      },
+      {
+        "text": "The API responded with a \"Retry-After\" header indicating you should wait 5 second(s) before retrying."
+      }
+    ],
+    "kind": "error",
+    "name": "APIError",
+    "code": 971,
+    "accountTag": "0123456789abcdef0123456789abcdef",
+    "retryAfterMs": 5000
+  }
+}
+--- stderr
