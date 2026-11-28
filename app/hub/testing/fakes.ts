@@ -17,6 +17,7 @@ import { z } from 'zod'
 import type { HubResult } from '../index/contract'
 import { err } from '../index/errors'
 import { AccountIdSchema } from '../index/schemas'
+import { settledAnswer } from '../../shared/rpc-answer'
 import { flushTestLogs, loadRegistry, signInFor, TEST_FAKES_DO_NAME, TEST_FAKES_VARS_KEY } from '../signin/signin'
 import { FakeMcpServer, SLACK_CHANNELS, SLACK_MESSAGES } from '../../test/upstreams/mcp/server'
 import { FakeSlackWeb, WEB_CHANNELS } from '../../test/upstreams/slack/server'
@@ -164,7 +165,7 @@ async function connectedAccounts(env: Env): Promise<{ accountId: string; scopes:
   const ids = [...new Set((await loadRegistry(env)).modules.map(m => m.accountId))].sort()
   const out: { accountId: string; scopes: string[] }[] = []
   for (const accountId of ids) {
-    const r = await signInFor(env, accountId).status(accountId)
+    const r = await settledAnswer(signInFor(env, accountId).status(accountId))
     if (r.ok && r.value.state === 'active') out.push({ accountId, scopes: [...r.value.scopes] })
   }
   return out
@@ -338,6 +339,8 @@ export function runHubFakesInDo(storage: FakeStorage, input: unknown): HubResult
 /**
  * One hub op (called from ConnectGateway.testFakes). Dispatches leaf ops to the singleton `__test-fakes__` DO and
  * keeps account-DO fan-out (`alarm`, `state.accounts`) in this gateway so DO calls form a strict DAG with no cycles.
+ * Every answer read from a Durable Object is copied and released (`settledAnswer`, shared/rpc-answer.ts), never passed on
+ * as is or left open, as the hub's gateways do (#443): the objects' answers are theirs, and the call stays tied to them (#530).
  */
 export async function runHubFakesOp(env: Env, input: unknown): Promise<HubResult<unknown>> {
   const parsed = HubFakesOpSchema.safeParse(input)
@@ -346,19 +349,19 @@ export async function runHubFakesOp(env: Env, input: unknown): Promise<HubResult
   const fakes = env.SIGNIN.get(env.SIGNIN.idFromName(TEST_FAKES_DO_NAME))
   switch (op.op) {
     case 'alarm':
-      return env.SIGNIN.get(env.SIGNIN.idFromName(op.accountId)).testFireAlarm()
+      return (await settledAnswer(env.SIGNIN.get(env.SIGNIN.idFromName(op.accountId)).testFireAlarm())) as HubResult<unknown>
     case 'state': {
-      const local = (await fakes.testFakesOp(op)) as HubResult<Record<string, unknown>>
+      const local = (await settledAnswer(fakes.testFakesOp(op))) as HubResult<Record<string, unknown>>
       if (!local.ok) return local
       return { ok: true, value: { ...local.value, accounts: await connectedAccounts(env) } }
     }
     case 'logs':
       await flushTestLogs(env)
-      return (await fakes.testFakesOp(op)) as HubResult<unknown>
+      return (await settledAnswer(fakes.testFakesOp(op))) as HubResult<unknown>
     case 'reset':
     case 'set':
     case 'var':
     case 'seed':
-      return (await fakes.testFakesOp(op)) as HubResult<unknown>
+      return (await settledAnswer(fakes.testFakesOp(op))) as HubResult<unknown>
   }
 }

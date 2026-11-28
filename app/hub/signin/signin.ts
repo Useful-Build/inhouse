@@ -113,7 +113,7 @@ export async function envRecord(env: HubEnv): Promise<Readonly<Record<string, un
   // The hub's TEST bundle only: the test-fakes hook's var overrides (hub/testing/fakes.ts, op `var`), held in the
   // singleton test-fakes DO's SQLite KV and cleared by its reset. The deployable bundle drops the branch (the define is "false").
   if (__INHOUSE_HUB_TEST__ && env.INHOUSE_TEST_BUILD === '1') {
-    const vars = await env.SIGNIN.get(env.SIGNIN.idFromName(TEST_FAKES_DO_NAME)).testGetVars()
+    const vars = await settledAnswer(env.SIGNIN.get(env.SIGNIN.idFromName(TEST_FAKES_DO_NAME)).testGetVars())
     if (Object.keys(vars).length > 0) return { ...(env as unknown as Record<string, unknown>), ...vars }
   }
   return env as unknown as Readonly<Record<string, unknown>>
