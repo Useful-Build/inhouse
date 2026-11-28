@@ -8,6 +8,7 @@ import { AgentError } from './types'
 import { NOT_FOUND } from '../../shared/contract/error-codes'
 
 export interface JobsHost {
+  session: string
   now: () => number
   shown: () => boolean
   at: (sampleTime: string) => Instant
@@ -143,7 +144,7 @@ export class MockJobs {
   }
 
   nextJobId(): string {
-    return `j_${`demoJob${(++this.idSeq).toString(36).padStart(6, '0')}`.padEnd(22, '0').slice(0, 22)}`
+    return `j_${(this.h.session + (++this.idSeq).toString(36).padStart(6, '0')).padEnd(22, '0').slice(0, 22)}`
   }
 
   startJob(chatId: string, rootTurnId: string, label: string, helpers = 2): { job: Job; controller: AbortController } {
@@ -208,7 +209,7 @@ export class MockJobs {
 
   private recordNotice(job: Job) {
     if (!job.outcome || !job.endedAt) return
-    const id = `job_${job.jobId}`
+    const id = `job_${this.h.session}_${job.jobId}`
     if (this.notices.some(n => n.id === id)) return
     const outcome = job.outcome
     const done = outcome === 'done'

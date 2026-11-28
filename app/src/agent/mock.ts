@@ -102,8 +102,8 @@ const STORAGE_KEY = 'inhouse.demo.v2'
 const RUNS_KEY = 'inhouse.demo.runs.v1'
 /** How many runs RUNS_KEY keeps, oldest dropped first. */
 const RUNS_KEPT = 200
-/** Unique per page load, so run ids never repeat across reloads. */
-const SESSION = Date.now().toString(36)
+/** Unique per page load, so run and job ids never repeat across reloads. */
+const SESSION = `${Date.now().toString(36)}${Math.random().toString(36).slice(2, 6).padEnd(4, '0')}`
 const SAVE_FAILED = "Couldn't save. Your browser storage is full."
 const TOO_LATE = 'Too late to undo. It already went out.'
 const FINISHED = 'That answer has already finished.'
@@ -593,8 +593,8 @@ export type RunInfo = { trace: TraceKey; routine?: string; kept?: string; skill?
 export interface MockTurn {
   turnId: string; runId: string; chatId: string; input: ChatSendInput; ord: number; queuedAt: Instant
   state: 'queued' | 'live' | 'ended'
-  /** `interrupt` ends this turn and keeps the session; `stop` is the hard stop. Both end only this turn. */
-  interrupt: AbortController; hard: AbortController
+  /** `interrupt` ends this turn and keeps the session; `stop` is the hard stop. Both end only this turn. `cutByMessage` marks a turn ended by a person's `now` message so a running job carries on. */
+  interrupt: AbortController; hard: AbortController; cutByMessage?: boolean
 }
 /** A run in the mock: its events by seq (kept, so any attach replays them), who follows it, and its turns. */
 export interface MockRun { runId: string; chatId: string; frames: RunFrame[]; live: boolean; turns: MockTurn[]; subs: Set<(f: RunFrame) => void>; info?: RunInfo }
@@ -1054,6 +1054,7 @@ export class MockAgent implements AgentClient {
   private demoJobs(): Promise<MockJobs> {
     return this.demoJobsLoad ??= import('./mock-jobs').then(m => {
       const j = new m.MockJobs({
+        session: SESSION,
         now: () => demoNow(this.startedAt).getTime(),
         shown: () => !isNoData(this.demo.scenario),
         at: sampleTime => sampleAt('a job', sampleTime),

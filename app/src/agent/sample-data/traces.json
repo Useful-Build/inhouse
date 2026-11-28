@@ -1384,7 +1384,7 @@
     },
     "catalog-audit-start": {
       "title": "Audit gross margin across every SKU",
-      "durationSeconds": 11.4,
+      "durationSeconds": 8.2,
       "cost": { "minor": 6, "currency": "USD" },
       "tokens": "24.6k",
       "steps": [
@@ -1392,7 +1392,7 @@
           "label": "Inhouse agent",
           "kind": "root",
           "startSeconds": 0,
-          "endSeconds": 11.4,
+          "endSeconds": 8.2,
           "depth": 0,
           "detail": "Question in Chats"
         },
@@ -1419,22 +1419,6 @@
           "endSeconds": 8.2,
           "depth": 1,
           "detail": "Output: average pick, pack and zone postage"
-        },
-        {
-          "label": "Hit step limit before drinkware and packs",
-          "kind": "model",
-          "startSeconds": 8.3,
-          "endSeconds": 11.2,
-          "depth": 1,
-          "detail": "Opus 5.5 · mapped apparel first"
-        },
-        {
-          "label": "Answer",
-          "kind": "answer",
-          "startSeconds": 11.2,
-          "endSeconds": 11.4,
-          "depth": 1,
-          "detail": "Sent to Chats"
         }
       ]
     },
@@ -1544,7 +1528,7 @@
     },
     "restock-plan-part1": {
       "title": "Pull stock on hand across stores",
-      "durationSeconds": 10.2,
+      "durationSeconds": 10,
       "cost": { "minor": 5, "currency": "USD" },
       "tokens": "19.8k",
       "steps": [
@@ -1552,7 +1536,7 @@
           "label": "Inhouse agent",
           "kind": "root",
           "startSeconds": 0,
-          "endSeconds": 10.2,
+          "endSeconds": 10,
           "depth": 0,
           "detail": "Question in Chats"
         },
@@ -1573,20 +1557,12 @@
           "detail": "Output: PO-1187 waiting at receiving"
         },
         {
-          "label": "Hit step limit with low-cover SKUs listed",
+          "label": "Ranked low-cover SKUs",
           "kind": "model",
           "startSeconds": 7.2,
           "endSeconds": 10,
           "depth": 1,
-          "detail": "Opus 5.5 · waiting before supplier lead-time checks"
-        },
-        {
-          "label": "Answer",
-          "kind": "answer",
-          "startSeconds": 10,
-          "endSeconds": 10.2,
-          "depth": 1,
-          "detail": "Sent to Chats"
+          "detail": "Opus 5.5 · listed 9 SKUs under 30 days of cover"
         }
       ]
     },
@@ -1781,20 +1757,12 @@
           "detail": "Output: Ridge 30L Autumn at 2.8 net"
         },
         {
-          "label": "Reached single-job spend budget",
+          "label": "Compared prospecting and retargeting cohorts",
           "kind": "model",
           "startSeconds": 187,
-          "endSeconds": 340,
-          "depth": 1,
-          "detail": "Fable 5.2 · summarized completed cohorts before stopping"
-        },
-        {
-          "label": "Answer",
-          "kind": "answer",
-          "startSeconds": 340,
           "endSeconds": 342,
           "depth": 1,
-          "detail": "Sent to Chats"
+          "detail": "Fable 5.2 · Ridge 30L at 2.8 net, Trail Shell at 1.4 net"
         }
       ]
     },

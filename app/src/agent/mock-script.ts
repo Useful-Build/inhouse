@@ -312,7 +312,7 @@ export function seeded(h: ScriptHost, q: string, chatId: string): Script | null 
 /** Asked for a web lookup or URL check: respects Settings > Inhouse agent (`t:websearch`, `t:webfetch_on`, `t:webfetch`). */
 const WEB_ASK = /\b(?:search\b.*\bweb|web search|look up online|competitor prices?)\b/i
 const URL_ASK = /https?:\/\/([a-z0-9.-]+)/i
-const LONG_TASK_ASK = /\b(long job|full catalog|deep (?:research|audit|analysis)|audit (?:all|every)|across every sku)\b/i
+const LONG_TASK_ASK = /\b(full catalog|deep (?:research|audit|analysis)|audit (?:all|every)|across every sku)\b/i
 
 const webScript = (h: ScriptHost, q: string): Script | null => {
   const urlMatch = URL_ASK.exec(q)
@@ -449,7 +449,7 @@ export function buildScript(h: ScriptHost, q: string, chatId: string): Script {
       thinking: ['Checking Shopify catalog…', 'Pulling ShipBob fulfillment costs…'],
       delayMs: fb.delayMs,
       trace: h.k.traceKey('catalog-audit-start'),
-      parts: [{ type: 'text', text: "Pulled Shopify's active catalog (216 variants across 48 products) and 60 days of ShipBob fulfillment costs. Apparel margins are tallied first; reached this turn's step limit before checking drinkware and packs." }],
+      parts: [{ type: 'text', text: "Pulled Shopify's active catalog (216 variants across 48 products) and the last 60 days of ShipBob fulfillment costs. Mapping apparel margins first before moving on to drinkware and packs." }],
       longJob: {
         progressLabel: 'Checking variant margins on Shopify',
         progressSteps: [

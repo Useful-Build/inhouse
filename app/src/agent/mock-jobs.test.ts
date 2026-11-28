@@ -336,3 +336,159 @@ describe('helper traces and web switches (J6, J7, J8)', () => {
     expect(await ask('web-key-04', 'Check https://trailgear.example.test/bottles')).toContain('Read web pages is turned off in Settings')
   })
 })
+
+describe('round 2 parity fixes (issues 677, 678, 681, 682, 683, 684)', () => {
+  test('Send now during a continuation or in the first 4s answers immediately and carries the job on (issue 677)', async () => {
+    // Mid-continuation: Send now interrupts contTurn without cancelling the job, answers now, and resumes to done.
+    const l1 = await load()
+    await l1.mock.createChat({ id: 'now-mid', title: 'Now mid' })
+    const ev1: RunEvent[] = []
+    const root1 = await l1.mock.send('now-mid', { clientTurnKey: 'now-mid-root-01', text: 'Run a full catalog audit across every SKU', model: 'opus' })
+    const off1 = l1.mock.attach(root1.runId, f => ev1.push(f.event))
+    await run(12_000)
+    const urgent1 = await l1.mock.send('now-mid', { clientTurnKey: 'now-mid-ask-02', text: 'Which orders are stuck over 3 days?', model: 'opus', priority: 'now' })
+    expect(urgent1.position).toBe('queued')
+    await run(5_000)
+    expect(ev1.some(e => e.type === 'part' && e.turnId === urgent1.turnId)).toBe(true)
+    expect(await l1.mock.job('now-mid')).toMatchObject({ state: 'running', outcome: null })
+    await run(40_000)
+    off1()
+    expect(ev1.filter(e => e.type === 'job.ended').map(e => (e.type === 'job.ended' ? e.outcome : null))).toEqual(['done'])
+    expect(await l1.mock.job('now-mid')).toMatchObject({ state: 'ended', outcome: 'done' })
+    expect(l1.mock.listNotifications()[0]).toMatchObject({ icon: 'check', text: 'A long job finished' })
+
+    // First 4s gap before continuation starts: Send now wakes the pause, answers immediately, then finishes the job.
+    const l2 = await load()
+    await l2.mock.createChat({ id: 'now-gap', title: 'Now gap' })
+    const ev2: RunEvent[] = []
+    const root2 = await l2.mock.send('now-gap', { clientTurnKey: 'now-gap-root-01', text: 'Run a full catalog audit across every SKU', model: 'opus' })
+    const off2 = l2.mock.attach(root2.runId, f => ev2.push(f.event))
+    await run(4_000)
+    expect(ev2.some(e => e.type === 'job.started')).toBe(true)
+    expect(ev2.some(e => e.type === 'turn.queued' && e.source === 'job')).toBe(false)
+    const urgent2 = await l2.mock.send('now-gap', { clientTurnKey: 'now-gap-ask-02', text: 'Which orders are stuck over 3 days?', model: 'opus', priority: 'now' })
+    expect(urgent2.position).toBe('queued')
+    await run(4_000)
+    expect(ev2.some(e => e.type === 'part' && e.turnId === urgent2.turnId)).toBe(true)
+    expect(await l2.mock.job('now-gap')).toMatchObject({ state: 'running', outcome: null })
+    await run(40_000)
+    off2()
+    expect(await l2.mock.job('now-gap')).toMatchObject({ state: 'ended', outcome: 'done' })
+  })
+
+  test('limit turns never promote when a job already runs or a person turn waits queued (issues 678 and 684)', async () => {
+    const l = await load()
+    // Case 1a: typed long task while catalog-audit already runs ends failed(max_turns) with no new job.
+    const evLive: RunEvent[] = []
+    const sLive = await l.mock.send('catalog-audit', { clientTurnKey: 'live-limit-ask1', text: 'Run a full catalog audit across every SKU', model: 'opus' })
+    const offLive = l.mock.attach(sLive.runId, f => evLive.push(f.event))
+    await run(10_000)
+    offLive()
+    expect(evLive.find(e => e.type === 'turn.finished' && e.turnId === sLive.turnId)).toMatchObject({ outcome: 'failed', reason: 'max_turns' })
+    expect(evLive.some(e => e.type === 'job.started')).toBe(false)
+    expect(await l.mock.job('catalog-audit')).toMatchObject({ jobId: 'j_demoCatalogAudit000001', state: 'running' })
+
+    // Case 1b: scripted maxTurns/turnBudget while catalog-audit runs does not overwrite the running job (issue 684).
+    for (const [kind, reason] of [['maxTurns', 'max_turns'], ['turnBudget', 'turn_budget']] as const) {
+      l.mock.scriptNextTurn(kind)
+      const evScript: RunEvent[] = []
+      const sScript = await l.mock.send('catalog-audit', { clientTurnKey: `live-script-${kind}`, text: 'Which orders are stuck?', model: 'opus' })
+      const offScript = l.mock.attach(sScript.runId, f => evScript.push(f.event))
+      await run(10_000)
+      offScript()
+      expect(evScript.find(e => e.type === 'turn.finished' && e.turnId === sScript.turnId)).toMatchObject({ outcome: 'failed', reason })
+      expect(evScript.some(e => e.type === 'job.started')).toBe(false)
+      expect(await l.mock.job('catalog-audit')).toMatchObject({ jobId: 'j_demoCatalogAudit000001', state: 'running' })
+    }
+
+    // Case 2: a queued person turn behind a limit turn blocks job promotion and runs right after.
+    await l.mock.createChat({ id: 'queued-behind', title: 'Queued behind' })
+    const evQ: RunEvent[] = []
+    const first = await l.mock.send('queued-behind', { clientTurnKey: 'queued-first-01', text: 'Run a full catalog audit across every SKU', model: 'opus' })
+    const offQ = l.mock.attach(first.runId, f => evQ.push(f.event))
+    await run(200)
+    const second = await l.mock.send('queued-behind', { clientTurnKey: 'queued-second-2', text: 'Which orders are stuck over 3 days?', model: 'opus', priority: 'next' })
+    await run(6_000)
+    offQ()
+    expect(evQ.find(e => e.type === 'turn.finished' && e.turnId === first.turnId)).toMatchObject({ outcome: 'failed', reason: 'max_turns' })
+    expect(evQ.some(e => e.type === 'job.started')).toBe(false)
+    expect(evQ.some(e => e.type === 'part' && e.turnId === second.turnId)).toBe(true)
+    expect(await l.mock.job('queued-behind')).toBeNull()
+
+    // Asking for "long job" by name no longer triggers a long job.
+    await l.mock.createChat({ id: 'literal-long-job', title: 'Literal phrase' })
+    const evPhrase: RunEvent[] = []
+    const sPhrase = await l.mock.send('literal-long-job', { clientTurnKey: 'phrase-key-0001', text: 'Tell me about a long job', model: 'opus' })
+    const offPhrase = l.mock.attach(sPhrase.runId, f => evPhrase.push(f.event))
+    await run(10_000)
+    offPhrase()
+    expect(evPhrase.some(e => e.type === 'job.started')).toBe(false)
+  })
+
+  test('Reset demo mid-continuation drops post-reset history writes and job events (issue 681)', async () => {
+    const l = await load()
+    const seedCount = (await l.mock.getChat('stuck')).messages.length
+    const sent = await l.mock.send('stuck', { clientTurnKey: 'reset-mid-cont1', text: 'Run a full catalog audit across every SKU', model: 'opus' })
+    void sent
+    await run(12_000)
+    l.mock.reset()
+    await run(60_000)
+
+    const after = await l.mock.getChat('stuck')
+    expect(after.messages).toHaveLength(seedCount)
+    expect(after.messages.some(m => m.role === 'event')).toBe(false)
+    expect(await l.mock.job('stuck')).toBeNull()
+  })
+
+  test('reloading with persisted readNotices mints fresh live job and notice ids (issue 682)', async () => {
+    const first = await load()
+    await first.mock.createChat({ id: 'reload-job', title: 'Reload job' })
+    await first.mock.send('reload-job', { clientTurnKey: 'reload-job-key1', text: 'Run a full catalog audit across every SKU', model: 'opus' })
+    await run(60_000)
+    const j1 = await first.mock.job('reload-job')
+    const audit1 = await first.mock.job('catalog-audit')
+    await first.mock.cancelJob(audit1!.jobId)
+    const firstNotices = first.mock.listNotifications().filter(n => n.id.startsWith('job_'))
+    expect(firstNotices.length).toBeGreaterThanOrEqual(2)
+    await first.mock.markNoticesRead(firstNotices.map(n => n.id))
+
+    // Reload: preserve localStorage Map across load(), with fresh SESSION and memory state.
+    const savedStorage = new Map(storage)
+    vi.resetModules()
+    storage = savedStorage
+    const store = await import('../state/store')
+    const { agent } = await import('./index')
+    await import('../screens/chat/run')
+    const second = agent as unknown as MockAgent
+    await second.preload()
+    void store
+
+    await second.createChat({ id: 'reload-job-2', title: 'Reload job 2' })
+    await second.send('reload-job-2', { clientTurnKey: 'reload-job-key2', text: 'Run a full catalog audit across every SKU', model: 'opus' })
+    await run(60_000)
+    const j2 = await second.job('reload-job-2')
+    const audit2 = await second.job('catalog-audit')
+    await second.cancelJob(audit2!.jobId)
+
+    expect(j2!.jobId).not.toBe(j1!.jobId)
+    expect(j2!.jobId).toMatch(/^j_[A-Za-z0-9_-]{22}$/)
+    const secondNotices = second.listNotifications().filter(n => n.id.startsWith('job_'))
+    expect(secondNotices).toHaveLength(2)
+    expect(secondNotices.every(n => n.unread)).toBe(true)
+  })
+
+  test('limit turns and budget traces never mention step limits or budgets (issue 683)', async () => {
+    const l = await load()
+    for (const chatId of ['catalog-audit', 'seasonal-restock', 'ad-spend-audit']) {
+      const page = await l.mock.getChat(chatId)
+      const allText = page.messages.map(m => (m.role === 'agent' && m.part.type === 'text' ? m.part.text : m.role === 'user' || m.role === 'event' ? m.text : '')).join('\n')
+      expect(allText).not.toMatch(/step limit|spend budget/i)
+    }
+    for (const id of ['catalog-audit-start', 'restock-plan-part1', 'ad-audit-part2']) {
+      const tr = await l.mock.getTrace(id)
+      const labels = tr!.steps.map(s => `${s.label} ${s.detail}`).join('\n')
+      expect(labels).not.toMatch(/step limit|spend budget/i)
+    }
+    expect((await l.mock.getTrace('ad-audit-part2'))!.steps.some(s => s.kind === 'answer')).toBe(false)
+  })
+})
