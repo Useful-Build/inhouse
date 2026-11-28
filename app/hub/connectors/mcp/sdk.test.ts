@@ -86,6 +86,213 @@ describe('both eras answer a list and a call', () => {
     expect(t.onInsufficientScope).toBe('throw')
     expect(t.reconnectionOptions?.maxRetries).toBe(0)
     expect('authProvider' in t).toBe(false)
+    // Output-schema validation can never run: the validator the Client gets throws (the workerd default is never used).
+    expect(() => clientOptions(1).jsonSchemaValidator!.getValidator({ type: 'object' })).toThrow('output-schema validation is off')
+  })
+})
+
+describe('#646: a 2025 server that answers the probe in-band over an event stream', () => {
+  // Plant (F's legacy fixture checks the session first, so it answers a probe 400 over JSON): the probe gets what a 2025
+  // server answers an unknown method with, in band, over an event stream; everything else is the legacy fixture's /sse/mcp.
+  const inband = (code: number, id: 'same' | 'null'): SdkDeps => ({
+    ...deps,
+    upstream: async req => {
+      const body = (await req.clone().json()) as { id?: unknown; method?: string }
+      if (body.method !== 'server/discover') return fx.fetch(req)
+      const msg = { jsonrpc: '2.0', id: id === 'same' ? body.id : null, error: { code, message: 'Method not found' } }
+      return new Response(`id: ev-0\ndata: \n\nevent: message\nid: ev-1\ndata: ${JSON.stringify(msg)}\n\n`, { status: 200, headers: { 'Content-Type': 'text/event-stream' } })
+    },
+  })
+
+  it('falls back to initialize and lists', async () => {
+    const url = `${LEGACY}/sse/mcp`
+    const out = await sdkListTools(inband(-32601, 'same'), target(url))
+    expect(out).toMatchObject({ kind: 'ok', era: 'legacy' })
+    expect(out.wire.filter(e => e.method === 'POST').map(e => [e.rpc, e.fate])).toEqual([
+      ['server/discover', 'sent'],
+      ['initialize', 'sent'],
+      ['notifications/initialized', 'sent'],
+      ['tools/list', 'sent'],
+      ['tools/list', 'sent'],
+    ])
+    expect(wire(url)).toEqual(['initialize', 'notifications/initialized', 'tools/list', 'tools/list'])
+  })
+
+  it('the same answer over JSON (200, in band) falls back too', async () => {
+    const url = `${LEGACY}/mcp`
+    const json: SdkDeps = {
+      ...deps,
+      upstream: async req => {
+        const body = (await req.clone().json()) as { id?: unknown; method?: string }
+        if (body.method !== 'server/discover') return fx.fetch(req)
+        return Response.json({ jsonrpc: '2.0', id: body.id, error: { code: -32601, message: 'Method not found' } })
+      },
+    }
+    expect(await sdkListTools(json, target(url))).toMatchObject({ kind: 'ok', era: 'legacy' })
+    expect(wire(url)).toEqual(['initialize', 'notifications/initialized', 'tools/list', 'tools/list'])
+  })
+
+  it('but a modern error in band over the stream still stops it (no initialize)', async () => {
+    const url = `${LEGACY}/sse/mcp`
+    expect(await sdkListTools(inband(-32021, 'same'), target(url))).toMatchObject({ kind: 'error', reason: 'rejected' })
+    expect(wire(url)).toEqual([])
+  })
+})
+
+describe('#647: any 2026-07-28 error marks the server modern, whatever its id or content type', () => {
+  const answer = (status: number, type: string, payload: (id: unknown) => string): SdkDeps => ({
+    ...deps,
+    upstream: async req => {
+      const body = (await req.clone().json()) as { id?: unknown; method?: string }
+      fx.log.add({ host: new URL(req.url).host, path: new URL(req.url).pathname, method: 'POST', credential: 'none', ...(body.method ? { rpc: body.method } : {}) })
+      return new Response(payload(body.id), { status, headers: { 'Content-Type': type } })
+    },
+  })
+  const err = (id: unknown, code: number, data?: unknown) => JSON.stringify({ jsonrpc: '2.0', id, error: { code, message: 'x', ...(data !== undefined ? { data } : {}) } })
+  const cases: [string, SdkDeps][] = []
+  it.each([
+    ['-32022 with a null id', 400, 'application/json', (_id: unknown) => err(null, -32022)],
+    ['-32022 naming only 2025 versions', 400, 'application/json', (id: unknown) => err(id, -32022, { supported: ['2025-11-25'] })],
+    ['-32020 sent as text/plain', 400, 'text/plain', (id: unknown) => err(id, -32020)],
+    ['-32021 in a 400 event stream', 400, 'text/event-stream', (id: unknown) => `event: message\ndata: ${err(id, -32021)}\n\n`],
+    ['-32022 with no content type', 400, '', (id: unknown) => err(id, -32022)],
+  ] as const)('%s: no initialize follows', async (_name, status, type, payload) => {
+    const url = `${MODERN}/open/mcp`
+    const out = await sdkListTools(answer(status, type, payload), target(url))
+    expect(out.kind).toBe('error')
+    expect(wire(url)).toEqual(['server/discover'])
+    expect(out.wire.filter(e => e.rpc === 'initialize').every(e => e.fate === 'refused')).toBe(true)
+  })
+
+  it('control: a 2025 refusal (-32000, JSON) is followed by initialize', async () => {
+    const url = `${MODERN}/open/mcp`
+    const out = await sdkListTools(answer(400, 'application/json', id => err(id, -32000)), target(url))
+    expect(out.kind).toBe('error')
+    expect(wire(url)).toEqual(['server/discover', 'initialize'])
+    expect(cases).toEqual([])
+  })
+})
+
+describe('a probe that meets an outage is not read as a 2025 server', () => {
+  it.each([
+    [429, 'rate_limited', 7_000],
+    [408, 'rejected', undefined],
+    [503, 'unavailable', undefined],
+  ] as const)('%s on server/discover: no initialize, no cached era', async (status, reason, retryAfterMs) => {
+    const url = `${MODERN}/open/mcp`
+    const busy: SdkDeps = {
+      ...deps,
+      upstream: async req => {
+        const body = (await req.clone().json()) as { method?: string }
+        fx.log.add({ host: new URL(req.url).host, path: new URL(req.url).pathname, method: 'POST', credential: 'none', ...(body.method ? { rpc: body.method } : {}) })
+        return new Response('busy', { status, headers: { 'Retry-After': '7', 'Content-Type': 'text/plain' } })
+      },
+    }
+    const out = await sdkListTools(busy, target(url))
+    expect(out).toMatchObject({ kind: 'error', reason, ...(retryAfterMs !== undefined ? { retryAfterMs } : {}) })
+    expect(wire(url)).toEqual(['server/discover'])
+    expect(deps.eras.get(url, 1, clock)).toBeNull()
+  })
+})
+
+describe('#650: a tool with an invalid x-mcp-header declaration is left out of the list', () => {
+  it.each([
+    ['a name that is not a token', { a: { type: 'string', 'x-mcp-header': 'Bad Name' } }],
+    ['a non-primitive type', { a: { type: 'object', 'x-mcp-header': 'A' } }],
+    ['a number', { a: { type: 'number', 'x-mcp-header': 'A' } }],
+    ['a duplicate, case aside', { a: { type: 'string', 'x-mcp-header': 'Same' }, b: { type: 'string', 'x-mcp-header': 'same' } }],
+    ['under items', { a: { type: 'array', items: { type: 'string', 'x-mcp-header': 'A' } } }],
+  ])('%s', async (_name, properties) => {
+    const url = `${MODERN}/open/mcp`
+    const plant: SdkDeps = {
+      ...deps,
+      upstream: async req => {
+        const body = (await req.clone().json()) as { id?: unknown; method?: string }
+        if (body.method !== 'tools/list') return fx.fetch(req)
+        const good = { name: 'good', description: 'ok', inputSchema: { type: 'object', properties: { r: { type: 'string', 'x-mcp-header': 'Region' } } } }
+        return Response.json({ jsonrpc: '2.0', id: body.id, result: { resultType: 'complete', ttlMs: 0, cacheScope: 'public', tools: [good, { name: 'bad', description: 'x', inputSchema: { type: 'object', properties } }] } })
+      },
+    }
+    const out = await sdkListTools(plant, target(url))
+    expect(out).toMatchObject({ kind: 'ok', excluded: 1 })
+    expect(out.kind === 'ok' && out.tools.map(t => t.name)).toEqual(['good'])
+  })
+
+  it("control: the fixture's own valid declarations (Folder, Region) all stay", async () => {
+    expect(await sdkListTools(deps, target(`${MODERN}/open/mcp`))).toMatchObject({ kind: 'ok', excluded: 0 })
+  })
+})
+
+describe('#651: a long session id (a signed one) is kept', () => {
+  it('a 2 KiB visible-ASCII Mcp-Session-Id goes back on the next request; one with a space is dropped', async () => {
+    const url = `${LEGACY}/mcp`
+    const long = `ey${'J'.repeat(2_046)}`
+    const sent: (string | null)[] = []
+    const plant = (sid: string): SdkDeps => ({
+      ...deps,
+      upstream: async req => {
+        sent.push(req.headers.get('Mcp-Session-Id'))
+        const res = await fx.fetch(req)
+        const real = res.headers.get('Mcp-Session-Id')
+        if (real === null) return res
+        // Rename the fixture's session to the long id both ways.
+        fx.legacy.sessions.set(sid, fx.legacy.sessions.get(real)!)
+        const headers = new Headers(res.headers)
+        headers.set('Mcp-Session-Id', sid)
+        return new Response(res.body, { status: res.status, headers })
+      },
+    })
+    const out = await sdkCallTool(plant(long), target(url), { tool: def('notes_read'), args: { id: 'n1' }, mode: 'read' })
+    expect(out).toMatchObject({ kind: 'ok', session: { id: long } })
+    expect(sent.slice(-1)).toEqual([long])
+  })
+})
+
+describe('#652: a probe whose stream breaks or ends fails fast', () => {
+  it.each([
+    ['ends', () => new Response(': open\n\n', { status: 200, headers: { 'Content-Type': 'text/event-stream' } })],
+    ['breaks', () => new Response(new ReadableStream({ start: c => { c.enqueue(new TextEncoder().encode(': open\n\n')); c.error(new TypeError('reset')) } }), { status: 200, headers: { 'Content-Type': 'text/event-stream' } })],
+  ] as const)('a probe stream that %s: lost, well inside the deadline, and no initialize', async (_how, answer) => {
+    const url = `${MODERN}/open/mcp`
+    const plant: SdkDeps = { ...deps, timeoutMs: 5_000, upstream: async () => answer() }
+    const started = performance.now()
+    const out = await sdkListTools(plant, target(url))
+    expect(out).toMatchObject({ kind: 'error', reason: 'lost' })
+    expect(performance.now() - started).toBeLessThan(1_000)
+    expect(out.wire.filter(e => e.rpc === 'initialize' && e.fate === 'sent')).toEqual([])
+  })
+})
+
+describe('#648: a whole list has a byte and time budget', () => {
+  it('bytes: a list past its total budget stops with over_budget, though every page fits the per-request cap', async () => {
+    const url = `${MODERN}/open/mcp`
+    const ok = await sdkListTools(deps, target(url))
+    const spent = ok.kind === 'ok' ? ok.wire.length : 0
+    expect(spent).toBe(3)
+    fx.log.clear()
+    const out = await sdkListTools({ ...deps, listBudget: { bytes: 900, ms: 60_000 } }, target(url))
+    expect(out).toMatchObject({ kind: 'error', reason: 'over_budget', sent: 'no' })
+    // The discover answer fit; the budget ran out within the pages, and nothing past it left.
+    expect(wire(url).length).toBeLessThan(3)
+    expect(out.wire.some(e => e.overBudget)).toBe(true)
+  })
+
+  it('time: pages that each fit their own deadline still stop at the list deadline', async () => {
+    const url = `${MODERN}/open/mcp`
+    const slow: SdkDeps = {
+      ...deps,
+      listBudget: { bytes: 8 * 1024 * 1024, ms: 150 },
+      upstream: async req => {
+        const body = await req.clone().text()
+        if (body.includes('"tools/list"')) await new Promise(r => setTimeout(r, 100))
+        return fx.fetch(req)
+      },
+    }
+    const started = performance.now()
+    const out = await sdkListTools(slow, target(url))
+    expect(out).toMatchObject({ kind: 'error', reason: 'over_budget' })
+    expect(performance.now() - started).toBeLessThan(1_000)
+    expect(wire(url).filter(m => m === 'tools/list').length).toBeLessThanOrEqual(2)
   })
 })
 

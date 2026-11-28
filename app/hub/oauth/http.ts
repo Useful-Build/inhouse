@@ -65,10 +65,10 @@ export async function send(
   }
 }
 
-type Capped = { kind: 'ok'; text: string } | { kind: 'too_large' } | { kind: 'bad_utf8' } | { kind: 'failed' }
+type Capped = { kind: 'ok'; text: string; bytes: number } | { kind: 'too_large' } | { kind: 'bad_utf8' } | { kind: 'failed' }
 
 async function readCapped(res: Response, limit: number): Promise<Capped> {
-  if (!res.body) return { kind: 'ok', text: '' }
+  if (!res.body) return { kind: 'ok', text: '', bytes: 0 }
   const declared = Number(res.headers.get('Content-Length'))
   if (Number.isFinite(declared) && declared > limit) {
     await res.body.cancel().catch(() => {})
@@ -98,7 +98,7 @@ async function readCapped(res: Response, limit: number): Promise<Capped> {
     at += c.byteLength
   }
   try {
-    return { kind: 'ok', text: new TextDecoder('utf-8', { fatal: true, ignoreBOM: false }).decode(all) }
+    return { kind: 'ok', text: new TextDecoder('utf-8', { fatal: true, ignoreBOM: false }).decode(all), bytes: total }
   } catch {
     return { kind: 'bad_utf8' }
   }
@@ -146,8 +146,9 @@ export function constantTimeEqual(a: string, b: string): boolean {
 // - a POST's JSON-RPC method must be on the caller's list, and `tools/call` has a per-operation cap (a write's is 1);
 //   anything else is answered here (202 for a notification) or refused, and never sent;
 // - `initialize` (the 2025 handshake) leaves only as the first request of an operation (a cached legacy verdict) or
-//   right after a probe the spec lets a client read as "legacy server": a 4xx other than 401 and 403, or an in-band
-//   JSON-RPC error, neither a 2026-07-28 error (-32020, -32021, or -32022 naming a modern version). So a modern error,
+//   right after a probe the spec lets a client read as "legacy server": a 400, 404, 405, 406, 415 or 422, or an in-band
+//   JSON-RPC error (over JSON or an event stream), neither one of the 2026-07-28 errors (-32020, -32021, -32022: any of
+//   them, whatever its id, its data or the answer's content type, marks the server modern). So a modern error,
 //   a redirect, an outage or a lost answer is never followed by the legacy handshake (the SDK's own classifier,
 //   src/client/probeClassifier.ts, falls back on every one of those but an outage). One more case lets it leave: a 404
 //   to a request that carried a session id (2025-11-25 transports, "Session Management" 4: start a new session);
@@ -184,12 +185,14 @@ export type WireEvent = {
   /** For a sent request. `network`: threw before any answer; `lost`: the deadline or a broken body; `open`: still streaming. */
   answer?: 'response' | 'network' | 'lost' | 'too_large' | 'malformed' | 'open'
   status?: number
-  /** The JSON-RPC error code of the answer to this request's id (never its message or data). */
+  /** The JSON-RPC error code of the answer to this request's id, or of a null-id error (never its message or data). */
   rpcCode?: number
   /** A -32022 that names a 2026-07-28 or later version among those it supports. */
   modernVersions?: boolean
   insufficientScope?: boolean
   retryAfterMs?: number
+  /** The operation's whole budget ran out here: refused before it left, or its answer cut short (#648). */
+  overBudget?: true
 }
 
 export type McpFetchOptions = {
@@ -205,12 +208,20 @@ export type McpFetchOptions = {
   record: WireEvent[]
   /** Called when an event stream ends or breaks without its answer (the SDK would otherwise wait for its own timeout). */
   onLost?: () => void
+  /**
+   * A cap on the whole operation, over all its requests (#648): answer bytes read and time since its first request. A
+   * request that would start past it is refused here; one in flight gets only what is left (deadline and byte cap).
+   */
+  budget?: { bytes: number; ms: number }
 }
 
 export type McpFetch = (url: string | URL, init?: RequestInit) => Promise<Response>
 
-const MODERN_ERROR_CODES = new Set([-32020, -32021])
+/** The 2026-07-28 error family (basic/index "Error Codes"): any of them means a modern server (#647). */
+const MODERN_ERROR_CODES = new Set([-32020, -32021, -32022])
 const FIRST_MODERN_VERSION = '2026-07-28'
+/** The statuses a 2025 server answers a request it doesn't know with, which license the legacy fallback after a probe. */
+const LEGACY_PROBE_STATUSES = new Set([400, 404, 405, 406, 415, 422])
 /** Answer headers the SDK may read; everything else (Location, Set-Cookie, ...) stays here. */
 const PASSED_HEADERS = ['content-type', 'mcp-session-id', 'www-authenticate', 'retry-after']
 
@@ -230,6 +241,8 @@ export function mcpFetch(upstream: Upstream, o: McpFetchOptions): McpFetch {
   if (o.credential && !validCredential(o.credential)) throw new TypeError('the credential header is not allowed')
   let calls = 0
   let modernSeen = false
+  let spentBytes = 0
+  let startedAt: number | null = null
   /** Whether the legacy handshake may follow: true before anything was sent, then only after a probe read as legacy. */
   let handshakeOk = true
 
@@ -264,8 +277,17 @@ export function mcpFetch(upstream: Upstream, o: McpFetchOptions): McpFetch {
       }
       throw new McpFetchRefused('not sent')
     }
+    startedAt ??= Date.now()
+    const leftMs = o.budget ? o.budget.ms - (Date.now() - startedAt) : Infinity
+    const leftBytes = o.budget ? o.budget.bytes - spentBytes : Infinity
+    if (leftMs <= 0 || leftBytes <= 0) {
+      event.overBudget = true
+      throw new McpFetchRefused('over the operation budget')
+    }
     if (rpc === 'tools/call') calls++
     handshakeOk = false
+    const deadlineMs = Math.min(timeoutMs, leftMs)
+    const capBytes = Math.min(maxBytes, leftBytes)
 
     const headers = new Headers(init?.headers)
     headers.delete('authorization')
@@ -274,8 +296,9 @@ export function mcpFetch(upstream: Upstream, o: McpFetchOptions): McpFetch {
     let timedOut = false
     const timer = setTimeout(() => {
       timedOut = true
+      if (deadlineMs < timeoutMs) event.overBudget = true
       controller.abort(new DOMException('upstream deadline', 'TimeoutError'))
-    }, timeoutMs)
+    }, deadlineMs)
     const outer = init?.signal ?? null
     const onOuter = () => controller.abort(outer?.reason)
     if (outer?.aborted) onOuter()
@@ -288,7 +311,9 @@ export function mcpFetch(upstream: Upstream, o: McpFetchOptions): McpFetch {
     event.fate = 'sent'
     let res: Response
     try {
-      res = await upstream(new Request(endpoint.href, { method: 'POST', headers, body, redirect: 'manual', signal: controller.signal }))
+      // Raced against our own abort, so the deadline holds even over an upstream that doesn't watch the signal.
+      const aborted = new Promise<never>((_, reject) => controller.signal.addEventListener('abort', () => reject(new McpFetchRefused('aborted')), { once: true }))
+      res = await Promise.race([upstream(new Request(endpoint.href, { method: 'POST', headers, body, redirect: 'manual', signal: controller.signal })), aborted])
     } catch {
       done()
       event.answer = timedOut ? 'lost' : 'network'
@@ -303,16 +328,34 @@ export function mcpFetch(upstream: Upstream, o: McpFetchOptions): McpFetch {
       if (v !== null) passed.set(h, v)
     }
     const session = passed.get('mcp-session-id')
-    if (session !== null && !/^[\x21-\x7e]{1,256}$/.test(session)) passed.delete('mcp-session-id')
-    const noteError = (m: Record<string, unknown> | null) => {
-      if (!m || m.id !== id || typeof m.error !== 'object' || m.error === null) return
-      const e = m.error as { code?: unknown; data?: unknown }
-      if (typeof e.code !== 'number') return
-      event.rpcCode = e.code
-      const supported = typeof e.data === 'object' && e.data !== null ? (e.data as { supported?: unknown }).supported : undefined
-      const modern = Array.isArray(supported) && supported.some(v => typeof v === 'string' && v >= FIRST_MODERN_VERSION)
-      if (e.code === -32022 && modern) event.modernVersions = true
-      if (MODERN_ERROR_CODES.has(e.code) || (e.code === -32022 && modern)) modernSeen = true
+    // Visible ASCII only (2025-11-25 transports, "Session Management" 1), up to 4 KiB: a signed id (a JWT) fits (#651).
+    if (session !== null && !/^[\x21-\x7e]{1,4096}$/.test(session)) passed.delete('mcp-session-id')
+    const sessionSent = headers.has('mcp-session-id')
+    /**
+     * Reads one JSON-RPC message of the answer: an error for this request's id, or with a null id (a server that couldn't
+     * read the id still answers this request), records its code. Any -32020, -32021 or -32022 marks the server modern,
+     * whatever its id, its `data` or the answer's content type (#647). Returns whether the message answers this request.
+     */
+    const note = (m: Record<string, unknown>): boolean => {
+      const mine = m.id === id && id !== null
+      const error = typeof m.error === 'object' && m.error !== null ? (m.error as { code?: unknown; data?: unknown }) : null
+      if (error && typeof error.code === 'number' && (mine || m.id === null || m.id === undefined)) {
+        event.rpcCode = error.code
+        const supported = typeof error.data === 'object' && error.data !== null ? (error.data as { supported?: unknown }).supported : undefined
+        if (error.code === -32022 && Array.isArray(supported) && supported.some(v => typeof v === 'string' && v >= FIRST_MODERN_VERSION)) event.modernVersions = true
+        if (MODERN_ERROR_CODES.has(error.code)) modernSeen = true
+        return true
+      }
+      return mine && ('result' in m || 'error' in m)
+    }
+    /** Once the answer is known (JSON read whole, or the matching stream event): may the legacy handshake follow? */
+    const decide = () => {
+      if (modernSeen) return
+      if (res.status === 404 && sessionSent) handshakeOk = true
+      // A probe read as "a 2025 server" (2026-07-28 streamable-http "Backward Compatibility"): one of the statuses a
+      // 2025 server refuses an unknown request with, or an in-band JSON-RPC error over JSON or an event stream (#646).
+      // Never a 401, 403, 408 or 429 (the SDK's classifier reads 408 and 429 as legacy: an outage isn't a verdict).
+      if (rpc === 'server/discover') handshakeOk = LEGACY_PROBE_STATUSES.has(res.status) || (res.status === 200 && event.rpcCode !== undefined)
     }
 
     if (res.status >= 300 && res.status < 400) {
@@ -325,23 +368,39 @@ export function mcpFetch(upstream: Upstream, o: McpFetchOptions): McpFetch {
     const type = (res.headers.get('Content-Type') ?? '').split(';')[0]!.trim().toLowerCase()
     if (type === 'text/event-stream' && res.status === 200 && res.body && id !== null) {
       event.answer = 'open'
-      return new Response(matchedStream(res.body, id, maxBytes, event, done, noteError, o.onLost), { status: 200, headers: passed })
+      const spend = (n: number) => {
+        spentBytes += n
+        if (event.answer === 'too_large' && capBytes < maxBytes) event.overBudget = true
+      }
+      return new Response(matchedStream(res.body, id, capBytes, event, done, note, decide, o.onLost, spend), { status: 200, headers: passed })
     }
-    const read = await readCapped(res, maxBytes)
+    const read = await readCapped(res, capBytes)
     done()
     if (read.kind !== 'ok') {
       event.answer = read.kind === 'failed' ? 'lost' : read.kind === 'too_large' ? 'too_large' : 'malformed'
+      if (read.kind === 'too_large' && capBytes < maxBytes) event.overBudget = true
       throw new McpFetchRefused('no whole answer')
     }
+    spentBytes += read.bytes
     event.answer = 'response'
-    if (type === 'application/json') noteError(jsonObject(read.text))
-    if (res.status === 404 && headers.has('mcp-session-id') && !modernSeen) handshakeOk = true
-    if (rpc === 'server/discover' && !modernSeen) {
-      const legacyLike = (res.status >= 400 && res.status < 500 && res.status !== 401 && res.status !== 403) || (res.status === 200 && event.rpcCode !== undefined)
-      handshakeOk = legacyLike
-    }
+    // Whatever the content type says: a JSON body, or the events of a stream that wasn't a 200 (#647).
+    const messages = type === 'text/event-stream' ? sseMessages(read.text) : [jsonObject(read.text)]
+    let answered = false
+    for (const m of messages) if (m && note(m)) answered = true
+    decide()
+    // An in-band error the SDK can't match to its request (a null id): end its wait now, not at its own timeout.
+    if (answered && res.status === 200 && event.rpcCode !== undefined && !messages.some(m => m?.id === id)) o.onLost?.()
     return new Response(read.text.length > 0 ? read.text : null, { status: res.status, headers: passed })
   }
+}
+
+/** The JSON object each `data:` of a whole event-stream text holds (null for one that isn't an object). */
+function sseMessages(text: string): (Record<string, unknown> | null)[] {
+  return text
+    .split(/\r?\n\r?\n/)
+    .map(block => block.split(/\r?\n/).filter(l => l.startsWith('data:')).map(l => l.slice(5).replace(/^ /, '')).join('\n'))
+    .filter(data => data.length > 0)
+    .map(data => jsonObject(data))
 }
 
 /**
@@ -354,8 +413,10 @@ function matchedStream(
   maxBytes: number,
   event: WireEvent,
   done: () => void,
-  noteError: (m: Record<string, unknown> | null) => void,
+  note: (m: Record<string, unknown>) => boolean,
+  decide: () => void,
   onLost: (() => void) | undefined,
+  spend: (bytes: number) => void,
 ): ReadableStream<Uint8Array> {
   const reader = upstream.getReader()
   const decoder = new TextDecoder('utf-8', { fatal: true, ignoreBOM: false })
@@ -368,6 +429,7 @@ function matchedStream(
     finished = true
     event.answer = answer
     done()
+    spend(total)
     if (failed) c.error(new McpFetchRefused('no whole answer'))
     else c.close()
     if (answer !== 'response') onLost?.()
@@ -396,18 +458,27 @@ function matchedStream(
         buffer = blocks.pop()!
         let out = ''
         let answered = false
+        let unmatched = false
         for (const block of blocks) {
           out += `${block}\n\n`
           const data = block.split(/\r?\n/).filter(l => l.startsWith('data:')).map(l => l.slice(5).replace(/^ /, '')).join('\n')
           const m = data.length > 0 ? jsonObject(data) : null
-          if (m && m.id === id && ('result' in m || 'error' in m)) {
-            noteError(m)
+          if (m && note(m)) {
             answered = true
+            unmatched = m.id !== id
             break
           }
         }
+        if (answered) {
+          // Decided before the SDK reads the answer, so its next request (a 2025 handshake or not) meets the verdict.
+          decide()
+          if (out.length > 0) c.enqueue(encoder.encode(out))
+          await finish(c, 'response', false)
+          // A null-id error the SDK can't match: end its wait now.
+          if (unmatched) onLost?.()
+          return
+        }
         if (out.length > 0) c.enqueue(encoder.encode(out))
-        if (answered) return finish(c, 'response', false)
         if (out.length > 0) return
       }
     },

@@ -30,8 +30,17 @@
 // - a write is exactly one `tools/call` POST, whatever comes back (our fetch also caps it at one). A write on a 2025
 //   server starts its own session. `sent: 'no'` only when no `tools/call` POST left the hub.
 // No console output, and nothing from an upstream body, header or error message reaches a result.
+//
+// Bounds: each request has `mcpFetch`'s deadline and byte cap; a whole list also has a total budget (`LIST_BUDGET`:
+// every page's bytes and the time since its first request), so 50 pages can't hold 50 times either (#648). Output-schema
+// validation can't run: the Client gets a validator that throws (`refusingValidator`), so the workerd shim's default
+// (`@cfworker/json-schema`) is never used, and the definition we pass carries no `outputSchema` anyway.
+//
+// NOT here: a public-address check. `mcpFetch` sends to the exact endpoint it is given and checks scheme, credentials
+// in the URL and the path, but not whether the host resolves to a private address; M4-R1's `connections/destinations.ts`
+// owns that (N35: the address check, with its DNS-to-connect limit) before an endpoint ever reaches this module.
 
-import { Client, isInputRequiredResult, type ClientOptions, type DiscoverResult, type PriorDiscovery, type StreamableHTTPClientTransportOptions, StreamableHTTPClientTransport, type Tool } from '@modelcontextprotocol/client'
+import { Client, isInputRequiredResult, type ClientOptions, type jsonSchemaValidator, type DiscoverResult, type PriorDiscovery, type StreamableHTTPClientTransportOptions, StreamableHTTPClientTransport, type Tool } from '@modelcontextprotocol/client'
 import type { McpToolResult } from '../../registry/registry'
 import { MCP_MAX_BYTES, MCP_TIMEOUT_MS, mcpFetch, type McpCredential, type McpFetch, type Upstream, type WireEvent } from '../../oauth/http'
 
@@ -42,6 +51,8 @@ export const ERA_TTL_MS = 3_600_000
 const SDK_GRACE_MS = 1_000
 /** A list longer than this many pages is refused (a cursor that never ends). */
 export const MAX_LIST_PAGES = 50
+/** A whole list (probe, handshake and every page): at most this many answer bytes, and this long from its first request. */
+export const LIST_BUDGET = { bytes: 8 * 1024 * 1024, ms: 60_000 } as const
 
 const LIST_METHODS: ReadonlySet<string> = new Set(['server/discover', 'initialize', 'notifications/initialized', 'tools/list'])
 const CALL_METHODS: ReadonlySet<string> = new Set(['server/discover', 'initialize', 'notifications/initialized', 'tools/call'])
@@ -67,7 +78,15 @@ export class EraCache {
 /** Where an operation goes, and with what. `credential` goes only to `endpoint`'s exact URL. */
 export type McpTarget = { endpoint: string; generation: number; credential: McpCredential | null }
 
-export type SdkDeps = { upstream: Upstream; now: () => number; eras: EraCache; timeoutMs?: number; maxBytes?: number }
+export type SdkDeps = {
+  upstream: Upstream
+  now: () => number
+  eras: EraCache
+  timeoutMs?: number
+  maxBytes?: number
+  /** A list's total budget (default `LIST_BUDGET`). */
+  listBudget?: { bytes: number; ms: number }
+}
 
 /** A 2025-era session kept in object memory for reads (writes never reuse one). */
 export type LegacySession = { endpoint: string; generation: number; id: string; protocolVersion: string }
@@ -94,6 +113,8 @@ export type McpFailure =
   | 'tool_error'
   /** The server asked for input the hub doesn't give, or (a write) answered `input_required` at all. */
   | 'needs_input'
+  /** A list ran past its total byte or time budget (#648). */
+  | 'over_budget'
 
 export type McpFail = {
   kind: 'error'
@@ -104,13 +125,22 @@ export type McpFail = {
   wire: WireEvent[]
 }
 
-export type McpListOk = { kind: 'ok'; tools: Tool[]; era: Era; wire: WireEvent[] }
+/** `excluded`: tools left out for an invalid `x-mcp-header` declaration. */
+export type McpListOk = { kind: 'ok'; tools: Tool[]; excluded: number; era: Era; wire: WireEvent[] }
 export type McpCallOk = { kind: 'ok'; result: McpToolResult; dropped: number; era: Era; session: LegacySession | null; wire: WireEvent[] }
+
+/** Output-schema validation is off in the hub: anything that asks for a validator gets a throw, never a check. */
+export const refusingValidator: jsonSchemaValidator = {
+  getValidator() {
+    throw new Error('output-schema validation is off in the hub')
+  },
+}
 
 /** The Client's options (exported so a test pins each one). */
 export function clientOptions(timeoutMs: number): ClientOptions {
   return {
     capabilities: {},
+    jsonSchemaValidator: refusingValidator,
     versionNegotiation: { mode: 'auto', probe: { timeoutMs: timeoutMs + SDK_GRACE_MS, maxRetries: 0 } },
     inputRequired: { autoFulfill: false },
   }
@@ -126,12 +156,20 @@ export function transportOptions(fetch: McpFetch, session: LegacySession | null)
   }
 }
 
-type Op = { fetch: McpFetch; record: WireEvent[]; abort: AbortController; timeoutMs: number }
+type Op = {
+  fetch: McpFetch
+  record: WireEvent[]
+  abort: AbortController
+  timeoutMs: number
+  /** What a lost answer does now: cancels the waiting request; while connecting, closes the transport too (#652). */
+  lost: () => void
+}
 
-function operation(deps: SdkDeps, target: McpTarget, allow: ReadonlySet<string>, maxCalls: number): Op {
+function operation(deps: SdkDeps, target: McpTarget, allow: ReadonlySet<string>, maxCalls: number, budget?: { bytes: number; ms: number }): Op {
   const record: WireEvent[] = []
   const timeoutMs = deps.timeoutMs ?? MCP_TIMEOUT_MS
-  const op: Op = { fetch: null as unknown as McpFetch, record, abort: new AbortController(), timeoutMs }
+  const op: Op = { fetch: null as unknown as McpFetch, record, abort: new AbortController(), timeoutMs, lost: () => {} }
+  op.lost = () => op.abort.abort(new DOMException('answer lost', 'AbortError'))
   op.fetch = mcpFetch(deps.upstream, {
     endpoint: target.endpoint,
     credential: target.credential,
@@ -140,8 +178,9 @@ function operation(deps: SdkDeps, target: McpTarget, allow: ReadonlySet<string>,
     timeoutMs,
     maxBytes: deps.maxBytes ?? MCP_MAX_BYTES,
     record,
+    ...(budget ? { budget } : {}),
     // A stream that ended or broke without its answer: the SDK's request is cancelled now, not at its own timeout.
-    onLost: () => op.abort.abort(new DOMException('answer lost', 'AbortError')),
+    onLost: () => op.lost(),
   })
   return op
 }
@@ -154,6 +193,63 @@ function connection(op: Op, target: McpTarget, session: LegacySession | null): {
 }
 
 const requestOptions = (op: Op) => ({ timeout: op.timeoutMs + SDK_GRACE_MS, signal: op.abort.signal })
+
+/**
+ * `client.connect`, failing fast when an answer is lost on the way. The SDK's probe (versionNegotiation.ts ProbeWindow)
+ * waits on its own timer and never reads the connect signal, but it settles at once when the transport closes; so while
+ * connecting, a lost answer closes the transport (#652).
+ */
+async function connect(op: Op, conn: { client: Client; transport: StreamableHTTPClientTransport }, prior: PriorDiscovery | null): Promise<void> {
+  const cancel = op.lost
+  op.lost = () => {
+    cancel()
+    void conn.transport.close()
+  }
+  try {
+    await conn.client.connect(conn.transport, { ...requestOptions(op), ...(prior ? { prior } : {}) })
+  } finally {
+    op.lost = cancel
+  }
+}
+
+/** The 2026-07-28 rule for `x-mcp-header` (streamable-http "Custom Headers from Tool Parameters"), as the SDK reads it. */
+const HEADER_TOKEN = /^[!#$%&'*+\-.^_`|~0-9A-Za-z]+$/
+const HEADER_TYPES = new Set(['string', 'integer', 'boolean'])
+const UNREACHABLE_KEYWORDS = ['items', 'prefixItems', 'contains', 'additionalProperties', 'unevaluatedProperties', 'unevaluatedItems', 'propertyNames', 'patternProperties', 'dependentSchemas', 'oneOf', 'anyOf', 'allOf', 'not', 'if', 'then', 'else', '$defs', 'definitions']
+const MAP_KEYWORDS = new Set(['patternProperties', 'dependentSchemas', '$defs', 'definitions'])
+
+/**
+ * Whether a tool's `x-mcp-header` declarations are valid: each on a property reached only through `properties`, a
+ * non-empty RFC 9110 token, on a string, integer or boolean, unique without regard to case. A client MUST leave out a
+ * tool that breaks it (#650). The same walk as the SDK's own `scanXMcpHeaderDeclarations` (core-internal
+ * shared/mcpParamHeaders.ts, 2.4.0), which its package doesn't export, so `listTools()` was its only caller.
+ */
+export function validMcpHeaders(inputSchema: unknown): boolean {
+  const seen = new Set<string>()
+  const visit = (node: unknown, depth: number, reachable: boolean): boolean => {
+    if (node === null || typeof node !== 'object') return true
+    if (depth > 64) return false
+    const schema = node as Record<string, unknown>
+    if ('x-mcp-header' in schema) {
+      const name = schema['x-mcp-header']
+      if (!reachable || depth === 0 || typeof name !== 'string' || !HEADER_TOKEN.test(name)) return false
+      if (typeof schema.type !== 'string' || !HEADER_TYPES.has(schema.type)) return false
+      if (seen.has(name.toLowerCase())) return false
+      seen.add(name.toLowerCase())
+    }
+    if (schema.properties !== null && typeof schema.properties === 'object') {
+      for (const child of Object.values(schema.properties as Record<string, unknown>)) if (!visit(child, depth + 1, reachable)) return false
+    }
+    for (const k of UNREACHABLE_KEYWORDS) {
+      const sub = schema[k]
+      if (sub === undefined) continue
+      const branches = Array.isArray(sub) ? sub : sub !== null && typeof sub === 'object' && MAP_KEYWORDS.has(k) ? Object.values(sub as Record<string, unknown>) : [sub]
+      for (const b of branches) if (!visit(b, depth + 1, false)) return false
+    }
+    return true
+  }
+  return visit(inputSchema, 0, true)
+}
 
 /** The era the client settled on, cached for the next operation (a probe's verdict only). */
 function remember(deps: SdkDeps, target: McpTarget, client: Client): Era | null {
@@ -212,6 +308,7 @@ function fail(op: Op, reason: McpFailure, retryAfterMs?: number): McpFail {
 }
 
 function failFrom(op: Op, deps: SdkDeps, target: McpTarget, rpc?: string): McpFail {
+  if (op.record.some(e => e.overBudget)) return fail(op, 'over_budget')
   const f = failureOf(rpc ? (lastSent(op.record, rpc) ?? lastSent(op.record)) : lastSent(op.record))
   if (f.reason === 'version') deps.eras.drop(target.endpoint, target.generation)
   return fail(op, f.reason, f.retryAfterMs)
@@ -222,19 +319,20 @@ function failFrom(op: Op, deps: SdkDeps, target: McpTarget, rpc?: string): McpFa
  * and caches the era it found.
  */
 export async function sdkListTools(deps: SdkDeps, target: McpTarget): Promise<McpListOk | McpFail> {
-  const op = operation(deps, target, LIST_METHODS, 0)
+  const op = operation(deps, target, LIST_METHODS, 0, deps.listBudget ?? LIST_BUDGET)
   const { client, transport } = connection(op, target, null)
   try {
     try {
-      await client.connect(transport, requestOptions(op))
+      await connect(op, { client, transport }, null)
     } catch {
       deps.eras.drop(target.endpoint, target.generation)
       return failFrom(op, deps, target)
     }
     const era = remember(deps, target, client)
     if (!era) return fail(op, 'malformed')
-    if (!client.getServerCapabilities()?.tools) return { kind: 'ok', tools: [], era, wire: op.record }
+    if (!client.getServerCapabilities()?.tools) return { kind: 'ok', tools: [], excluded: 0, era, wire: op.record }
     const tools: Tool[] = []
+    let excluded = 0
     const seen = new Set<string>()
     let cursor: string | undefined
     for (let page = 0; ; page++) {
@@ -245,13 +343,17 @@ export async function sdkListTools(deps: SdkDeps, target: McpTarget): Promise<Mc
       } catch {
         return failFrom(op, deps, target, 'tools/list')
       }
-      tools.push(...res.tools)
+      // A tool whose x-mcp-header declarations break the rule is left out, and counted (#650).
+      for (const t of res.tools) {
+        if (validMcpHeaders(t.inputSchema)) tools.push(t)
+        else excluded++
+      }
       if (res.nextCursor === undefined) break
       if (seen.has(res.nextCursor)) return fail(op, 'malformed')
       seen.add(res.nextCursor)
       cursor = res.nextCursor
     }
-    return { kind: 'ok', tools, era, wire: op.record }
+    return { kind: 'ok', tools, excluded, era, wire: op.record }
   } finally {
     await client.close()
   }
@@ -296,7 +398,7 @@ export async function sdkCallTool(deps: SdkDeps, target: McpTarget, call: McpToo
   const open = async (session: LegacySession | null): Promise<McpFail | Era> => {
     const prior: PriorDiscovery | null = session ? { kind: 'legacy' } : deps.eras.get(target.endpoint, target.generation, deps.now())
     try {
-      await conn.client.connect(conn.transport, { ...requestOptions(op), ...(prior ? { prior } : {}) })
+      await connect(op, conn, prior)
     } catch {
       deps.eras.drop(target.endpoint, target.generation)
       return failFrom(op, deps, target)
