@@ -22,7 +22,8 @@ import { FakeMcpServer, SLACK_CHANNELS, SLACK_MESSAGES } from '../../test/upstre
 import { FakeSlackWeb, WEB_CHANNELS } from '../../test/upstreams/slack/server'
 import { dataset as shopifyFixtureValue } from '../../test/upstreams/shopify/recordings/fixture/dataset'
 import type { Dataset } from '../../test/upstreams/shopify/dataset'
-import { notesMcp, shopifyIssuedTokens, shopifyRequests, shopifyWrite, slackMcp, slackWeb } from './index'
+import { attachFakeStorage, notesMcp, shopifyIssuedTokens, shopifyRequests, shopifyWrite, slackMcp, slackWeb } from './index'
+import type { FakeKv } from './write-store'
 
 /** Found in the hub's test bundle, never in the deployable one (scripts/check-hub-build.mjs reads it from here). */
 export const HUB_FAKES_CANARY = 'INHOUSE_HUB_FAKES_CANARY_3a6f'
@@ -274,19 +275,27 @@ export function hubLogs(since = 0): { lines: string[]; next: number } {
   return { lines: hubLogBuf.lines.slice(from), next: hubLogBuf.dropped + hubLogBuf.lines.length }
 }
 
-/** Leaf ops executed inside the singleton `__test-fakes__` SignIn Durable Object (zero outbound DO calls). */
-export function runHubFakesInDo(kv: Pick<SyncKvStorage, 'get' | 'put' | 'delete'>, input: unknown): HubResult<unknown> {
+/**
+ * Leaf ops executed inside the singleton `__test-fakes__` SignIn Durable Object (zero outbound DO calls). The write
+ * store is bound to the DO's storage first (#619: `state` after a restart reads it back), and kept after `set` and `reset`.
+ */
+export function runHubFakesInDo(kv: FakeKv, input: unknown): HubResult<unknown> {
   const parsed = HubFakesOpSchema.safeParse(input)
   if (!parsed.success) return err('invalid_args', parsed.error.issues[0]?.path.join('.') || 'op')
   const op = parsed.data
+  const writeStore = attachFakeStorage(kv)
   switch (op.op) {
     case 'state':
       return { ok: true, value: fakesStateLocal() }
     case 'reset':
       resetFakes(kv)
+      writeStore.save()
       return { ok: true, value: { reset: true } }
-    case 'set':
-      return applySet(op)
+    case 'set': {
+      const r = applySet(op)
+      writeStore.save()
+      return r
+    }
     case 'var': {
       const cur = kv.get<Record<string, string>>(TEST_FAKES_VARS_KEY) ?? {}
       kv.put(TEST_FAKES_VARS_KEY, { ...cur, [op.name]: op.value })

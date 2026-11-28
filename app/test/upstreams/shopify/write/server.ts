@@ -15,6 +15,10 @@
 // - Idempotent mutations (M3-S2: stock and refunds): the same `idempotencyKey` with the same variables answers the first
 //   answer again and changes nothing; with other variables it's an error and changes nothing.
 // - scripts/check-hub-build.mjs proves SHOPIFY_WRITE_UPSTREAM_CANARY and this module are absent from the deployable bundle.
+// - Restartable (#619): `snapshot()` holds every field but the logs (the issued tokens included) as plain data,
+//   `restore()` puts a snapshot and the logs back, and `onChange` runs after each request. The hub's test build keeps
+//   them in the singleton test-fakes Durable Object's storage (app/hub/testing/write-store.ts), so a restart of that
+//   DO's isolate doesn't forget a token the fake issued.
 
 import { GqlError, mismatch, parseDocument } from './gql.js'
 import { FAKE_WRITE_OPS, type FakeWriteOperationKey } from './ops/index.js'
@@ -153,6 +157,32 @@ const gqlError = (message: string, code: string, version: string) =>
 /** Shopify's throttle bucket as the fake reports it when its `throttle` fault is set: empty, refilling at 100 a second. */
 export const FAKE_THROTTLE = { maximumAvailable: 2000, currentlyAvailable: 0, restoreRate: 100 } as const
 
+/** The fake's append-only logs, kept apart from the rest of its state so a store can keep them entry by entry. */
+export const WRITE_LOG_NAMES = ['requests', 'writes', 'reads', 'documentErrors'] as const
+export type WriteLogName = (typeof WRITE_LOG_NAMES)[number]
+
+/** Every field but the logs, as plain data (no Map or Set), so a store can hold it as it is. */
+export type FakeShopifyWriteCore = {
+  orders: FakeWriteOrder[]
+  drafts: FakeDraftOrder[]
+  variants: string[]
+  products: [string, FakeProduct][]
+  orderFacts: [string, FakeOrderFacts][]
+  stock: [string, number][]
+  adjustments: number
+  refundOrders: FakeRefundOrder[]
+  refunds: FakeRefund[]
+  currency: string
+  faults: WriteFaults
+  idempotent: [string, { variables: string; data: Record<string, unknown> }][]
+  issuedTokens: string[]
+  scope: string[]
+  credentials: { clientId: string; clientSecret: string }
+  apiVersion: string
+  tokens: string[]
+  issued: number
+}
+
 export class FakeShopifyWriteUpstream {
   orders = new Map<string, FakeWriteOrder>(INITIAL_WRITE_ORDERS.map(o => [o.id, { ...o, tags: [...o.tags] }]))
   drafts: FakeDraftOrder[] = []
@@ -179,6 +209,61 @@ export class FakeShopifyWriteUpstream {
   apiVersion = SHOPIFY_WRITE_API_VERSION
   #tokens = new Set<string>()
   #issued = 0
+  /** Runs after each request is answered (and before a `timeout` fault starts to hang), so a store can keep the state. */
+  onChange: (() => void) | null = null
+
+  /** A JSON copy of every field but the logs (`WRITE_LOG_NAMES`). */
+  snapshot(): FakeShopifyWriteCore {
+    const core: FakeShopifyWriteCore = {
+      orders: [...this.orders.values()],
+      drafts: this.drafts,
+      variants: [...this.variants],
+      products: [...this.products],
+      orderFacts: [...this.orderFacts],
+      stock: [...this.stock],
+      adjustments: this.adjustments,
+      refundOrders: [...this.refundOrders.values()],
+      refunds: this.refunds,
+      currency: this.currency,
+      faults: this.faults,
+      idempotent: [...this.#idempotent],
+      issuedTokens: this.issuedTokens,
+      scope: this.scope,
+      credentials: this.credentials,
+      apiVersion: this.apiVersion,
+      tokens: [...this.#tokens],
+      issued: this.#issued,
+    }
+    return JSON.parse(JSON.stringify(core)) as FakeShopifyWriteCore
+  }
+
+  /** Puts back a `snapshot()` and the logs kept beside it (copies, so the fake never aliases the caller's values). */
+  restore(core: FakeShopifyWriteCore, logs: Pick<FakeShopifyWriteUpstream, WriteLogName>): void {
+    const c = JSON.parse(JSON.stringify(core)) as FakeShopifyWriteCore
+    const l = JSON.parse(JSON.stringify(logs)) as Pick<FakeShopifyWriteUpstream, WriteLogName>
+    this.orders = new Map(c.orders.map(o => [o.id, o]))
+    this.drafts = c.drafts
+    this.variants = new Set(c.variants)
+    this.products = new Map(c.products)
+    this.orderFacts = new Map(c.orderFacts)
+    this.stock = new Map(c.stock)
+    this.adjustments = c.adjustments
+    this.refundOrders = new Map(c.refundOrders.map(o => [o.id, o]))
+    this.refunds = c.refunds
+    this.currency = c.currency
+    this.faults = c.faults
+    this.#idempotent = new Map(c.idempotent)
+    this.issuedTokens = c.issuedTokens
+    this.scope = c.scope
+    this.credentials = c.credentials
+    this.apiVersion = c.apiVersion
+    this.#tokens = new Set(c.tokens)
+    this.#issued = c.issued
+    this.requests = l.requests
+    this.writes = l.writes
+    this.reads = l.reads
+    this.documentErrors = l.documentErrors
+  }
 
   reset(): void {
     this.orders = new Map(INITIAL_WRITE_ORDERS.map(o => [o.id, { ...o, tags: [...o.tags] }]))
@@ -201,6 +286,14 @@ export class FakeShopifyWriteUpstream {
   }
 
   fetch = async (req: Request): Promise<Response> => {
+    try {
+      return await this.#serve(req)
+    } finally {
+      this.onChange?.()
+    }
+  }
+
+  #serve = async (req: Request): Promise<Response> => {
     const url = new URL(req.url)
     if (req.method !== 'POST') {
       this.requests.push({ path: url.pathname, method: req.method })
@@ -292,6 +385,7 @@ export class FakeShopifyWriteUpstream {
       // Hangs past the caller's deadline: answers only when the request's signal aborts, with the abort reason, as
       // fetch does. The write was received (logged above), so the caller can't know whether it ran.
       const signal = req.signal
+      this.onChange?.()
       return new Promise<Response>((_, reject) => {
         if (signal.aborted) return reject(signal.reason)
         signal.addEventListener('abort', () => reject(signal.reason), { once: true })
