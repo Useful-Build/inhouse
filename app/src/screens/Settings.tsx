@@ -80,10 +80,33 @@ const fieldProps = (row: Row, disabled: boolean): ComponentProps<typeof Input> =
  * A settings text field. A plain field saves as you type. A typed one (an amount, an email) is checked when it loses
  * focus or on Enter: a wrong value shows why under the field and isn't saved; a right one is saved, in its tidy form.
  */
-function TextField({ row, disabled }: { row: Row; disabled: boolean }) {
+function TextField({ row, disabled, onAsk }: { row: Row; disabled: boolean; onAsk: (a: Ask) => void }) {
+  if (row.type === 'hosts') return <HostsField row={row} disabled={disabled} onAsk={onAsk} />
   return row.type
     ? <TypedField key={row.key} row={row} type={row.type} disabled={disabled} />
     : <PlainField row={row} disabled={disabled} />
+}
+
+const ANY_SITE = 'Any public website'
+const LISTED_SITES = 'Only the websites listed'
+
+/**
+ * The websites it may open: a choice first, then the list. Nothing saved is any public website; choosing the list saves
+ * it empty at once, which blocks every website until some are added (so an empty list is a deliberate choice, never a
+ * blur that saves nothing); going back clears the list, after asking when it has websites in it.
+ */
+function HostsField({ row, disabled, onAsk }: { row: Row; disabled: boolean; onAsk: (a: Ask) => void }) {
+  const save = (value: string | null) => tell(agent.setSetting(row.key!, value), row)
+  return (
+    <div className="flex max-w-full flex-col items-end gap-2.5">
+      <Select label={row.title} value={row.unset ? ANY_SITE : LISTED_SITES} options={[ANY_SITE, LISTED_SITES]} disabled={disabled} minWidth={200} onChange={v => {
+        if (v === LISTED_SITES) save('')
+        else if (row.value.trim()) onAsk({ title: 'Allow any public website?', text: 'This clears the list of websites.', action: 'Allow any website', gives: true, go: () => save(null) })
+        else save(null)
+      }} />
+      {!row.unset && <TypedField key={row.key} row={row} type="hosts" disabled={disabled} />}
+    </div>
+  )
 }
 
 /**
@@ -199,7 +222,7 @@ function Control({ row, locked, on, onToggle, onAsk, readOnly, denied, effortOk,
         : select
     }
     case 'text':
-      return <TextField row={row} disabled={locked || !row.key} />
+      return <TextField row={row} disabled={locked || !row.key} onAsk={onAsk} />
     case 'value':
       return row.value ? <span className="text-right text-base text-foreground-2">{row.value}</span> : null
     case 'button':
