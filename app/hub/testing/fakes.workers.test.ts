@@ -356,6 +356,26 @@ describe('test log flush and answer recording (non-throwing, loud, ordered)', ()
     await first
   })
 
+  it('flushes started at once from two Durable Objects both land their lines and neither throws (#530)', async () => {
+    // Each flush runs inside its own object (a SignIn alarm or call ends in one). Their lines share one per-isolate queue, and
+    // the second flush starts while the first one's send is still in flight.
+    const before = await value<{ next: number }>({ op: 'logs' })
+    const inObject = (name: string) =>
+      runInDurableObject(env.SIGNIN.get(env.SIGNIN.idFromName(name)), async instance => {
+        log('connect_start', { accountId: name })
+        await flushTestLogs((instance as unknown as { env: Env }).env)
+      })
+    const names: string[] = []
+    for (let round = 0; round < 10; round++) {
+      const a = `flush-a-${round}`
+      const b = `flush-b-${round}`
+      names.push(a, b)
+      await Promise.all([inObject(a), inObject(b)])
+    }
+    const landed = (await value<{ lines: string[] }>({ op: 'logs', since: before.next })).lines.join('\n')
+    for (const name of names) expect(landed, name).toContain(name)
+  })
+
   it('a failed append resolves, logging the error name and the number of lines lost, never their content', async () => {
     const spy = vi.spyOn(console, 'error').mockImplementation(() => {})
     log('connect_start', { accountId: 'slack:workspace' })
