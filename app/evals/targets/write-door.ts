@@ -152,17 +152,41 @@ export function newGrantId(): string {
   return `pg_${btoa(String.fromCharCode(...bytes)).replaceAll('+', '-').replaceAll('/', '_').replace(/=+$/, '')}`
 }
 
+/** Why the door refuses a ceiling it would seed (setCeiling), or null. M3-E's preflight checks each planned case (#724). */
+export function ceilingRefusal(operation: string, limits: CeilingLimits = {}): string | null {
+  if (!operationOk(operation)) return 'not a write operation'
+  const d = ceilingDefaults(operation)
+  const v = { perDayMax: limits.perDayMax ?? d.perDayMax, unitsMax: limits.unitsMax ?? d.unitsMax, bulkThreshold: limits.bulkThreshold ?? BULK_THRESHOLD_MAX, batchMax: limits.batchMax ?? BATCH_ITEMS_MAX }
+  if (!wholeIn(v.perDayMax, 1, LIMIT_MAX)) return 'not a daily maximum the door seeds'
+  if (!wholeIn(v.unitsMax, 1, LIMIT_MAX)) return 'not a largest call the door seeds'
+  if (!wholeIn(v.bulkThreshold, 1, BULK_THRESHOLD_MAX)) return 'not a bulk threshold the door seeds'
+  if (!wholeIn(v.batchMax, 1, BATCH_ITEMS_MAX)) return 'not a batch size the door seeds'
+  return null
+}
+
+/**
+ * Why the door refuses a grant's operation and limits (grant), or null; the member is the run's (checked at the grant).
+ * M3-E's preflight checks each planned case (#724).
+ */
+export function grantRefusal(g: { operation: string; perDay?: number; unitsMax?: number }): string | null {
+  if (!operationOk(g.operation) || !g.operation.startsWith('shopify.')) return 'not a Shopify write operation'
+  const d = OPERATIONS[g.operation as keyof typeof OPERATIONS].defaults.grant
+  const perDay = g.perDay ?? d?.perDay
+  const unitsMax = g.unitsMax ?? d?.unitsMax
+  if (perDay === undefined || unitsMax === undefined) return `${g.operation} has no grant defaults: name perDay and unitsMax`
+  if (!wholeIn(perDay, 1, MAX_PER_DAY)) return 'not a daily limit the door seeds'
+  if (!wholeIn(unitsMax, 1, LIMIT_MAX)) return 'not a largest call the door seeds'
+  return null
+}
+
 /** `nowSql` is the SQL for "now" in ms (default D1's own clock; tests give a fixed integer). */
 export function createWriteDoor(run: RunSql, nowSql: () => string = () => D1_NOW_MS): WriteDoor {
   const door: WriteDoor = {
     async setCeiling(operation, limits = {}) {
-      if (!operationOk(operation)) throw new DoorRefusal('not a write operation')
+      const why = ceilingRefusal(operation, limits)
+      if (why) throw new DoorRefusal(why)
       const d = ceilingDefaults(operation)
       const v = { perDayMax: limits.perDayMax ?? d.perDayMax, unitsMax: limits.unitsMax ?? d.unitsMax, bulkThreshold: limits.bulkThreshold ?? BULK_THRESHOLD_MAX, batchMax: limits.batchMax ?? BATCH_ITEMS_MAX }
-      if (!wholeIn(v.perDayMax, 1, LIMIT_MAX)) throw new DoorRefusal('not a daily maximum the door seeds')
-      if (!wholeIn(v.unitsMax, 1, LIMIT_MAX)) throw new DoorRefusal('not a largest call the door seeds')
-      if (!wholeIn(v.bulkThreshold, 1, BULK_THRESHOLD_MAX)) throw new DoorRefusal('not a bulk threshold the door seeds')
-      if (!wholeIn(v.batchMax, 1, BATCH_ITEMS_MAX)) throw new DoorRefusal('not a batch size the door seeds')
       // The ceiling's own writer's statement (#497): checked values only, at D1's clock, every change raising `rev`.
       await run(ceilingSql({ operation, ...v, nowMs: await door.now() }).replace(/;$/, ''))
       const back = (await door.ceilings()).filter((c) => c.operation === operation)
@@ -172,14 +196,12 @@ export function createWriteDoor(run: RunSql, nowSql: () => string = () => D1_NOW
       }
     },
     async grant(g) {
-      if (!operationOk(g.operation) || !g.operation.startsWith('shopify.')) throw new DoorRefusal('not a Shopify write operation')
+      const why = grantRefusal(g)
+      if (why) throw new DoorRefusal(why)
       if (!MEMBER_ID.test(g.memberId)) throw new DoorRefusal('not a member id')
-      const d = OPERATIONS[g.operation].defaults.grant
-      const perDay = g.perDay ?? d?.perDay
-      const unitsMax = g.unitsMax ?? d?.unitsMax
-      if (perDay === undefined || unitsMax === undefined) throw new DoorRefusal(`${g.operation} has no grant defaults: name perDay and unitsMax`)
-      if (!wholeIn(perDay, 1, MAX_PER_DAY)) throw new DoorRefusal('not a daily limit the door seeds')
-      if (!wholeIn(unitsMax, 1, LIMIT_MAX)) throw new DoorRefusal('not a largest call the door seeds')
+      const d = OPERATIONS[g.operation as keyof typeof OPERATIONS].defaults.grant
+      const perDay = (g.perDay ?? d?.perDay)!
+      const unitsMax = (g.unitsMax ?? d?.unitsMax)!
       const id = newGrantId()
       const m = sqlString(g.memberId)
       await run(
