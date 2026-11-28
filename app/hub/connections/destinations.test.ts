@@ -120,3 +120,39 @@ describe('the address check', () => {
     expect(await throwing('pub.example.com')).toBe(false)
   })
 })
+
+describe('the DNS lookup is bounded (Neon round 1, #2; #732)', () => {
+  const json = (a: unknown) => Response.json(a)
+
+  it('a public A with a private AAAA is refused: both lookups are read', async () => {
+    const resolve = dohResolver(async req => {
+      const type = new URL(req.url).searchParams.get('type')
+      return json(type === 'A' ? { Status: 0, Answer: [{ type: 1, data: '93.184.216.34' }] } : { Status: 0, Answer: [{ type: 28, data: 'fd00::7' }] })
+    })
+    expect(await resolve('mixed.example.com')).toBe(false)
+  })
+
+  it('a resolver that never answers is refused at the deadline, whatever its signal handling', async () => {
+    const resolve = dohResolver(() => new Promise<Response>(() => undefined), { timeoutMs: 20 })
+    expect(await resolve('stall.example.com')).toBe(false)
+  })
+
+  it('an answer past the byte cap is refused', async () => {
+    const big = JSON.stringify({ Status: 0, Answer: [{ type: 1, data: '93.184.216.34' }], pad: 'x'.repeat(2048) })
+    const resolve = dohResolver(async () => new Response(big), { maxBytes: 1024 })
+    expect(await resolve('big.example.com')).toBe(false)
+    const fits = dohResolver(async req => json(new URL(req.url).searchParams.get('type') === 'A' ? { Status: 0, Answer: [{ type: 1, data: '93.184.216.34' }] } : { Status: 0, Answer: [] }), { maxBytes: 1024 })
+    expect(await fits('small.example.com')).toBe(true)
+  })
+
+  it('the caller\'s abort stops the lookup: false, and the resolver saw the abort', async () => {
+    const controller = new AbortController()
+    let sawAbort = false
+    const resolve = dohResolver(req => new Promise<Response>((_, reject) => req.signal.addEventListener('abort', () => ((sawAbort = true), reject(new Error('aborted'))))))
+    const pending = resolve('slow.example.com', controller.signal)
+    controller.abort()
+    expect(await pending).toBe(false)
+    expect(sawAbort).toBe(true)
+    expect(await resolve('slow.example.com', controller.signal)).toBe(false)
+  })
+})

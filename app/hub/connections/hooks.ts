@@ -15,9 +15,10 @@ import type { ConfirmToolsRequest, ConnectionActor, ConnectionCredential, Connec
 import { err } from '../index/errors'
 import type { Envelope } from '../crypto/envelope'
 import type { KeyRingResult } from '../crypto/keyring'
-import type { McpCredential, Upstream } from '../oauth/http'
+import type { McpCredential } from '../oauth/http'
+import type { GuardedSend } from './send'
 import type { CallResult, ConnectionCallRequest, Fence } from './call'
-import type { CredentialClass } from './destinations'
+import type { CredentialClass, ResolvePublic } from './destinations'
 import type { ConnectionGatewayDeps } from './gateway'
 import type { ConnectionBinding, ConnectionRecord } from './record'
 
@@ -37,7 +38,10 @@ export type RevokeContext = {
   binding: ConnectionBinding
   captured: { key: Envelope | null; client: Envelope | null; token: Envelope | null; refresh: Envelope | null }
   keyring: () => Promise<KeyRingResult>
-  upstream: () => Promise<Upstream>
+  /** The guarded sender (send.ts) over the removed binding's destinations: a revocation goes only to `revoke`. */
+  send: GuardedSend
+  /** The DNS half of the address check (destinations.ts). */
+  resolvePublic: ResolvePublic
 }
 
 export type ConnectionHooks = {
@@ -89,11 +93,20 @@ export type ObjectOpContext = {
   accountId: string
   /** The record now (null: none, or a tombstone). Synchronous. */
   read(): ConnectionRecord | null
-  /** Writes a change under a fence, in one synchronous step (call.ts CallHost.commit); null when the fence broke. */
+  /**
+   * Writes a change under a fence, in one synchronous step; null when the record changed or went (call.ts `changeCode`).
+   * Pause doesn't stop it: only calls stop on pause.
+   */
   commit(fence: Fence, change: (r: ConnectionRecord) => ConnectionRecord): ConnectionRecord | null
   now(): number
   keyring(): Promise<KeyRingResult>
-  upstream(): Promise<Upstream>
+  /**
+   * The guarded sender (send.ts) over the record's destinations as they are at each send (M4-D's check, M4-O1a's sign-in
+   * legs, M4-B's key check). Never the raw upstream.
+   */
+  send: GuardedSend
+  /** The DNS half of the address check (destinations.ts). */
+  resolvePublic: ResolvePublic
   call(req: ConnectionCallRequest): Promise<CallResult>
 }
 

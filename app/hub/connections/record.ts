@@ -79,6 +79,11 @@ export type ConnectionRecord = {
   preparedBy: string
   preparedAtMs: number
   lastError: { code: HubErrorCode; atMs: number } | null
+  /**
+   * Set once a prepare's index write succeeded and was marked here (gateway.ts). A prepare the cap refused may abandon
+   * the record only while this is false, so a later prepare that joined and listed it is never tombstoned.
+   */
+  listed: boolean
 }
 
 /**
@@ -155,6 +160,7 @@ export const ConnectionRecordSchema = z.strictObject({
   preparedBy: MemberIdSchema,
   preparedAtMs: z.int().nonnegative(),
   lastError: z.strictObject({ code: HubErrorCodeSchema, atMs: z.int().nonnegative() }).nullable(),
+  listed: z.boolean(),
 })
   .refine(r => r.accountId === `mcp:${r.slug}`, 'account and slug')
   .refine(r => confirmedCount(r.tools) <= CONNECTION_CAPS.confirmedTools, 'too many confirmed tools')
@@ -189,6 +195,25 @@ export function checkRecord(r: StoredConnection): RecordCheck {
   const parsed = r.removed ? ConnectionTombstoneSchema.safeParse(r) : ConnectionRecordSchema.safeParse(r)
   if (parsed.success) return { ok: true }
   return { ok: false, reason: parsed.error.issues[0]?.message ?? 'record' }
+}
+
+/**
+ * The change a write makes (#734): checked against what the object holds, not only the new record's shape. The same
+ * account and slug; the generation and policy revision never go back; a removed slug never comes back; a record that
+ * replaces a tombstone (an abandoned prepare's) has a newer generation; a listed record never becomes unlisted. An
+ * object that holds a v1 or v2 record takes no connection record.
+ */
+export function checkTransition(prev: unknown, next: StoredConnection): RecordCheck {
+  if (prev === undefined) return { ok: true }
+  if (!isStoredConnection(prev)) return { ok: false, reason: 'another kind of record' }
+  if (prev.accountId !== next.accountId || prev.slug !== next.slug) return { ok: false, reason: 'another account' }
+  if (next.generation < prev.generation || next.policyRev < prev.policyRev) return { ok: false, reason: 'went back' }
+  if (prev.removed && !next.removed) {
+    if (prev.reason === 'removed') return { ok: false, reason: 'a removed slug' }
+    if (next.generation <= prev.generation) return { ok: false, reason: 'generation reused' }
+  }
+  if (!prev.removed && !next.removed && prev.listed && !next.listed) return { ok: false, reason: 'unlisted' }
+  return { ok: true }
 }
 
 /** The state a binding starts in, or returns to when its credential is dropped (N35, N40, N42). */
@@ -253,6 +278,7 @@ export function preparedRecord(p: { slug: string; input: ConnectionBindingInput;
     preparedBy: p.memberId,
     preparedAtMs: p.nowMs,
     lastError: null,
+    listed: false,
   }
 }
 
@@ -277,9 +303,12 @@ export function rebound(r: ConnectionRecord, next: ConnectionBinding): Connectio
   }
 }
 
-/** A credential set or replaced (N35): a new generation. `state` is the caller's (the check decides it, N39). */
+/**
+ * A credential set or replaced (N35): a new generation, and the stored list no longer fresh (it was fetched under the
+ * old credential, N43). `state` is the caller's (the check decides it, N39).
+ */
 export function withCredential(r: ConnectionRecord, field: 'key' | 'client' | 'token' | 'refresh', sealed: Envelope | null, state: ConnectionState): ConnectionRecord {
-  return { ...r, [field]: sealed, generation: r.generation + 1, state }
+  return { ...r, [field]: sealed, generation: r.generation + 1, list: null, state }
 }
 
 /** Every credential dropped (a disconnect): a new generation, back to waiting for one. */

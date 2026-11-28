@@ -83,6 +83,9 @@ describe('a changed binding makes a new generation and drops the credential', ()
   it('a credential set is a new generation; a policy change is a new policyRev only, and only when something changed', () => {
     const r = fresh(binding(undefined, { path: 'key' }))
     expect(withCredential(r, 'key', ENVELOPE, 'needs_review')).toMatchObject({ generation: 2, policyRev: 1, key: ENVELOPE, state: 'needs_review' })
+    // #730: a list fetched under the old credential isn't fresh for the new one.
+    const listed = { ...r, list: { fetchedAtMs: START_MS, ttlMs: 60_000, complete: true } }
+    expect(withCredential(listed, 'key', ENVELOPE, 'live').list).toBeNull()
     expect(withPolicy(r, { paused: true })).toMatchObject({ generation: 1, policyRev: 2, paused: true })
     expect(withPolicy(r, { trusted: true })).toMatchObject({ generation: 1, policyRev: 2, trusted: true })
     expect(withPolicy(r, { paused: false, trusted: false, adminMaySignIn: false, settings: {} })).toBe(r)

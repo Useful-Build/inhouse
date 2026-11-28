@@ -13,7 +13,7 @@ import { MemStore, ringJson } from '../signin/testing/kit'
 import * as G from './gateway'
 import { setPaused as gatewaySetPaused, disconnect as gatewayDisconnect } from '../oauth/gateway'
 import { INDEX_OBJECT } from './index'
-import { checkRecord, ConnectionRecordSchema, ConnectionTombstoneSchema, isStoredConnection, type ConnectionRecord } from './record'
+import { checkRecord, checkTransition, ConnectionRecordSchema, ConnectionTombstoneSchema, isStoredConnection, type ConnectionRecord } from './record'
 import { admin, binding, ConnWorld, inhouse, KEYED, run, server } from './testing/kit'
 import { notesConnector } from '../connectors/mcp/testing/notes-connector'
 
@@ -281,5 +281,139 @@ describe('key rotation and teardown walk the index', () => {
     expect((await w.core(INDEX_OBJECT).indexList())).toEqual({ ok: true, value: [] })
     expect(w.raw('mcp:alpha')).toMatchObject({ removed: true })
     expect(w.raw('mcp:beta')).toMatchObject({ removed: true })
+  })
+})
+
+describe('round 1 fixes', () => {
+  const ENV = (kid = 'k1') => ({ kid, iv: 'aaaaaaaaaaaaaaaa', ct: 'bbbbbbbbbbbbbbbbbbbbbbbb' })
+
+  it('Neon #3: an operation on a paused connection works; a call\'s own commit on it is refused', async () => {
+    const w = world()
+    w.ops = {
+      trust: async ctx => {
+        const r = ctx.read()!
+        const next = ctx.commit({ generation: r.generation, policyRev: r.policyRev, state: r.state }, x => ({ ...x, trusted: true, policyRev: x.policyRev + 1 }))
+        return next ? { ok: true, value: { trusted: next.trusted } } : { ok: false, error: { code: 'connect_stale', message: 'connect superseded by a newer change' } }
+      },
+    }
+    await prep(w)
+    await w.core(ID).setPaused(ID, true)
+    expect(await w.core(ID).connectionOp(ID, 'trust', {})).toEqual({ ok: true, value: { trusted: true } })
+    expect(w.raw(ID)).toMatchObject({ paused: true, trusted: true })
+    // A call's commit (afterCall) still stops on pause: the list runs unpaused, the pause lands before afterCall commits.
+    await w.core(ID).setPaused(ID, false)
+    let committed: unknown = 'not asked'
+    w.hooks.afterCall = async ctx => {
+      await w.core(ID).setPaused(ID, true)
+      committed = ctx.commit(x => ({ ...x, lastError: null }))
+      return ctx.result
+    }
+    await w.core(ID).connectionCall(ID, { kind: 'list' })
+    expect(committed).toBeNull()
+  })
+
+  it('#733: an operation on a record its prepare never listed is refused, and works once listed', async () => {
+    const w = world()
+    w.ops = { echo: async () => ({ ok: true, value: 'ran' }) }
+    await w.core(ID).prepareConnection({ accountId: ID, slug: 'helpdesk', adminMaySignIn: false, binding: binding(), memberId: 'm' })
+    expect(await w.core(ID).connectionOp(ID, 'echo', {})).toEqual({ ok: false, error: { code: 'not_configured', message: 'connector not configured: unlisted' } })
+    await prep(w)
+    expect(await w.core(ID).connectionOp(ID, 'echo', {})).toEqual({ ok: true, value: 'ran' })
+  })
+
+  it('#729: an operation\'s sender is the guarded hop over the record\'s binding, never the raw upstream', async () => {
+    const w = world()
+    const sent: string[] = []
+    w.upstream = async req => (sent.push(req.url), new Response('{}'))
+    w.ops = {
+      probe: async ctx => {
+        const out = []
+        out.push(await ctx.send({ purpose: 'mcp', url: KEYED, cls: 'key', method: 'POST', body: '{}' }))
+        out.push(await ctx.send({ purpose: 'metadata', url: KEYED, cls: 'key', method: 'GET' }))
+        out.push(await ctx.send({ purpose: 'mcp', url: 'https://evil.example.net/mcp', cls: 'none', method: 'GET' }))
+        out.push(await ctx.send({ purpose: 'mcp', url: KEYED, cls: 'key', method: 'POST', headers: { 'X-Forwarded-For': '1.2.3.4' } }))
+        return { ok: true, value: out.map(o => (o.ok ? 'sent' : o.refusal)) }
+      },
+    }
+    await prep(w, 'helpdesk', binding(KEYED, { path: 'key' }))
+    expect(await w.core(ID).connectionOp(ID, 'probe', {})).toEqual({ ok: true, value: ['sent', 'class', 'not_listed', 'never_sent'] })
+    expect(sent).toEqual([KEYED])
+  })
+
+  it('Neon #4: the walks visit every connection, report a thrown or refused one in its row, and never stop early', async () => {
+    const w = world()
+    for (const slug of ['alpha', 'beta', 'gamma']) await prep(w, slug)
+    w.around = async (accountId, method, call) => {
+      if (accountId === 'mcp:beta' && (method === 'reencrypt' || method === 'removeConnection')) throw new Error('object down')
+      return call()
+    }
+    const rotated = await G.reencryptConnections(w.deps(), server)
+    expect(rotated.ok && rotated.value.map(r => [r.accountId, r.code])).toEqual([['mcp:alpha', null], ['mcp:beta', 'internal'], ['mcp:gamma', null]])
+    const torn = await G.teardownConnections(w.deps(), server)
+    expect(torn.ok && torn.value.map(r => [r.accountId, r.code])).toEqual([['mcp:alpha', null], ['mcp:beta', 'internal'], ['mcp:gamma', null]])
+    expect(w.raw('mcp:gamma')).toMatchObject({ removed: true })
+    expect(w.raw('mcp:beta')).toMatchObject({ removed: false })
+  })
+
+  it('#734: a request for another account never reads or replaces this object\'s record; a write that goes back is refused', async () => {
+    const w = world()
+    await prep(w)
+    const before = w.raw(ID)
+    const core = w.core(ID)
+    await expect(core.prepareConnection({ accountId: 'mcp:other', slug: 'other', adminMaySignIn: false, binding: binding(), memberId: 'm' })).rejects.toThrow('another account')
+    await expect(core.removeConnection('mcp:other')).rejects.toThrow('another account')
+    await expect(core.connectionCall('mcp:other', { kind: 'list' })).rejects.toThrow('another account')
+    expect(w.raw(ID)).toEqual(before)
+    // The change, not only the shape: a generation going back, a removed slug coming back, a listed record unlisted.
+    const r = before as ConnectionRecord
+    expect(checkTransition(r, { ...r, generation: r.generation - 1 }).ok).toBe(false)
+    expect(checkTransition({ ...r, removed: true, reason: 'removed', removedAtMs: 0, revoked: true } as never, { ...r, generation: r.generation + 5 }).ok).toBe(false)
+    expect(checkTransition(r, { ...r, listed: false }).ok).toBe(false)
+    expect(checkTransition(r, { ...r, accountId: 'mcp:other', slug: 'other' }).ok).toBe(false)
+    expect(checkTransition(r, { ...r, policyRev: r.policyRev + 1 }).ok).toBe(true)
+    // And through the core: an operation that writes a generation back is refused, the record kept.
+    await w.core(ID).updateConnection({ accountId: ID, ifRev: r.policyRev, adminMaySignIn: true })
+    const now = w.raw(ID) as ConnectionRecord
+    w.ops = { back: async ctx => ({ ok: true, value: ctx.commit({ generation: now.generation, policyRev: now.policyRev, state: now.state }, x => ({ ...x, policyRev: 1 })) }) }
+    w.evict(ID) // a core built after the change takes the new ops
+    await expect(w.core(ID).connectionOp(ID, 'back', {})).rejects.toThrow('failed its check')
+    expect(w.raw(ID)).toEqual(now)
+  })
+
+  it('#732: rotation re-seals every envelope (refresh included); disconnect drops all four; status names a refresh-only kid', async () => {
+    const w = world()
+    await prep(w, 'helpdesk', binding(KEYED, { path: 'key' }))
+    const ring1 = await parseKeyRing(w.ringJson)
+    if (!ring1.ok) throw new Error('ring')
+    const sealed = { key: await seal(ring1.ring, ID, 'key', 'k'), client: await seal(ring1.ring, ID, 'client', 'c'), token: await seal(ring1.ring, ID, 'token', 't'), refresh: await seal(ring1.ring, ID, 'refresh', 'r') }
+    w.store(ID).put('record', { ...(w.raw(ID) as ConnectionRecord), ...sealed })
+    w.ringJson = ringJson(['k1', 'k2'], 'k2', new Map([['k1', JSON.parse(w.ringJson).keys.k1]]))
+    expect(await w.core(ID).reencrypt(ID)).toEqual({ ok: true, value: { kid: 'k2', changed: true } })
+    const after = w.raw(ID) as ConnectionRecord
+    for (const f of ['key', 'client', 'token', 'refresh'] as const) expect(after[f]!.kid, f).toBe('k2')
+    w.store(ID).put('record', { ...after, key: null, client: null, token: null, refresh: ENV('k9') })
+    expect(w.core(ID).status(ID)).toMatchObject({ ok: true, value: { kid: 'k9' } })
+    w.store(ID).put('record', { ...after })
+    expect(await w.core(ID).disconnect(ID)).toMatchObject({ ok: true })
+    expect(w.raw(ID)).toMatchObject({ key: null, client: null, token: null, refresh: null })
+  })
+
+  it('#732: abandon never takes a record that holds a credential', async () => {
+    const w = world()
+    await w.core(ID).prepareConnection({ accountId: ID, slug: 'helpdesk', adminMaySignIn: false, binding: binding(KEYED, { path: 'key' }), memberId: 'm' })
+    for (const f of ['key', 'client', 'token', 'refresh'] as const) {
+      const base = w.raw(ID) as ConnectionRecord
+      w.store(ID).put('record', { ...base, key: null, client: null, token: null, refresh: null, [f]: ENV() })
+      expect(await w.core(ID).abandonConnection(ID, base.generation), f).toEqual({ ok: true, value: { abandoned: false } })
+      expect(w.raw(ID)).toMatchObject({ removed: false })
+    }
+  })
+
+  it('#732: a v1 record for a connection account is never written by a v1 path (the alarm\'s grant included)', async () => {
+    const w = world()
+    const v1: SignInRecord = { v: 1, accountId: ID, state: 'active', generation: 1, token: null, refresh: null, obtainedAtMs: null, expiresAtMs: null, scopes: [], failures: 0, lastError: null }
+    w.store(ID).put('record', v1)
+    await w.core(ID).alarm()
+    expect(w.raw(ID)).toEqual(v1)
   })
 })

@@ -350,26 +350,39 @@ export class SignIn extends DurableObject<Env> {
     return this.#guard(() => this.#core.slackPost(accountId, req, expect))
   }
   // ---- Stage 1 M4-R1 (N35): connections. Each delegates to the core; the entry methods (oauth/entry.ts) parse first. ----
+  // Each answers only for this object's own account (#734): `idFromName(accountId)` must be this object.
+
+  /** Whether this object is `accountId`'s. */
+  #isObjectFor(accountId: unknown): boolean {
+    return typeof accountId === 'string' && accountId.length > 0 && accountId.length <= 200 && this.ctx.id.equals(this.env.SIGNIN.idFromName(accountId))
+  }
+  #forAccount<T>(accountId: unknown, fn: () => Promise<HubResult<T>> | HubResult<T>): Promise<HubResult<T>> {
+    return this.#guard(() => (this.#isObjectFor(accountId) ? fn() : err('invalid_args', 'accountId')))
+  }
   prepareConnection(req: { accountId: string; slug: string; adminMaySignIn: boolean; binding: ConnectionBindingInput; memberId: string }) {
-    return this.#guard(() => (this.#isIndex() ? err('invalid_args') : this.#core.prepareConnection(req)))
+    return this.#forAccount(req?.accountId, () => this.#core.prepareConnection(req))
+  }
+  markListed(accountId: string, generation: number) {
+    return this.#forAccount(accountId, () => this.#core.markListed(accountId, generation))
   }
   abandonConnection(accountId: string, generation: number) {
-    return this.#guard(() => this.#core.abandonConnection(accountId, generation))
+    return this.#forAccount(accountId, () => this.#core.abandonConnection(accountId, generation))
   }
   getConnection(accountId: string) {
-    return this.#guard(() => this.#core.getConnection(accountId))
+    return this.#forAccount(accountId, () => this.#core.getConnection(accountId))
   }
   connectionSummary(accountId: string) {
-    return this.#guard(() => this.#core.connectionSummary(accountId))
+    return this.#forAccount(accountId, () => this.#core.connectionSummary(accountId))
   }
   updateConnection(req: { accountId: string; ifRev: number; adminMaySignIn?: boolean; settings?: Record<string, string> }) {
-    return this.#guard(() => this.#core.updateConnection(req))
+    return this.#forAccount(req?.accountId, () => this.#core.updateConnection(req))
   }
   removeConnection(accountId: string) {
-    return this.#guard(() => this.#core.removeConnection(accountId))
+    return this.#forAccount(accountId, () => this.#core.removeConnection(accountId))
   }
   /** connectionCall (N35). Its answer carries `sent` beside a failure, so it isn't a plain HubResult: never through `#guard`'s internal. */
   async connectionCall(accountId: string, req: ConnectionCallRequest) {
+    if (!this.#isObjectFor(accountId)) return { ok: false as const, error: { code: 'invalid_args' as const, message: 'invalid arguments: accountId' }, sent: 'no' as const }
     try {
       return await this.#core.connectionCall(accountId, req)
     } catch {
@@ -380,7 +393,7 @@ export class SignIn extends DurableObject<Env> {
     }
   }
   connectionOp(accountId: string, op: string, req: unknown) {
-    return this.#guard(() => this.#core.connectionOp(accountId, op, req))
+    return this.#forAccount(accountId, () => this.#core.connectionOp(accountId, op, req))
   }
   indexAdd(entry: { accountId: string; slug: string; generation: number }) {
     return this.#guard(() => (this.#isIndex() ? this.#core.indexAdd(entry) : err('invalid_args', 'index')))

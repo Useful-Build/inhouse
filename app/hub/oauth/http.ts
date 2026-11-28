@@ -3,6 +3,7 @@
 // every URL's host checked against the connector's allowed hosts (exact, https only) before the request leaves.
 // Nothing here throws on an upstream answer; nothing from a body or header reaches a result except what callers parse.
 import type { Upstream } from '../signin/providers/shopify'
+import { forbiddenKeyHeader } from '../connections/headers'
 
 export type { Upstream }
 
@@ -162,16 +163,13 @@ export function constantTimeEqual(a: string, b: string): boolean {
 /** A credential header for the MCP endpoint only: an API key's header, or `Authorization: Bearer <token>`. */
 export type McpCredential = { header: string; value: string }
 
-/** Header names a credential may never take (the transport's own, and the request's framing). */
-const RESERVED_CREDENTIAL_HEADERS = new Set([
-  'content-type', 'content-length', 'accept', 'host', 'cookie', 'connection', 'transfer-encoding', 'last-event-id',
-  'mcp-protocol-version', 'mcp-method', 'mcp-name', 'mcp-session-id', 'forwarded', 'x-forwarded-for', 'x-forwarded-host',
-])
-
-/** A credential the adapter will attach: a token-character header name that isn't reserved, a value with no CR, LF or NUL. */
+/**
+ * A credential the adapter will attach: a token-character header name that isn't on the shared denylist
+ * (connections/headers.ts, the same list prepare refuses a key place by; #731), a value with no CR, LF or NUL.
+ */
 export function validCredential(c: McpCredential): boolean {
   const name = c.header.toLowerCase()
-  return /^[!#$%&'*+.^_`|~0-9a-z-]{1,64}$/.test(name) && !RESERVED_CREDENTIAL_HEADERS.has(name) && !name.startsWith('mcp-param-') && c.value.length > 0 && !/[\r\n\0]/.test(c.value)
+  return /^[!#$%&'*+.^_`|~0-9a-z-]{1,64}$/.test(name) && !forbiddenKeyHeader(name) && c.value.length > 0 && !/[\r\n\0]/.test(c.value)
 }
 
 /** One request the SDK asked for, and what became of it. */

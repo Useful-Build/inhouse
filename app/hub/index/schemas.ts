@@ -243,13 +243,42 @@ export const DetectResultSchema = z.strictObject({
 })
 export const DetectRequestSchema = z.strictObject({ actor: ConnectionActorSchema, url: address })
 
+// ---- The one list of headers a key may never take and a request to a connection may never carry (Stage 1 M4-R1, N42;
+// #731). Here, beside the key place's schema, because this file may import only zod (the product reads it too);
+// connections/headers.ts re-exports it for oauth/http.ts `validCredential` and the senders (connections/send.ts). ----
+
+/** Set by the transport itself: a key in one would break or forge the request's framing or the MCP headers. */
+export const TRANSPORT_HEADERS: readonly string[] = ['accept', 'connection', 'content-length', 'content-type', 'expect', 'host', 'keep-alive', 'last-event-id', 'te', 'transfer-encoding', 'upgrade']
+/** Never sent to a connection at all: a cookie, proxy credentials, and anything that claims where a request came from. */
+export const NEVER_SENT_HEADERS: readonly string[] = ['cookie', 'forwarded', 'proxy-authorization', 'x-real-ip']
+const TRANSPORT_PREFIXES = ['mcp-']
+const NEVER_SENT_PREFIXES = ['x-forwarded-']
+
+/** A header no request to a connection carries. */
+export function neverSentHeader(name: string): boolean {
+  const n = name.toLowerCase()
+  return NEVER_SENT_HEADERS.includes(n) || NEVER_SENT_PREFIXES.some(p => n.startsWith(p))
+}
+
+/** A header a key may never take (`Authorization` is allowed, with a scheme prefix: schemas.ts checks the prefix). */
+export function forbiddenKeyHeader(name: string): boolean {
+  const n = name.toLowerCase()
+  return TRANSPORT_HEADERS.includes(n) || TRANSPORT_PREFIXES.some(p => n.startsWith(p)) || neverSentHeader(n)
+}
+
+/** The first never-sent header a request carries, or null. */
+export function firstNeverSent(headers: Headers): string | null {
+  for (const [name] of headers) if (neverSentHeader(name)) return name
+  return null
+}
+
 /**
- * A key's header (N42): a header token, never `Host`, `Content-Length`, `Cookie` or any `Mcp-*`; `Authorization` only
- * with a scheme prefix. The prefix has no CR, LF or other control character.
+ * A key's header (N42): a header token, never one on the shared denylist (connections/headers.ts: the transport's own
+ * headers, any `Mcp-*`, cookies, proxy and forwarding headers; #731); `Authorization` only with a scheme prefix. The
+ * prefix has no CR, LF or other control character.
  */
-const KEY_HEADER_REFUSED = /^(?:host|content-length|cookie|mcp-.*)$/i
 export const ConnectionKeyPlaceSchema = z.strictObject({
-  header: z.string().regex(/^[A-Za-z0-9!#$%&'*+.^_`|~-]{1,64}$/).refine(h => !KEY_HEADER_REFUSED.test(h), 'Not a header a key may use'),
+  header: z.string().regex(/^[A-Za-z0-9!#$%&'*+.^_`|~-]{1,64}$/).refine(h => !forbiddenKeyHeader(h), 'Not a header a key may use'),
   prefix: z.string().max(32).regex(/^[\x20-\x7e]*$/),
 }).refine(k => k.header.toLowerCase() !== 'authorization' || /^[A-Za-z][A-Za-z0-9-]* $/.test(k.prefix), 'Authorization takes a scheme prefix')
 export const ConnectionBindingInputSchema = z.discriminatedUnion('transport', [

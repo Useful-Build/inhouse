@@ -20,7 +20,8 @@ import {
 } from '../index/schemas'
 import type { Registry } from '../registry/registry'
 import { settledAnswer } from '../../shared/rpc-answer'
-import { bindingRefusal } from './destinations'
+import { bindingRefusal, type ResolvePublic } from './destinations'
+import type { GuardedSend } from './send'
 import type { MethodHooks } from './hooks'
 import type { IndexAdd, IndexEntry } from './index'
 
@@ -30,9 +31,12 @@ export type ConnectionObjectStub = {
   getConnection(accountId: string): Promise<HubResult<ConnectionView>>
   updateConnection(req: { accountId: string; ifRev: number; adminMaySignIn?: boolean; settings?: Record<string, string> }): Promise<HubResult<ConnectionView>>
   removeConnection(accountId: string): Promise<HubResult<{ revoked: boolean; generation: number }>>
+  markListed(accountId: string, generation: number): Promise<HubResult<{ listed: boolean }>>
   abandonConnection(accountId: string, generation: number): Promise<HubResult<{ abandoned: boolean }>>
   connectionSummary(accountId: string): Promise<HubResult<ConnectionSummary>>
   reencrypt(accountId: string): Promise<HubResult<{ kid: string; changed: boolean }>>
+  /** An operation a later package runs inside the object (hooks.ts `objectOps`). */
+  connectionOp(accountId: string, op: string, req: unknown): Promise<HubResult<unknown>>
 }
 
 /** The `__connections__` object. */
@@ -47,6 +51,13 @@ export type ConnectionGatewayDeps = {
   object(accountId: string): ConnectionObjectStub
   index(): IndexStub
   hooks: MethodHooks
+  /**
+   * The guarded sender (send.ts) with no binding, for a gateway-side hook's own requests (M4-D's detect): no credential,
+   * a public https address, no redirect followed. Never the raw upstream.
+   */
+  send: GuardedSend
+  /** The DNS half of the address check (destinations.ts). */
+  resolvePublic: ResolvePublic
 }
 
 const serverScope = (scope: unknown): boolean => {
@@ -97,14 +108,16 @@ export async function prepareConnection(deps: ConnectionGatewayDeps, scope: Call
     await settledAnswer(object.abandonConnection(accountId, generation))
     return err('invalid_args', 'connections_cap')
   }
-  // A remove that landed between the record and the index left a tombstone this listing would show: take it back out
-  // (only up to this prepare's generation, so a newer prepare's entry stays).
-  const now = await settledAnswer(object.getConnection(accountId))
-  if (!now.ok || now.value.generation !== generation) {
-    if (!now.ok) await settledAnswer(deps.index().indexRemove(accountId, generation))
+  // Marked listed in the record, in this generation, before answering ok: from then on a prepare the cap refused can't
+  // abandon it. If the record is gone or another generation (a remove, or an abandon that won), this listing is taken
+  // back out, only up to this prepare's generation, so a newer prepare's entry stays.
+  const marked = await settledAnswer(object.markListed(accountId, generation))
+  if (!marked.ok) return marked
+  if (!marked.value.listed) {
+    await settledAnswer(deps.index().indexRemove(accountId, generation))
     return err('connect_stale', 'removed')
   }
-  return ok(prepared.value.view)
+  return ok({ ...prepared.value.view })
 }
 
 /** Route 162. */
@@ -130,10 +143,24 @@ export async function removeConnection(deps: ConnectionGatewayDeps, scope: Calle
 }
 
 async function removeOne(deps: ConnectionGatewayDeps, accountId: string): Promise<HubResult<{ revoked: boolean }>> {
+  // What the index lists for it before the object is asked (for an object that turns out to hold nothing).
+  const before = await settledAnswer(deps.index().indexList())
+  if (!before.ok) return before
+  const entry = before.value.find(e => e.accountId === accountId) ?? null
   const removed = await settledAnswer(deps.object(accountId).removeConnection(accountId))
   if (!removed.ok) return removed
-  // Whatever is listed: the object now holds a `removed` tombstone, which no prepare gets past, so no newer entry exists.
-  const unlisted = await settledAnswer(deps.index().indexRemove(accountId, null))
+  let upTo: number | null
+  if (removed.value.generation > 0) {
+    // The object holds a `removed` tombstone now, which no prepare gets past: whatever is listed goes.
+    upTo = null
+  } else if (entry !== null) {
+    // An entry whose object holds nothing (a lost object): only that entry, never a newer prepare's.
+    upTo = entry.generation
+  } else {
+    // Never prepared and not listed: nothing to do, and the slug stays free.
+    return ok({ revoked: true })
+  }
+  const unlisted = await settledAnswer(deps.index().indexRemove(accountId, upTo))
   if (!unlisted.ok) return unlisted
   return ok({ revoked: removed.value.revoked })
 }
@@ -210,7 +237,8 @@ export async function reencryptConnections(deps: ConnectionGatewayDeps, scope: C
   if (!listed.ok) return listed
   const out: { accountId: string; kid: string | null; changed: boolean; code: string | null }[] = []
   for (const e of listed.value) {
-    const r = await settledAnswer(deps.object(e.accountId).reencrypt(e.accountId))
+    // Every listed connection is tried: a refusal or a thrown call is that row's code, never the end of the walk.
+    const r = await walkStep(e.accountId, 'reencrypt', () => settledAnswer(deps.object(e.accountId).reencrypt(e.accountId)))
     out.push(r.ok ? { accountId: e.accountId, kid: r.value.kid, changed: r.value.changed, code: null } : { accountId: e.accountId, kid: null, changed: false, code: r.error.code })
   }
   return ok(out)
@@ -223,8 +251,20 @@ export async function teardownConnections(deps: ConnectionGatewayDeps, scope: Ca
   if (!listed.ok) return listed
   const out: { accountId: string; revoked: boolean; code: string | null }[] = []
   for (const e of listed.value) {
-    const r = await removeOne(deps, e.accountId)
+    const r = await walkStep(e.accountId, 'teardown', () => removeOne(deps, e.accountId))
     out.push(r.ok ? { accountId: e.accountId, revoked: r.value.revoked, code: null } : { accountId: e.accountId, revoked: false, code: r.error.code })
   }
   return ok(out)
+}
+
+/** One connection's step of a walk: a thrown call becomes that row's `internal`, logged, and the walk goes on. */
+async function walkStep<T>(accountId: string, walk: 'reencrypt' | 'teardown', step: () => Promise<HubResult<T>>): Promise<HubResult<T>> {
+  try {
+    const r = await step()
+    if (!r.ok) log('hub_internal', { accountId, code: `${walk}_${r.error.code}` })
+    return r
+  } catch {
+    log('hub_internal', { accountId, code: `${walk}_internal` })
+    return err('internal')
+  }
 }

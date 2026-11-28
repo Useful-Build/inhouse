@@ -15,6 +15,7 @@ import type { ConnectionGatewayDeps, ConnectionObjectStub, IndexStub } from '../
 import { connectionHooks, methodHooks, type ConnectionHooks, type ObjectOps } from '../hooks'
 import { INDEX_OBJECT } from '../index'
 import type { ResolvePublic } from '../destinations'
+import { guardedSender } from '../send'
 
 export const server: CallerScope = { kind: 'server', job: 'test', requestId: 'req-conn' }
 export const run: CallerScope = { kind: 'run', runId: 'run-1', principalId: 'p-1', requestId: 'req-conn' }
@@ -52,6 +53,8 @@ export class ConnWorld {
   resolvePublic: ResolvePublic = fixtureResolver
   /** Wraps every object and index call (a scheduler, a delay, a crash). */
   around: Around = (_a, _m, call) => call()
+  /** A connection call's per-request deadline (cores built after a change take it). */
+  timeoutMs = 2_000
   /** Every object and index call, in order. */
   readonly calls: string[] = []
   modules: readonly HubConnector[] = connectors as readonly HubConnector[]
@@ -84,8 +87,8 @@ export class ConnWorld {
         scopesFor: async () => null,
         connectionHooks: this.hooks,
         objectOps: this.ops,
-        resolvePublic: host => this.resolvePublic(host),
-        callTimeoutMs: 2_000,
+        resolvePublic: (host, signal) => this.resolvePublic(host, signal),
+        callTimeoutMs: this.timeoutMs,
       })
       this.cores.set(accountId, c)
     }
@@ -109,7 +112,9 @@ export class ConnWorld {
       getConnection: a => this.#wrap(accountId, 'getConnection', () => c().getConnection(a)),
       updateConnection: req => this.#wrap(accountId, 'updateConnection', () => c().updateConnection(req)),
       removeConnection: a => this.#wrap(accountId, 'removeConnection', () => c().removeConnection(a)),
+      markListed: (a, g) => this.#wrap(accountId, 'markListed', () => c().markListed(a, g)),
       abandonConnection: (a, g) => this.#wrap(accountId, 'abandonConnection', () => c().abandonConnection(a, g)),
+      connectionOp: (a, op, req) => this.#wrap(accountId, 'connectionOp', () => c().connectionOp(a, op, req)),
       connectionSummary: a => this.#wrap(accountId, 'connectionSummary', () => c().connectionSummary(a)),
       reencrypt: a => this.#wrap(accountId, 'reencrypt', () => c().reencrypt(a)),
     }
@@ -125,7 +130,7 @@ export class ConnWorld {
   }
 
   deps(): ConnectionGatewayDeps {
-    return { registry: buildRegistry(this.modules), object: id => this.object(id), index: () => this.index(), hooks: methodHooks }
+    return { registry: buildRegistry(this.modules), object: id => this.object(id), index: () => this.index(), hooks: methodHooks, send: guardedSender({ destinations: () => null, upstream: async () => this.upstream, resolvePublic: (h, sig) => this.resolvePublic(h, sig), bound: false }), resolvePublic: (h, sig) => this.resolvePublic(h, sig) }
   }
 
   /** The record a connection's object holds now (raw). */

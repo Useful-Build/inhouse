@@ -60,12 +60,13 @@ import { boundNotice, composeSlack, isAppOrigin } from '../../shared/notify/boun
 import { linkPath } from '../../shared/notify/links'
 // Stage 1 M4-R1 (N35)
 import { CONNECTION_ACCOUNT_ID } from '../index/schemas'
-import { connectionCall as runConnectionCall, stopCode, type CallHost, type CallResult, type ConnectionCallRequest } from '../connections/call'
+import { changeCode, connectionCall as runConnectionCall, stopCode, type CallHost, type CallResult, type ConnectionCallRequest, type Fence } from '../connections/call'
 import { connectionHooks as defaultConnectionHooks, objectOps as defaultObjectOps, type ConnectionHooks, type ObjectOps } from '../connections/hooks'
 import { indexAdd, indexList, indexRemove, type IndexAdd, type IndexEntry } from '../connections/index'
 import type { ResolvePublic } from '../connections/destinations'
+import { guardedSender } from '../connections/send'
 import {
-  bindingOf, checkRecord, isStoredConnection, preparedRecord, sameBinding, summaryOf, tombstoneOf, viewOf, withoutCredential, withPolicy,
+  bindingOf, checkRecord, checkTransition, isStoredConnection, preparedRecord, sameBinding, summaryOf, tombstoneOf, viewOf, withoutCredential, withPolicy,
   type ConnectionRecord, type ConnectionTombstone, type StoredConnection,
 } from '../connections/record'
 import type { ConnectionBindingInput, ConnectionState, ConnectionSummary, ConnectionView } from '../index/contract'
@@ -1535,12 +1536,17 @@ export class SignInCore {
   // ======================================================================================================
 
   /** The stored v3 record or tombstone for this account, or null (none, or a v1 or v2 record: refused by the callers). */
+  /**
+   * The stored v3 record or tombstone for this account, or null (none, or a v1 or v2 record: refused by the callers).
+   * Throws when this object holds another account's connection (#734): a request for one account never reads, let alone
+   * replaces, another's record (the handler answers `internal`).
+   */
   #stored(accountId: string): StoredConnection | null {
     const raw = this.#d.store.get<unknown>(RECORD)
     if (!isStoredConnection(raw)) return null
     if (raw.accountId !== accountId) {
       log('hub_internal', { accountId, code: 'account_mismatch' })
-      return null
+      throw new Error("another account's connection record")
     }
     return raw
   }
@@ -1551,14 +1557,23 @@ export class SignInCore {
     return s && !s.removed ? s : null
   }
 
-  /** The only write of a v3 record: whole, checked (shape, caps), one put. Throws on a record that fails the check. */
+  /**
+   * The only write of a v3 record: whole, checked (its shape and caps, and the change from what is stored: record.ts
+   * `checkTransition`), one put. Throws on a record that fails either check.
+   */
   #putConnection(r: StoredConnection): void {
     const c = checkRecord(r)
-    if (!c.ok) {
+    const t = checkTransition(this.#d.store.get<unknown>(RECORD), r)
+    if (!c.ok || !t.ok) {
       log('hub_internal', { accountId: r.accountId, code: 'connection_record_refused' })
       throw new Error('a connection record failed its check')
     }
     this.#d.store.put(RECORD, r)
+  }
+
+  /** The DNS half of the address check; absent, every name is refused (fail closed). */
+  #resolvePublic(): ResolvePublic {
+    return this.#d.resolvePublic ?? (async () => false)
   }
 
   /** Whether this object holds a v1 or v2 record (a connection never takes its place). */
@@ -1588,10 +1603,24 @@ export class SignInCore {
     return ok({ view: viewOf(r), fresh: true })
   }
 
-  /** A prepare the index refused (the cap): tombstoned as abandoned, only while it is that generation and holds nothing. */
+  /**
+   * A prepare's index write succeeded: marked here, in this record's generation. From then on no prepare the cap refused
+   * may abandon it. False when the record is gone or another generation (the caller unlists and answers stale).
+   */
+  async markListed(accountId: string, generation: number): Promise<HubResult<{ listed: boolean }>> {
+    const r = this.#connection(accountId)
+    if (!r || r.generation !== generation) return ok({ listed: false })
+    if (!r.listed) this.#putConnection({ ...r, listed: true })
+    return ok({ listed: true })
+  }
+
+  /**
+   * A prepare the index refused (the cap): tombstoned as abandoned, only while it is that generation, still unlisted
+   * (no prepare that joined it has listed it) and holds nothing.
+   */
   async abandonConnection(accountId: string, generation: number): Promise<HubResult<{ abandoned: boolean }>> {
     const r = this.#connection(accountId)
-    if (!r || r.generation !== generation || r.key || r.client || r.token || r.refresh) return ok({ abandoned: false })
+    if (!r || r.generation !== generation || r.listed || r.key || r.client || r.token || r.refresh) return ok({ abandoned: false })
     this.#putConnection(tombstoneOf(r, 'abandoned', this.#d.now(), true))
     return ok({ abandoned: true })
   }
@@ -1620,19 +1649,15 @@ export class SignInCore {
   /**
    * Route 171's object half: in one synchronous step the record becomes a tombstone (a new generation and policy
    * revision, so every call in flight stops at its next check; no credential). Then what it held is revoked where it can
-   * be (the `revoke` hook), and the outcome noted on the tombstone if it's still the same one. A remove always leaves a
-   * tombstone, a never-prepared slug's included, so no prepare can list that slug after it (the gateway's unconditional
-   * unlisting relies on this). Removing a removed connection changes nothing.
+   * be (the `revoke` hook), and the outcome noted on the tombstone if it's still the same one. A slug never prepared
+   * is left as it is (generation 0, nothing written). Removing a removed connection changes nothing.
    */
   async removeConnection(accountId: string): Promise<HubResult<{ revoked: boolean; generation: number }>> {
     if (!isConnectionAccount(accountId)) return err('invalid_args', 'accountId')
     if (this.#holdsOtherRecord()) return err('invalid_args', 'account')
     const stored = this.#stored(accountId)
-    if (!stored) {
-      const t: ConnectionTombstone = { v: 3, kind: 'mcp_runtime', accountId, slug: accountId.slice('mcp:'.length), removed: true, reason: 'removed', generation: 1, policyRev: 1, removedAtMs: this.#d.now(), revoked: true }
-      this.#putConnection(t)
-      return ok({ revoked: true, generation: t.generation })
-    }
+    // Never prepared: nothing to remove, and the slug stays free (generation 0 tells the gateway so).
+    if (!stored) return ok({ revoked: true, generation: 0 })
     if (stored.removed && stored.reason === 'removed') return ok({ revoked: stored.revoked, generation: stored.generation })
     if (stored.removed) {
       // An abandoned prepare (never listed, nothing held): removed for good now.
@@ -1658,7 +1683,14 @@ export class SignInCore {
 
   async #revokeCaptured(accountId: string, r: ConnectionRecord, captured: { key: Envelope | null; client: Envelope | null; token: Envelope | null; refresh: Envelope | null }): Promise<boolean> {
     try {
-      const revoked = await (this.#d.connectionHooks ?? defaultConnectionHooks).revoke({ accountId, binding: r.binding, captured, keyring: this.#d.keyring, upstream: this.#d.upstream })
+      const revoked = await (this.#d.connectionHooks ?? defaultConnectionHooks).revoke({
+        accountId,
+        binding: r.binding,
+        captured,
+        keyring: () => this.#d.keyring(),
+        send: guardedSender({ destinations: () => r.binding.destinations, upstream: () => this.#d.upstream(), resolvePublic: this.#resolvePublic(), bound: true }),
+        resolvePublic: this.#resolvePublic(),
+      })
       if (!revoked) log('revoke_failed', { accountId, generation: r.generation })
       return revoked
     } catch {
@@ -1732,7 +1764,7 @@ export class SignInCore {
     return ok({
       ...base,
       state: STATE[s.state],
-      kid: (s.key ?? s.token ?? s.client)?.kid ?? null,
+      kid: (s.key ?? s.token ?? s.refresh ?? s.client)?.kid ?? null,
       lastError: s.lastError ? { code: s.lastError.code, at: instant(s.lastError.atMs) } : null,
       paused: s.paused,
       connectedBy: s.preparedBy,
@@ -1742,20 +1774,26 @@ export class SignInCore {
   }
 
   /** What connectionCall gets from this object (connections/call.ts). */
+  /**
+   * One synchronous re-read, check and put. `call`: a call's write (afterCall), held to the whole call fence, pause
+   * included. `op`: an operation on the record (objectOps), held to the record's half only, so it works while paused.
+   */
+  #commit(accountId: string, fence: Fence, change: (r: ConnectionRecord) => ConnectionRecord, kind: 'call' | 'op'): ConnectionRecord | null {
+    const r = this.#connection(accountId)
+    if ((kind === 'call' ? stopCode(r, fence) : changeCode(r, fence)) !== null) return null
+    const next = change(r!)
+    this.#putConnection(next)
+    return next
+  }
+
   #callHost(accountId: string): CallHost {
     return {
       accountId,
       read: () => this.#connection(accountId),
-      commit: (fence, change) => {
-        const r = this.#connection(accountId)
-        if (stopCode(r, fence) !== null) return null
-        const next = change(r!)
-        this.#putConnection(next)
-        return next
-      },
+      commit: (fence, change) => this.#commit(accountId, fence, change, 'call'),
       now: () => this.#d.now(),
       upstream: () => this.#d.upstream(),
-      resolvePublic: this.#d.resolvePublic ?? (async () => false),
+      resolvePublic: this.#resolvePublic(),
       keyring: () => this.#d.keyring(),
       eras: this.#eras,
       hooks: this.#d.connectionHooks ?? defaultConnectionHooks,
@@ -1778,8 +1816,22 @@ export class SignInCore {
     const ops = this.#d.objectOps ?? defaultObjectOps
     const fn = Object.hasOwn(ops, op) ? ops[op] : undefined
     if (!fn) return err('not_built', /^[a-zA-Z]{1,40}$/.test(op) ? op : undefined)
+    // Unusable until its prepare listed it (#733): no credential or trust lands on a record the index can't see.
+    const r = this.#connection(accountId)
+    if (!r) return err('unknown_tool')
+    if (!r.listed) return err('not_configured', 'unlisted')
     const host = this.#callHost(accountId)
-    return fn({ accountId, read: host.read, commit: host.commit, now: host.now, keyring: host.keyring, upstream: host.upstream, call: req2 => runConnectionCall(host, req2) }, req)
+    return fn({
+      accountId,
+      read: host.read,
+      commit: (fence, change) => this.#commit(accountId, fence, change, 'op'),
+      now: host.now,
+      keyring: host.keyring,
+      // The record's destinations as they are at each send (a rebind between two sends narrows the next one).
+      send: guardedSender({ destinations: () => this.#connection(accountId)?.binding.destinations ?? null, upstream: host.upstream, resolvePublic: host.resolvePublic, bound: true }),
+      resolvePublic: host.resolvePublic,
+      call: req2 => runConnectionCall(host, req2),
+    }, req)
   }
 
   // ---------- the `__connections__` object (connections/index.ts); signin.ts lets only that object call these ----------

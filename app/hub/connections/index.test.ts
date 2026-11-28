@@ -10,7 +10,7 @@ import { createMcpFixtures } from '../../test/upstreams/mcp/index'
 import { getConnection, listConnections, prepareConnection, removeConnection } from './gateway'
 import { INDEX_OBJECT } from './index'
 import { isStoredConnection } from './record'
-import { binding, ConnWorld, inhouse, server } from './testing/kit'
+import { binding, ConnWorld, deferred, inhouse, server } from './testing/kit'
 
 const world = () => new ConnWorld(createMcpFixtures().fetch)
 const prep = (w: ConnWorld, slug: string, b = binding()) => prepareConnection(w.deps(), server, { actor: inhouse, slug, adminMaySignIn: false, binding: b })
@@ -163,5 +163,64 @@ describe('a crash between record and index', () => {
     w.around = (_a, _m, call) => call()
     expect(await prep(w, 'helpdesk')).toMatchObject({ ok: true, value: { generation: 1 } })
     expect(await listedIds(w)).toEqual(['mcp:helpdesk'])
+  })
+})
+
+describe('Neon round 1, #1: a prepare the cap refused never abandons a record another prepare listed', () => {
+  it('P1 writes gen 1; P2 fills slot 20; P1 gets cap; a slot frees; P3 joins gen 1 and lists it; P1\'s abandon changes nothing', async () => {
+    const w = world()
+    for (let i = 0; i < CONNECTION_CAPS.perBrand - 1; i++) expect((await prep(w, `tool${i}`)).ok).toBe(true)
+    const p1AtIndex = deferred()
+    const releaseP1Index = deferred()
+    const p1AtAbandon = deferred()
+    const releaseAbandon = deferred()
+    let p1Index = true
+    w.around = async (accountId, method, call) => {
+      if (accountId === INDEX_OBJECT && method === 'indexAdd' && p1Index && w.calls.includes('mcp:foo.prepareConnection')) {
+        p1Index = false
+        p1AtIndex.resolve()
+        await releaseP1Index.promise
+      }
+      if (method === 'abandonConnection') {
+        p1AtAbandon.resolve()
+        await releaseAbandon.promise
+      }
+      return call()
+    }
+    // P1 writes gen 1 and stops before its index write.
+    const p1 = prep(w, 'foo')
+    await p1AtIndex.promise
+    expect(w.raw('mcp:foo')).toMatchObject({ removed: false, generation: 1, listed: false })
+    // P2 fills slot 20.
+    expect((await prep(w, 'filler')).ok).toBe(true)
+    // P1 gets cap and stops before its abandon.
+    releaseP1Index.resolve()
+    await p1AtAbandon.promise
+    // A slot frees; P3 joins gen 1, lists it and answers ok.
+    expect(await remove(w, 'tool0')).toMatchObject({ ok: true })
+    const p3 = await prep(w, 'foo')
+    expect(p3).toMatchObject({ ok: true, value: { accountId: 'mcp:foo', generation: 1 } })
+    // P1's abandon runs now: it must change nothing.
+    releaseAbandon.resolve()
+    expect(await p1).toMatchObject({ ok: false, error: { message: 'invalid arguments: connections_cap' } })
+    expect(w.raw('mcp:foo')).toMatchObject({ removed: false, generation: 1, listed: true })
+    expect(await listedIds(w)).toContain('mcp:foo')
+  })
+})
+
+describe('removing a slug never prepared (Fable round 1, low)', () => {
+  it('writes nothing, burns nothing: the slug can be prepared after', async () => {
+    const w = world()
+    expect(await remove(w, 'fresh')).toEqual({ ok: true, value: { revoked: true } })
+    expect(w.raw('mcp:fresh')).toBeUndefined()
+    expect(await prep(w, 'fresh')).toMatchObject({ ok: true, value: { generation: 1 } })
+    expect(await listedIds(w)).toEqual(['mcp:fresh'])
+  })
+
+  it('an entry whose object holds nothing (a lost object) is cleared, only up to its own generation', async () => {
+    const w = world()
+    await w.core(INDEX_OBJECT).indexAdd({ accountId: 'mcp:lost', slug: 'lost', generation: 3 })
+    expect(await remove(w, 'lost')).toEqual({ ok: true, value: { revoked: true } })
+    expect(await listedIds(w)).toEqual([])
   })
 })

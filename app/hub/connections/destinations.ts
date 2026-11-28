@@ -128,22 +128,44 @@ export function bindingRefusal(d: ConnectionDestinations): { purpose: Destinatio
 }
 
 export const DOH_URL = 'https://cloudflare-dns.com/dns-query'
+/** One DNS over HTTPS answer: at most this long (both lookups together) and this many bytes each. */
+export const DOH_TIMEOUT_MS = 5_000
+export const DOH_MAX_BYTES = 64 * 1024
 
-/** A host's DNS verdict: true only when it has at least one A or AAAA answer and every one of them is public. */
-export type ResolvePublic = (host: string) => Promise<boolean>
+/**
+ * A host's DNS verdict: true only when it has at least one A or AAAA answer and every one of them is public. `signal`:
+ * the request this check is for; when it aborts, the lookup stops and answers false.
+ */
+export type ResolvePublic = (host: string, signal?: AbortSignal) => Promise<boolean>
 
-/** The DNS half (the product's WebFetch `resolvesPublic`, the same resolver and rule). Never throws: a failure is false. */
-export function dohResolver(f: (req: Request) => Promise<Response>): ResolvePublic {
-  return async host => {
+/**
+ * The DNS half (the product's WebFetch `resolvesPublic`, the same resolver and rule), with its own deadline (a timer
+ * cleared when it settles, never AbortSignal.timeout), the caller's signal, and a byte cap on each answer. Never throws:
+ * a failure, a timeout or an abort is false.
+ */
+export function dohResolver(f: (req: Request) => Promise<Response>, bounds: { timeoutMs?: number; maxBytes?: number } = {}): ResolvePublic {
+  const timeoutMs = bounds.timeoutMs ?? DOH_TIMEOUT_MS
+  const maxBytes = bounds.maxBytes ?? DOH_MAX_BYTES
+  return async (host, signal) => {
     const literal = addressVerdict(host)
     if (literal !== null) return literal === 'public'
     if (!dnsName(host)) return false
+    if (signal?.aborted) return false
+    const controller = new AbortController()
+    const timer = setTimeout(() => controller.abort(new DOMException('dns deadline', 'TimeoutError')), timeoutMs)
+    const onOuter = () => controller.abort(signal?.reason)
+    signal?.addEventListener('abort', onOuter, { once: true })
+    // Raced against the abort, so a resolver that ignores its signal still can't hold the check past the deadline.
+    const aborted = new Promise<never>((_, reject) => controller.signal.addEventListener('abort', () => reject(new Error('aborted')), { once: true }))
+    aborted.catch(() => undefined)
     try {
       let any = false
       for (const type of ['A', 'AAAA']) {
-        const res = await f(new Request(`${DOH_URL}?name=${encodeURIComponent(host)}&type=${type}`, { headers: { accept: 'application/dns-json' }, redirect: 'manual' }))
+        const res = await Promise.race([f(new Request(`${DOH_URL}?name=${encodeURIComponent(host)}&type=${type}`, { headers: { accept: 'application/dns-json' }, redirect: 'manual', signal: controller.signal })), aborted])
         if (!res.ok) return false
-        const body = (await res.json()) as { Status?: unknown; Answer?: { type?: unknown; data?: unknown }[] }
+        const text = await Promise.race([cappedText(res, maxBytes), aborted])
+        if (text === null) return false
+        const body = JSON.parse(text) as { Status?: unknown; Answer?: { type?: unknown; data?: unknown }[] }
         if (body.Status !== 0) return false
         for (const a of Array.isArray(body.Answer) ? body.Answer : []) {
           if (a.type !== 1 && a.type !== 28) continue
@@ -154,12 +176,38 @@ export function dohResolver(f: (req: Request) => Promise<Response>): ResolvePubl
       return any
     } catch {
       return false
+    } finally {
+      clearTimeout(timer)
+      signal?.removeEventListener('abort', onOuter)
     }
   }
 }
 
-/**
- * Headers no request to a connection carries (forwarding, cookies, proxy auth): the senders strip them. The one
- * credential header is set by the sender alone (oauth/http.ts `mcpFetch` drops any `Authorization` it didn't set).
- */
-export const STRIPPED_HEADERS = ['cookie', 'forwarded', 'x-forwarded-for', 'x-forwarded-host', 'x-forwarded-proto', 'x-real-ip', 'proxy-authorization'] as const
+/** A body read to at most `maxBytes` (null past it, or on a broken or non-UTF-8 body). */
+async function cappedText(res: Response, maxBytes: number): Promise<string | null> {
+  if (!res.body) return ''
+  const reader = res.body.getReader()
+  const chunks: Uint8Array[] = []
+  let total = 0
+  for (;;) {
+    const { done, value } = await reader.read()
+    if (done) break
+    total += value.byteLength
+    if (total > maxBytes) {
+      await reader.cancel().catch(() => undefined)
+      return null
+    }
+    chunks.push(value)
+  }
+  const all = new Uint8Array(total)
+  let at = 0
+  for (const c of chunks) {
+    all.set(c, at)
+    at += c.byteLength
+  }
+  try {
+    return new TextDecoder('utf-8', { fatal: true, ignoreBOM: false }).decode(all)
+  } catch {
+    return null
+  }
+}

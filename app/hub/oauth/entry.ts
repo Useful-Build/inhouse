@@ -13,9 +13,10 @@ import type {
 import { CardFactsRequestSchema } from '../index/schemas'
 import { err } from '../index/errors'
 import { log } from '../index/log'
-import { connectionsIndexFor, envRecord, flushTestLogs, isConfiguredFrom, loadRegistry, signInFor, signInName, TEST_FAKES_DO_NAME } from '../signin/signin'
+import { connectionsIndexFor, resolverFor, upstreamFor, envRecord, flushTestLogs, isConfiguredFrom, loadRegistry, signInFor, signInName, TEST_FAKES_DO_NAME } from '../signin/signin'
 import { methodHooks } from '../connections/hooks'
 import type { ConnectionGatewayDeps, ConnectionObjectStub, IndexStub } from '../connections/gateway'
+import { guardedSender } from '../connections/send'
 import { isMcpConnector, type HubConnector } from '../registry/registry'
 import { decideTestShop } from '../index/test-shop'
 import { refuseTestFakes } from './test-gate'
@@ -79,11 +80,14 @@ async function deps(env: Env): Promise<G.ConnectDeps> {
 
 /** Stage 1 M4-R1 (N35): the connection methods' deps (connections/gateway.ts): the objects, the index and the hooks. */
 export async function connectionDeps(env: Env): Promise<ConnectionGatewayDeps> {
+  const resolvePublic = resolverFor(env)
   return {
     registry: await loadRegistry(env),
     object: accountId => signInFor(env, accountId) as unknown as ConnectionObjectStub,
     index: () => connectionsIndexFor(env) as unknown as IndexStub,
     hooks: methodHooks,
+    send: guardedSender({ destinations: () => null, upstream: () => upstreamFor(env), resolvePublic, bound: false }),
+    resolvePublic,
   }
 }
 

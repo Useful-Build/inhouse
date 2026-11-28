@@ -52,6 +52,8 @@ const CHANGES: { name: string; code: string; apply(): Promise<unknown> | void }[
   { name: 'a remove', code: 'not_configured', apply: () => w.core(ID).removeConnection(ID) },
   { name: 'a credential change', code: 'definition_changed', apply: () => put(withCredential(record(), 'key', { kid: 'k1', iv: 'aaaaaaaaaaaaaaaa', ct: 'bbbbbbbbbbbbbbbbbbbbbbbb' }, record().state)) },
   { name: 'a trust flip', code: 'definition_changed', apply: () => put(withPolicy(record(), { trusted: true })) },
+  // #732: a state change alone (generation and policyRev the same) stops a call too.
+  { name: 'a state change', code: 'needs_key', apply: () => put({ ...record(), state: 'needs_key' }) },
 ]
 
 describe('the control: a call goes through', () => {
@@ -275,5 +277,55 @@ describe('a credential never follows a redirect', () => {
     w.upstream = async req => (new URL(req.url).host === HOSTS.modern ? new Response(null, { status: 307, headers: { Location: token } }) : fx.fetch(req))
     expect((await w.core(ID).connectionCall(ID, LIST)).ok).toBe(false)
     expect(fx.log.for(HOSTS.login)).toEqual([])
+  })
+})
+
+describe('each check of the call is pinned (#732)', () => {
+  it('the DNS verdict at the send: a name that doesn\'t resolve public sends nothing', async () => {
+    await prepare()
+    w.resolvePublic = async () => false
+    expect(await w.core(ID).connectionCall(ID, LIST)).toMatchObject({ ok: false, error: { code: 'upstream_unavailable' }, sent: 'no' })
+    expect(reached(OPEN)).toEqual([])
+  })
+
+  it('the destination check at the start: a stored private endpoint is refused by name, before any hop, even with a resolver that says public', async () => {
+    await prepare()
+    put({ ...record(), binding: { ...record().binding, destinations: { ...record().binding.destinations!, mcp: 'https://10.0.0.7/mcp' } } })
+    w.resolvePublic = async () => true
+    const sent: string[] = []
+    w.upstream = async req => (sent.push(req.url), new Response('{}'))
+    expect(await w.core(ID).connectionCall(ID, LIST)).toEqual({ ok: false, error: { code: 'invalid_args', message: 'invalid arguments: destination_address' }, sent: 'no' })
+    expect(sent).toEqual([])
+  })
+
+  it('beforeCall is asked at the last check: a refusal that turns on during the address check\'s await stops the hop', async () => {
+    await prepare()
+    let refuse = false
+    w.hooks.beforeCall = () => (refuse ? 'definition_changed' : null)
+    w.resolvePublic = async () => ((refuse = true), true)
+    expect(await w.core(ID).connectionCall(ID, LIST)).toMatchObject({ ok: false, error: { code: 'definition_changed' }, sent: 'no' })
+    expect(reached(OPEN)).toEqual([])
+  })
+
+  it('a record its prepare never listed (a crash before the index write) is unusable until listed (#733)', async () => {
+    await prepare()
+    put({ ...record(), listed: false } as ConnectionRecord)
+    expect(await w.core(ID).connectionCall(ID, LIST)).toMatchObject({ ok: false, error: { code: 'not_configured' }, sent: 'no' })
+    expect(reached(OPEN)).toEqual([])
+  })
+})
+
+describe('a call that has answered never sends afterwards (Neon round 1, #2)', () => {
+  it('the address check stalls past the request\'s deadline: sent no, and when it settles later nothing leaves', async () => {
+    w.timeoutMs = 50
+    await prepare()
+    const stall = deferred<boolean>()
+    w.resolvePublic = () => stall.promise
+    const r = await w.core(ID).connectionCall(ID, LIST)
+    expect(r).toMatchObject({ ok: false, sent: 'no' })
+    // The orphaned hop's address check now says public: it must still not send.
+    stall.resolve(true)
+    await new Promise(resolve => setTimeout(resolve, 0))
+    expect(reached(OPEN)).toEqual([])
   })
 })

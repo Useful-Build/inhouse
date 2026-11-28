@@ -53,6 +53,13 @@ describe('a connection is prepared, listed and removed through the gateway', () 
     await connect.removeConnection!(server, { actor, accountId: 'mcp:wklist' })
   })
 
+  it('an object answers only for its own account (#734)', async () => {
+    const other = env.SIGNIN.get(env.SIGNIN.idFromName('mcp:wkowner')) as unknown as ObjectStub & { getConnection(a: string): Promise<unknown>; removeConnection(a: string): Promise<unknown> }
+    expect(await other.getConnection('mcp:wkelse')).toMatchObject({ ok: false, error: { code: 'invalid_args', message: 'invalid arguments: accountId' } })
+    expect(await other.removeConnection('mcp:wkelse')).toMatchObject({ ok: false, error: { code: 'invalid_args' } })
+    expect(await other.connectionCall('mcp:wkelse', { kind: 'list' })).toMatchObject({ ok: false, error: { code: 'invalid_args' }, sent: 'no' })
+  })
+
   it('only the index object answers the index methods', async () => {
     const other = env.SIGNIN.get(env.SIGNIN.idFromName('mcp:wkother')) as unknown as ObjectStub
     expect(await other.indexList()).toMatchObject({ ok: false, error: { code: 'invalid_args' } })

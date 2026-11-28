@@ -19,7 +19,8 @@ import type { KeyRingResult } from '../crypto/keyring'
 import type { McpToolResult } from '../registry/registry'
 import { McpFetchRefused, type McpCredential, type Upstream } from '../oauth/http'
 import { sdkCallTool, sdkListTools, type Era, type EraCache, type McpCallOk, type McpFail, type McpFailure, type SdkDeps } from '../connectors/mcp/sdk'
-import { destinationRefusal, hostOf, STRIPPED_HEADERS, type CredentialClass, type ResolvePublic } from './destinations'
+import { destinationRefusal, type CredentialClass, type ResolvePublic } from './destinations'
+import { sendHop, type HopRefusal } from './send'
 import type { ConnectionRecord } from './record'
 import type { ConnectionHooks } from './hooks'
 
@@ -67,13 +68,22 @@ const STATE_CODE: Record<ConnectionState, HubErrorCode> = {
   unavailable: 'upstream_unavailable',
 }
 
-/** The fence rule: what stops a call now, or null. Pause first (its own code), then any change of the record. */
-export function stopCode(r: ConnectionRecord | null, fence: Fence): HubErrorCode | null {
+/**
+ * The record's half of the fence: gone, or changed since the fence was read (generation, `policyRev`, state). An
+ * operation on the record (a trust flip, a confirm, a credential's save) is held to this alone: it works on a paused
+ * connection, since only calls stop on pause.
+ */
+export function changeCode(r: ConnectionRecord | null, fence: Fence): HubErrorCode | null {
   if (!r) return 'not_configured'
-  if (r.paused) return 'paused'
   if (r.generation !== fence.generation || r.policyRev !== fence.policyRev) return 'definition_changed'
   if (r.state !== fence.state) return STATE_CODE[r.state] === 'internal' ? 'definition_changed' : STATE_CODE[r.state]
   return null
+}
+
+/** The fence rule for a call: what stops it now, or null. Pause first (its own code), then any change of the record. */
+export function stopCode(r: ConnectionRecord | null, fence: Fence): HubErrorCode | null {
+  if (r?.paused) return 'paused'
+  return changeCode(r, fence)
 }
 
 const fenceOf = (r: ConnectionRecord): Fence => ({ generation: r.generation, policyRev: r.policyRev, state: r.state })
@@ -128,6 +138,9 @@ export async function connectionCall(host: CallHost, req: ConnectionCallRequest)
   const fence = fenceOf(r0)
   const startRefusal = (r: ConnectionRecord): HubErrorCode | null => {
     if (r.paused) return 'paused'
+    // A record whose prepare never listed it (a crash before its index write) is unusable until the same prepare
+    // lists it (#733): so no credential or call reaches a connection the walks of the index can't see.
+    if (!r.listed) return 'not_configured'
     if (r.binding.transport !== 'https' || !r.binding.destinations) return 'not_built' // M4-P1's transport
     if (req.kind !== 'list' && r.state !== 'live') return STATE_CODE[r.state] === 'internal' ? 'not_configured' : STATE_CODE[r.state]
     if (req.kind === 'write' && (req.expect.generation !== r.generation || req.expect.policyRev !== r.policyRev)) return 'definition_changed'
@@ -163,34 +176,42 @@ export async function connectionCall(host: CallHost, req: ConnectionCallRequest)
 
   let stopped: HubErrorCode | null = null
   let toolCallsLeft = 0
-  // Every request the SDK sends comes through here (oauth/http.ts mcpFetch hands it over with `redirect: 'manual'`).
+  /** Set once this call has its answer: a request still waiting on its address check must then never leave. */
+  let closed = false
+  // Every request the SDK sends comes through here (oauth/http.ts mcpFetch hands it over with `redirect: 'manual'`), and
+  // through send.ts's one hop: the destination rule, the address check, the abort, then this call's last check.
+  const HOP_CODE: Record<Exclude<HopRefusal, 'stopped'>, HubErrorCode> = { not_https: 'invalid_args', not_listed: 'invalid_args', class: 'invalid_args', address: 'invalid_args', never_sent: 'invalid_args', dns: 'upstream_unavailable', aborted: 'upstream_unavailable' }
   const guarded: Upstream = async request => {
-    const body = await request.clone().text()
-    const refusal = destinationRefusal(destinations, 'mcp', request.url, cls)
-    if (refusal) {
-      stopped ??= 'invalid_args'
-      throw new McpFetchRefused('destination')
-    }
-    if (!(await host.resolvePublic(hostOf(new URL(request.url))))) {
-      stopped ??= 'upstream_unavailable'
-      throw new McpFetchRefused('address')
-    }
-    // ---- The last check. Synchronous from here to the send: no await until `base` is called. ----
-    const code = recheck()
-    if (code) {
-      stopped ??= code
-      throw new McpFetchRefused('stopped')
-    }
-    const headers = new Headers(request.headers)
-    for (const h of STRIPPED_HEADERS) headers.delete(h)
-    if (rpcOf(body) === 'tools/call') toolCallsLeft++
-    return base(new Request(request.url, { method: request.method, headers, body: body.length > 0 ? body : null, redirect: 'manual', signal: request.signal }))
+    const rpc = rpcOf(await request.clone().text())
+    const hop = await sendHop({
+      destinations,
+      purpose: 'mcp',
+      cls,
+      resolvePublic: host.resolvePublic,
+      base,
+      // The call may have answered already (`sent: 'no'` among them): a hop still waiting then never leaves.
+      closed: () => closed,
+      // ---- The last check: synchronous, and the send follows it with no await between. ----
+      lastCheck: () => {
+        const code = recheck()
+        if (code) {
+          stopped ??= code
+          return false
+        }
+        if (rpc === 'tools/call') toolCallsLeft++
+        return true
+      },
+    }, request)
+    if (hop.ok) return hop.response
+    if (hop.refusal !== 'stopped') stopped ??= HOP_CODE[hop.refusal]
+    throw new McpFetchRefused(hop.refusal)
   }
   const sdk: SdkDeps = { upstream: guarded, now: host.now, eras: host.eras, ...(host.timeoutMs !== undefined ? { timeoutMs: host.timeoutMs } : {}) }
   const target = { endpoint, generation: r0.generation, credential }
   const sentNow = (): 'no' | 'unknown' => (toolCallsLeft > 0 ? 'unknown' : 'no')
   /** An SDK answer, read through the fence: a stop that landed during the send wins over the answer. */
   const settle = (out: McpFail | { kind: 'ok' }): CallResult | null => {
+    closed = true
     if (stopped) return refused(stopped, sentNow())
     const moved = recheck()
     if (moved) return refused(moved, sentNow())
