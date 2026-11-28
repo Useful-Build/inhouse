@@ -112,6 +112,15 @@ describe('state (failure 2)', () => {
         faults: { 'shopify.order.tag_add': 'succeed' },
       },
       connect: { bodies: [] },
+      // Stage 1 M4-F: the M4 fixtures, untouched by this test (a fresh fixture's state after the reset).
+      fixtures: {
+        log: [],
+        modern: { calls: [], writes: [], violations: [], streamsCancelled: 0 },
+        legacy: { calls: [], writes: [], sessions: 0 },
+        helpdesk: { calls: [], writes: [], violations: [] },
+        rest: { requests: [], notes: [] },
+        login: { clientDocFetches: [], registrations: [], tokenRequests: [], revoked: 0 },
+      },
       accounts: [],
     })
     await testUpstreamFetch(new Request('https://mcp.slack.com/.well-known/oauth-protected-resource'))

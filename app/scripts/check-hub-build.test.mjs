@@ -23,6 +23,8 @@ const EXPECTED = {
   'deploy-shopify-canary': [1, /FAIL {2}shopify upstream canary: the deployable.*\n.*INHOUSE_SHOPIFY_UPSTREAM_CANARY_7c2d/],
   'deploy-shopify-write-canary': [1, /FAIL {2}shopify write upstream canary: the deployable.*\n.*INHOUSE_SHOPIFY_WRITE_UPSTREAM_CANARY_9f4e/],
   'deploy-mcp-canary': [1, /FAIL {2}mcp upstream canary: the deployable.*\n.*INHOUSE_MCP_UPSTREAM_CANARY_7c2d/],
+  // Stage 1 M4-F (N52): M4's fixture servers are the test bundle's alone.
+  'deploy-mcp-fixtures-canary': [1, /FAIL {2}mcp fixtures canary: the deployable.*\n.*INHOUSE_MCP_FIXTURES_CANARY_61a9/],
   // Stage 1 M3-R (N30): the eval deployment's write log gateway is the test bundle's alone.
   'deploy-eval-write-gateway': [1, /FAIL {2}eval write gateway: the deployable.*\n.*"EvalWriteGateway" in/],
   // Stage 1 M3 (N31): the eval deployment's fake Slack workspace is the test bundle's alone.
@@ -122,6 +124,25 @@ test('the eval slack canary only in the test bundle\'s map, not its script: the 
     assert.match(r.out, /FAIL {2}eval slack canary in the script: the test bundle .* holds "INHOUSE_EVAL_SLACK_CANARY_5d1e" in no script/)
     // The fixture test bundle, with the canary in its script, passes that part.
     assert.match(run('--deploy', `${FIXTURES}/deploy-clean`, '--test', TEST).out, /ok {4}eval slack canary in the script/)
+  } finally {
+    rmSync(tmp, { recursive: true, force: true })
+  }
+})
+
+// Stage 1 M4-F: the MCP fixtures canary in the test bundle's map alone fails the scan the same way.
+test('the mcp fixtures canary only in the test bundle\'s map, not its script: the scan fails', () => {
+  const tmp = mkdtempSync(join(tmpdir(), 'check-hub-build-map-'))
+  try {
+    const canary = 'INHOUSE_MCP_FIXTURES_CANARY_61a9'
+    const seam = readFileSync(join(app, TEST, 'index.js'), 'utf8')
+    assert.ok(seam.includes(canary))
+    const mapOnly = bundleFolder(tmp, 'map-only', seam.split(canary).join('REMOVED'))
+    writeFileSync(join(mapOnly, 'index.js.map'), JSON.stringify({ version: 3, sourcesContent: [`export const MCP_FIXTURES_CANARY = '${canary}'`] }))
+    const r = run('--deploy', `${FIXTURES}/deploy-clean`, '--test', mapOnly)
+    assert.equal(r.status, 1, r.out)
+    assert.match(r.out, /ok {4}mcp fixtures canary: caught the test bundle/)
+    assert.match(r.out, /FAIL {2}mcp fixtures canary in the script: the test bundle .* holds "INHOUSE_MCP_FIXTURES_CANARY_61a9" in no script/)
+    assert.match(run('--deploy', `${FIXTURES}/deploy-clean`, '--test', TEST).out, /ok {4}mcp fixtures canary in the script/)
   } finally {
     rmSync(tmp, { recursive: true, force: true })
   }

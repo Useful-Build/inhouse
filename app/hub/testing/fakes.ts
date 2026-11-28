@@ -22,7 +22,8 @@ import { FakeMcpServer, SLACK_CHANNELS, SLACK_MESSAGES } from '../../test/upstre
 import { FakeSlackWeb, WEB_CHANNELS } from '../../test/upstreams/slack/server'
 import { dataset as shopifyFixtureValue } from '../../test/upstreams/shopify/recordings/fixture/dataset'
 import type { Dataset } from '../../test/upstreams/shopify/dataset'
-import { notesMcp, shopifyIssuedTokens, shopifyRequests, shopifyWrite, slackMcp, slackWeb } from './index'
+import { mcpFixtures, notesMcp, shopifyIssuedTokens, shopifyRequests, shopifyWrite, slackMcp, slackWeb } from './index'
+import { FIXTURE_KEYS, type FixtureKeyName } from '../../test/upstreams/mcp/index'
 
 /** Found in the hub's test bundle, never in the deployable one (scripts/check-hub-build.mjs reads it from here). */
 export const HUB_FAKES_CANARY = 'INHOUSE_HUB_FAKES_CANARY_3a6f'
@@ -84,6 +85,11 @@ const ShopifyWriteSwitchesSchema = z.strictObject({
   }).optional(),
 })
 
+/** Stage 1 M4-F: revokes one of M4's fixture keys (the modern server's, the helpdesk's or Path C's REST API's). */
+const FixturesSwitchesSchema = z.strictObject({
+  revokeKey: z.enum(Object.keys(FIXTURE_KEYS) as [FixtureKeyName, ...FixtureKeyName[]]).optional(),
+})
+
 /** The hub ops (the product's hook forwards these as they are). */
 export const HubFakesOpSchema = z.discriminatedUnion('op', [
   z.strictObject({ op: z.literal('state') }),
@@ -93,6 +99,7 @@ export const HubFakesOpSchema = z.discriminatedUnion('op', [
     mcp: McpSwitchesSchema.optional(),
     web: WebSwitchesSchema.optional(),
     shopifyWrite: ShopifyWriteSwitchesSchema.optional(),
+    fixtures: FixturesSwitchesSchema.optional(),
   }),
   z.strictObject({ op: z.literal('alarm'), accountId: AccountIdSchema }),
   z.strictObject({ op: z.literal('var'), name: z.literal('SLACK_PRIVATE_SEARCH'), value: z.enum(['on', 'off']) }),
@@ -171,6 +178,8 @@ function fakesStateLocal() {
       faults: shopifyWrite.faults,
     }),
     connect: { bodies: [...connectBodies] },
+    // Stage 1 M4-F: M4's fixtures (their request log, calls, writes, the login server's logs), a JSON copy.
+    fixtures: mcpFixtures.state(),
   }
 }
 
@@ -242,6 +251,7 @@ export function resetFakes(kv?: Pick<SyncKvStorage, 'delete'>): void {
   shopifyRequests.length = 0
   shopifyWrite.reset()
   connectBodies.length = 0
+  mcpFixtures.reset()
   kv?.delete(TEST_FAKES_VARS_KEY)
   clearSeeds()
 }
@@ -265,6 +275,7 @@ function applySet(op: Extract<HubFakesOp, { op: 'set' }>): HubResult<{ set: true
   if (op.shopifyWrite?.faults) {
     Object.assign(shopifyWrite.faults, op.shopifyWrite.faults)
   }
+  if (op.fixtures?.revokeKey) mcpFixtures.revokeKey(op.fixtures.revokeKey)
   return { ok: true, value: { set: true } }
 }
 
