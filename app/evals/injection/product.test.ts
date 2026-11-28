@@ -6,7 +6,7 @@ import { JOB_END_TIMEOUT_MS, type ProductTarget } from '../targets/product.ts'
 import type { CeilingLimits, CeilingRow, GrantRow, OutboxRows, ShopifyAccountRow, WriteDoor, WriteLogRow } from '../targets/write-door.ts'
 import type { ChatResult, Session } from '../types.ts'
 import { INJECTION_CASES } from './cases.ts'
-import { REPEAT_END_WAIT_MS, createProductInjectionTarget, slackEvidence } from './product.ts'
+import { REPEAT_END_WAIT_MS, createProductInjectionTarget, seedRefusal, slackEvidence } from './product.ts'
 import { StartUndoFailed } from './runner.ts'
 import { DoorRefusal } from '../targets/sql.ts'
 import { gradeWrites } from './grade.ts'
@@ -509,7 +509,7 @@ describe('Neon\'s #618 review on the product target', () => {
       async close() { calls.push('lease back') },
     } as unknown as ProductTarget
     const t = createProductInjectionTarget({ paid: true, env: {}, inhouse: null, base: b, sessions: { preflight: async () => { calls.push('r2') }, parts: async () => [] } })
-    const preflight = t.preflight!()
+    const preflight = t.preflight!([kase('W06')])
     await new Promise((r) => setTimeout(r, 0))
     let closed = false
     const closing = t.close!().then(() => { closed = true })
@@ -521,7 +521,7 @@ describe('Neon\'s #618 review on the product target', () => {
     await closing
     expect(calls).toEqual(['ready (lease taken)', 'lease back'])
     // Once closed, a preflight refuses before it takes anything.
-    await expect(t.preflight!()).rejects.toThrow(/the target is closing/)
+    await expect(t.preflight!([kase('W06')])).rejects.toThrow(/the target is closing/)
     expect(calls).toEqual(['ready (lease taken)', 'lease back'])
   })
 
@@ -619,6 +619,22 @@ describe('Neon\'s #618 review on the product target', () => {
   })
 })
 
+describe('the live smoke after #670: every planned case\'s seed passes the door before any paid turn', () => {
+  it('no injection case\'s seed would be refused (P03, where the smoke stopped, included)', () => {
+    expect(INJECTION_CASES.map((c) => [c.id, seedRefusal(c)]).filter(([, why]) => why !== null)).toEqual([])
+    expect(seedRefusal(kase('P03'))).toBeNull()
+  })
+
+  it('the preflight checks the planned cases\' seeds before the target\'s own checks', async () => {
+    const calls: string[] = []
+    const { base } = stand({ writes: new FakeWrites() })
+    const b = { ...base, async ready() { calls.push('ready') }, writeDoor: () => ({ ...base.writeDoor(), now: async () => 1 }) } as unknown as ProductTarget
+    const t = createProductInjectionTarget({ paid: true, env: {}, inhouse: null, base: b, sessions: { preflight: async () => {}, parts: async () => [] } })
+    await t.preflight!(INJECTION_CASES.filter((c) => c.plant && c.plant.via !== 'slack'))
+    expect(calls).toEqual(['ready'])
+  })
+})
+
 describe('#662 and #664: the preflight reads every door; the polls hear the cancel', () => {
   it('the preflight runs the target\'s own checks, reads the write door, then R2; a refusal throws', async () => {
     const calls: string[] = []
@@ -628,10 +644,10 @@ describe('#662 and #664: the preflight reads every door; the polls hear the canc
     let refuse = false
     const sessions = { preflight: async () => { calls.push('r2'); if (refuse) throw new DoorRefusal('R2 list answered 403') }, parts: async () => [] }
     const t = createProductInjectionTarget({ paid: true, env: {}, inhouse: null, base: b, sessions })
-    await t.preflight!()
+    await t.preflight!([kase('W06')])
     expect(calls).toEqual(['ready', 'd1', 'r2'])
     refuse = true
-    await expect(t.preflight!()).rejects.toThrow(DoorRefusal)
+    await expect(t.preflight!([kase('W06')])).rejects.toThrow(DoorRefusal)
   })
 
   it('with the Inhouse app the preflight reads the Tools page through it; a wrong origin or aud stops the run there (#671)', async () => {
@@ -641,10 +657,10 @@ describe('#662 and #664: the preflight reads every door; the polls hear the canc
     let status = 200
     const inhouse = async (method: 'GET' | 'POST', path: string) => { calls.push(`${method} ${path}`); return { status, json: { connected: [] }, location: null } }
     const t = createProductInjectionTarget({ paid: true, env: {}, inhouse, base: b, sessions: { preflight: async () => {}, parts: async () => [] } })
-    await t.preflight!()
+    await t.preflight!([kase('W06')])
     expect(calls).toEqual(['GET /api/tools'])
     status = 401
-    await expect(t.preflight!()).rejects.toThrow(/the Tools page answered 401/)
+    await expect(t.preflight!([kase('W06')])).rejects.toThrow(/the Tools page answered 401/)
   })
 
   it('a transcript read that the door refuses is a DoorRefusal, not "not exercised"', async () => {

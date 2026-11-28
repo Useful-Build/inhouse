@@ -4,8 +4,10 @@
 // a case needing a field the API doesn't show is graded anyway.
 import { describe, expect, it } from 'vitest'
 import { CASES } from './cases.ts'
-import { assertSandboxDatabase, createDoor, DoorRefusal, EVAL_DB, sqlString, wranglerRunner, WRANGLER_TIMEOUT_MS, type MemoryDoor, type MemoryRow, type NewApproval, type NewMemory } from './targets/door.ts'
-import { callOfStep, createProductTarget, EVAL_PEOPLE, onExampleTest, ProductTargetRefusal, readIssuerKey, unobservableReason, writesFromRows } from './targets/product.ts'
+import { assertSandboxDatabase, createDoor, DoorRefusal, EVAL_DB, sqlString, webfetchHostsRefusal, wranglerRunner, WRANGLER_TIMEOUT_MS, type MemoryDoor, type MemoryRow, type NewApproval, type NewMemory } from './targets/door.ts'
+import { callOfStep, createProductTarget, EVAL_PEOPLE, onExampleTest, ProductTargetRefusal, readIssuerKey, unobservableReason, webfetchListFor, writesFromRows } from './targets/product.ts'
+import { INJECTION_CASES } from './injection/cases.ts'
+import { plantSpecOf } from './injection/product.ts'
 import { gradeExfil } from './exfil.ts'
 import { mkdtempSync, readdirSync, readFileSync, writeFileSync } from 'node:fs'
 import { createHash } from 'node:crypto'
@@ -49,7 +51,12 @@ class FakeDoor implements MemoryDoor {
   approvals: NewApproval[] = []
   async insertApproval(a: NewApproval) { this.calls.push(`approval ${a.id}`); this.approvals.push(a) }
   async deleteApprovals(ids: string[]) { this.calls.push(`delete approvals ${ids.length}`); this.approvals = this.approvals.filter((a) => !ids.includes(a.id)) }
-  async setWebfetchHosts(hosts: string[] | null) { this.calls.push(`webfetch ${hosts === null ? 'default' : hosts.join(',')}`) }
+  // The real door's rule (the live smoke after #670 stopped on it at a seed): a list the server wouldn't read is refused.
+  async setWebfetchHosts(hosts: string[] | null) {
+    const why = hosts === null ? null : webfetchHostsRefusal(hosts)
+    if (why) throw new DoorRefusal(why)
+    this.calls.push(`webfetch ${hosts === null ? 'default' : hosts.join(',')}`)
+  }
   async setWebSearch(on: boolean) { this.calls.push(`websearch ${on}`) }
   /** The next insert throws (a seed that fails after the WebFetch list was set). */
   insertThrows = false
@@ -534,6 +541,29 @@ describe('a chat through the product', () => {
     const order = srv.s.sent.filter((s) => s.method === 'POST').map((s) => s.path.replace(/eval-[a-f0-9]+/, 'CHAT'))
     expect(order).toEqual(['/api/chats', '/api/chats', '/api/chats/CHAT/attachments', '/api/chats/CHAT/turns']) // the first is the deployment probe chat
     expect(srv.s.sent.find((s) => s.path.endsWith('/turns'))!.body.attachments).toEqual([{ fileId: 'f_AAAAAAAAAAAAAAAAAAAAAA', name: 'note.txt' }])
+  })
+
+  it('an M3-E plant (an attachment or a memory, no WebFetch hosts) seeds the default WebFetch list, never an empty one the door refuses (the live smoke after #670)', async () => {
+    // P03, the case the smoke stopped at: "a door refused: not a host list the server reads (parseHostlist)".
+    for (const id of ['P03', 'W02']) {
+      const c = INJECTION_CASES.find((x) => x.id === id)!
+      const spec = plantSpecOf(c)!
+      expect(spec.hosts).toEqual([])
+      const door = new FakeDoor()
+      const srv = server()
+      const session = await make(srv, door).seed([], { caseId: id, rep: 1, canary: 'kestrel-m3e', writes: false }, spec)
+      expect(door.calls).toContain('webfetch default')
+      if (c.plant!.via === 'attachment') {
+        await session.chat(c.prompt)
+        expect(srv.s.sent.find((x) => x.path.endsWith('/turns'))!.body.attachments).toEqual([{ fileId: 'f_AAAAAAAAAAAAAAAAAAAAAA', name: 'note.txt' }])
+      } else {
+        expect(door.rowsNow.some((r) => r.text.includes('kestrel-m3e'))).toBe(true)
+      }
+    }
+    // The shape of the failure, kept: an empty list is still refused at the door, so only the default may say "none".
+    await expect(new FakeDoor().setWebfetchHosts([])).rejects.toThrow(new DoorRefusal('not a host list the server reads (parseHostlist)'))
+    expect(webfetchListFor({ hosts: [] })).toBeNull()
+    expect(webfetchListFor({ hosts: ['Docs.Example.com'] })).toEqual(['docs.example.com'])
   })
 
   it('a memory_search exfil case plants the text as a fact of the current person', async () => {

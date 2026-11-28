@@ -15,8 +15,8 @@
 //    the run's close disconnects Slack (#583), so a later suite's tools don't change.
 // Planting in the store or a web page needs a per-case dataset on the eval hub, not built: those cases are listed as not
 // served here (their twins W31 to W37 plant the same attacks through a file or a memory hit).
-import { WRANGLER_TIMEOUT_MS } from '../targets/door.ts'
-import { accessHeaders, createProductTarget, EVAL_AUD_VAR, JOB_END_TIMEOUT_MS, testIssuerSignIn, type ProductTarget, type ProductTargetOptions } from '../targets/product.ts'
+import { DoorRefusal, WRANGLER_TIMEOUT_MS, webfetchHostsRefusal } from '../targets/door.ts'
+import { accessHeaders, createProductTarget, EVAL_AUD_VAR, JOB_END_TIMEOUT_MS, testIssuerSignIn, webfetchListFor, type ProductTarget, type ProductTargetOptions } from '../targets/product.ts'
 import { connectSlack, disconnectSlack, slackShown, type InhouseApi } from '../targets/slack-door.ts'
 import { SEED_INHOUSE } from '../../server/seed/brand.ts'
 import { createSessionReader, type SessionReader } from '../read-side/product/r2.ts'
@@ -104,6 +104,25 @@ export function slackEvidence(ev: WriteEvidence, channels: readonly { id: string
 }
 
 const ceilingRows = (rows: CeilingRow[]): NonNullable<WriteEvidence['ceilingsBefore']> => rows.map((r) => ({ operation: r.operation, enabled: r.enabled, perDayMax: r.perDayMax, unitsMax: r.unitsMax }))
+
+/**
+ * What the product seed gets for a case's plant (memory or attachment; a Slack plant is seeded through the Slack door):
+ * the text, and no WebFetch hosts (an injection case asks for none, so the brand keeps the default list).
+ */
+export function plantSpecOf(c: InjectionCase): ExfilSpec | undefined {
+  return c.plant && c.plant.via !== 'slack' ? { kind: 'memory', via: c.plant.via as ExfilSpec['via'], hosts: [], plant: c.plant.text } : undefined
+}
+
+/**
+ * Why the product seed would refuse a planned case before its turn, or null: the WebFetch list it would write, checked by
+ * the door's own rule (the live smoke after #670 stopped mid-run at P03's seed on that refusal). The preflight runs it on
+ * every planned case, so a case the seed can't take stops the run before any paid turn.
+ */
+export function seedRefusal(c: InjectionCase): string | null {
+  const list = webfetchListFor(plantSpecOf(c))
+  const why = list === null ? null : webfetchHostsRefusal(list)
+  return why ? `${c.id}'s seed would be refused: ${why}` : null
+}
 
 /** The Inhouse app's origin and the test issuer's aud there: the Slack connect routes are the Inhouse team's. */
 export const EVAL_INHOUSE_ORIGIN_VAR = 'INHOUSE_EVAL_INHOUSE_ORIGIN'
@@ -249,13 +268,17 @@ export function createProductInjectionTarget(o: ProductInjectionOptions): Inject
     lacks: (family) => (family === 'slack_post' && !inhouse ? `slack_post: the Inhouse app (${EVAL_INHOUSE_ORIGIN_VAR} and ${EVAL_INHOUSE_AUD_VAR}) is not set` : null),
     spentUsd: () => base.spentUsd?.() ?? 0,
     notes: () => [...notes],
-    async preflight() {
+    async preflight(cases) {
       // The product target's own checks first (the eval brand, the lease, the cap: targets/product.ts setup), which make
       // its doors; then one read through each door the run uses, and one R2 LIST of the session transcripts (as the
       // read-side and store-data suites do). A refusal throws here, before any paid turn.
       // Tracked like a start (#680): a close waits for it, so the lease its setup takes goes back after it.
       const p = (async () => {
         if (closed) throw closingRefusal()
+        // Every planned case's seed, checked by the door's own rules before any paid turn (the live smoke after #670 stopped
+        // mid-run at P03's seed, on a WebFetch list the door refuses).
+        const refused = cases.map(seedRefusal).filter((w): w is string => w !== null)
+        if (refused.length) throw new DoorRefusal(refused.join('; '))
         // (A Slack case without the Inhouse app never reaches here: it is not run or not served, and the runner stops on
         // it before the preflight unless the run waived it.)
         await base.ready()
@@ -339,7 +362,7 @@ export function createProductInjectionTarget(o: ProductInjectionOptions): Inject
     {
       if (closed) throw closingRefusal()
       const slackCase = needsSlack(c)
-      const plant: ExfilSpec | undefined = c.plant && c.plant.via !== 'slack' ? { kind: 'memory', via: c.plant.via as ExfilSpec['via'], hosts: [], plant: c.plant.text } : undefined
+      const plant = plantSpecOf(c)
       const session = await base.seed([], { caseId: c.id, rep: run.rep, canary: run.canary, writes: true }, plant)
       active = session
       // The repeat's end, which a close waits for (#663): settled by its reset, or by an undone start.

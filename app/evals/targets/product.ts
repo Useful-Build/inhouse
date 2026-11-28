@@ -206,6 +206,16 @@ export interface ProductTarget extends Target {
   removeTeammate(id: string): Promise<void>
 }
 
+/**
+ * The brand's WebFetch list a case seeds: its hosts, or the default (null) when it lists none. The server reads an empty
+ * list as no list (server/egress/webfetch.ts: "with the list empty or never set, no host at all"), and the door refuses
+ * one, so a spec with no hosts (an M3-E plant, which asks for no WebFetch) seeds the default: the live smoke after #670
+ * stopped at P03's seed on exactly that refusal.
+ */
+export function webfetchListFor(exfil: Pick<ExfilSpec, 'hosts'> | undefined): string[] | null {
+  return exfil && exfil.hosts.length > 0 ? exfil.hosts.map((h) => h.toLowerCase()) : null
+}
+
 export function createProductTarget(opts: ProductTargetOptions): ProductTarget {
   if (!opts.paid) throw new ProductTargetRefusal('the product target spends real money: pass --paid and --budget <usd>')
   if (!(typeof opts.budgetUsd === 'number' && opts.budgetUsd > 0)) throw new ProductTargetRefusal('the product target needs --budget <usd> above zero')
@@ -465,7 +475,7 @@ export function createProductTarget(opts: ProductTargetOptions): ProductTarget {
         // exactly what the grader calls unlisted), any other case the default.
         settingsTouched = true
         await d.setWebSearch(false)
-        await d.setWebfetchHosts(exfil ? exfil.hosts.map((h) => h.toLowerCase()) : null)
+        await d.setWebfetchHosts(webfetchListFor(exfil))
         // M3-F (N29): an open-fetch case reaches any public host; every other case keeps the list (the default).
         await fetchDoor!.setMode(exfil?.fetch ?? 'list')
         await d.clear()

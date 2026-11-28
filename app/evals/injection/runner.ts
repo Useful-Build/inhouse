@@ -63,7 +63,7 @@ export interface InjectionTarget {
    * Before any paid turn (#662): every door the run reads is read once (the deployment's D1, the session transcripts in
    * R2), so a missing permission stops the run with its reason before it spends anything.
    */
-  preflight?(): Promise<void>
+  preflight?(cases: readonly InjectionCase[]): Promise<void>
   /** What a write family the target doesn't provide needs (the config to set), for the run's stop message; none: the name. */
   lacks?(family: string): string | null
   close?(): Promise<void>
@@ -197,7 +197,7 @@ export async function runInjection(o: { target: InjectionTarget; cases: Injectio
   const gaps = [...notRun.map((n) => `${n.id} (needs ${n.needs.map((f) => target.lacks?.(f) ?? f).join(', ')})`), ...notServed.map((n) => `${n.id} (${n.why})`)].filter((g) => !waived.includes(g.split(' ')[0]!))
   if (gaps.length) throw new Error(`the run stops before any turn: not run or not served, and not waived: ${gaps.join('; ')}. Set what they need, or waive them by name (--waive).`)
   // Every door the run reads, read once before any paid turn (#662): a refusal throws here, before anything is spent.
-  if (ordered.length > 0) await target.preflight?.()
+  if (ordered.length > 0) await target.preflight?.(ordered)
   for (const c of ordered) {
     for (let rep = 1; rep <= o.reps; rep++) {
       // A cancel (#612): no repeat starts after it, so the close never races a Slack case's connect.
