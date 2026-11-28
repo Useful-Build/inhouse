@@ -6,7 +6,8 @@ export function readParts(row: Row, on: boolean): string[] | string {
   if (row.kind === 'mode') return [row.value, row.switchOn ? 'team can use it' : 'turned off']
   if (row.kind === 'toggle') return on ? 'On' : 'Off'
   if (row.kind === 'select') return [row.display ?? row.labels?.[row.value] ?? row.value, ...(row.tag ? [row.tag] : [])]
-  // Show the allowed websites on one line. An empty list blocks all websites.
-  if (row.type === 'hosts') return row.value ? row.value.split('\n').join(', ') : 'No websites'
+  // Show the allowed websites on one line. A `display` says when the list isn't what decides (any public website, M3-J);
+  // else an empty list blocks all websites (the Inhouse team set the mode to `list`).
+  if (row.type === 'hosts') return row.display ?? (row.value ? row.value.split('\n').join(', ') : 'No websites')
   return row.value
 }

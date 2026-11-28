@@ -131,15 +131,27 @@ export const EXACT_ROWS: Record<string, SettingRow> = {
   't:max_turns': safe('technical', oneOf(MAX_TURNS)),
   't:webfetch': spec('technical', { t: 'hostlist' }),
   // M3-F (N29): how far reading web pages reaches, the Inhouse team's: `list` (only `t:webfetch`'s hosts) or `open` (any
-  // public host, every other check kept). Missing or anything else is `list` (`webFetchMode`).
+  // public host, every other check kept). Missing: `open` for a brand that never set a host list, else `list` (`webFetchMode`, M3-J).
   't:webfetch_mode': safe('technical', oneOf(WEBFETCH_MODES)),
 }
 
 /**
- * How far reading web pages reaches from `t:webfetch_mode` as stored: `open` only when set to it; missing, a reset or
- * anything else is `list` (fail closed to the host list). Paid leak run 1 must pass before M3-J changes the default.
+ * How far reading web pages reaches, from `t:webfetch_mode` and `t:webfetch` as stored (M3-F, N29; the default flipped
+ * by M3-J once the leak check had been proven on the live path in open mode). Pass `undefined` for a setting with no row:
+ *  - the mode set to `open` is `open`, set to `list` is `list` (so the Inhouse team can still keep a brand to no host);
+ *  - no mode (no row, or reset to null) is `open` for a brand that never set a host list (no `t:webfetch` row, or reset to
+ *    null) and `list` for one that did: a saved list, even an empty one ("Leave empty to block all websites", P8a S), is
+ *    the team's choice, so a saved empty list blocks every website (#744);
+ *  - any other stored mode, and a host list that isn't a valid list (a value that breaks the rule, or not text), is
+ *    `list`: fail closed to the list, which the egress then refuses as `settings`.
+ * `open` keeps every other check of the egress: the off switch, scheme, port, the address block and the leak check
+ * before DNS on every hop (server/egress/webfetch.ts).
  */
-export const webFetchMode = (stored: unknown): WebFetchMode => (stored === 'open' ? 'open' : 'list')
+export const webFetchMode = (storedMode: unknown, storedHosts: unknown): WebFetchMode => {
+  if (storedMode === 'open') return 'open'
+  if (storedMode !== undefined && storedMode !== null) return 'list'
+  return storedHosts === undefined || storedHosts === null ? 'open' : 'list'
+}
 
 /** Whether web search is on from `t:websearch` as stored: only true is on; missing, a reset or anything else is off. */
 export const webSearchOn = (stored: unknown): boolean => stored === true

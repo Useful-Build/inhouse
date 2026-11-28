@@ -1,9 +1,11 @@
 // The WebFetch egress (HTTPS catch-all, p3-design 8.8 and 6.2): a session's web reads, best effort. GET and HEAD only,
-// no body, cookies or authorization forwarded, port 443 only. Two modes, the Inhouse team's `t:webfetch_mode` (M3-F, N29):
-//  - `list` (the default): only an exact host on the brand's `t:webfetch` list; with the list empty or never set, no host
-//    at all (P8a S: a brand lists the hosts it may read; before P8a an empty list meant any public host);
-//  - `open`: any public host name (a valid DNS name of two or more labels, never an address literal). Every other check
-//    stays: the off switch, scheme, port, the leak check before DNS, DNS and the private-address block, on every hop.
+// no body, cookies or authorization forwarded, port 443 only. Two modes (M3-F, N29), resolved by `webFetchMode` from the
+// Inhouse team's `t:webfetch_mode` and the brand's `t:webfetch` list:
+//  - `list`: only an exact host on the brand's `t:webfetch` list (an empty list is no host, saved on purpose or set to
+//    `list`); the default for a brand that saved a list, an empty one included (#744);
+//  - `open`: any public host name (a valid DNS name of two or more labels, never an address literal); the default for a
+//    brand that never saved a host list since M3-J. Every other check stays: the off switch, scheme, port, the leak check before
+//    DNS, DNS and the private-address block, on every hop.
 // Every host is resolved first through DNS over HTTPS to a pinned resolver, and any non-public answer refuses it; address
 // literals are judged directly. Redirects: at most 3, each hop checked the same way. Response bytes capped at 10 MB.
 //
@@ -53,7 +55,7 @@ export interface WebDeps {
   fetchOn(): Promise<boolean>
   /** The brand's `t:webfetch` as stored (a JSON string value), or null when it was never set. */
   hostList(): Promise<string | null>
-  /** The brand's `t:webfetch_mode` now (M3-F): `list` unless the Inhouse team set `open`. Throws on a store failure. */
+  /** The brand's fetch mode now (M3-F, `webFetchMode`): its `t:webfetch_mode`, or the default for its host list. Throws on a store failure. */
   fetchMode(): Promise<WebFetchMode>
   /** Leak check (M1-G, N8): returns true when `url` carries a stored private-data token. Throws on store failure (fail closed). */
   checkLeak(url: URL): Promise<boolean>
@@ -245,10 +247,17 @@ async function storedHostList(db: D1Database): Promise<string | null> {
   return typeof v === 'string' ? v : null
 }
 
-/** The brand's `t:webfetch_mode` now (M3-F): `open` only when the Inhouse team set it (`webFetchMode`). */
+/**
+ * The brand's fetch mode now (M3-F, `webFetchMode`): its `t:webfetch_mode` when set, else `open` for a brand that never saved
+ * a host list (no row) and `list` for one that did, an empty list included (M3-J, #744). Both rows are read in one query, so the mode and the list it was decided on agree.
+ */
 export async function storedFetchMode(db: D1Database): Promise<WebFetchMode> {
-  const row = await db.prepare("SELECT value_json FROM settings WHERE owner = 'brand' AND key = 't:webfetch_mode'").first<{ value_json: string }>()
-  return webFetchMode(row ? (JSON.parse(row.value_json) as unknown) : undefined)
+  const rows = await db.prepare("SELECT key, value_json FROM settings WHERE owner = 'brand' AND key IN ('t:webfetch_mode', 't:webfetch')").all<{ key: string; value_json: string }>()
+  const value = (key: string): unknown => {
+    const row = rows.results.find(r => r.key === key)
+    return row ? (JSON.parse(row.value_json) as unknown) : undefined
+  }
+  return webFetchMode(value('t:webfetch_mode'), value('t:webfetch'))
 }
 
 /** The brand's `t:webfetch_on` now (M1-F): on unless an Admin set it to false (`webFetchOn`). */

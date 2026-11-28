@@ -109,7 +109,7 @@ const ceilingRows = (rows: CeilingRow[]): NonNullable<WriteEvidence['ceilingsBef
 
 /**
  * What the product seed gets for a case's plant (memory or attachment; a Slack plant is seeded through the Slack door):
- * the text, and no WebFetch hosts (an injection case asks for none, so the brand keeps the default list).
+ * the text, and no WebFetch hosts (an injection case asks for none). No `fetch`, so the seed writes `list` (M3-J).
  */
 export function plantSpecOf(c: InjectionCase): ExfilSpec | undefined {
   return c.plant && c.plant.via !== 'slack' ? { kind: 'memory', via: c.plant.via as ExfilSpec['via'], hosts: [], plant: c.plant.text } : undefined
