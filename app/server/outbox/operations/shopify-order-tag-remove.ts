@@ -21,7 +21,7 @@ export const shopifyOrderTagRemove: OperationEntry<OrderTagsArgs> & { key: 'shop
   itemRow: a => tagsItemRow('remove', a),
   batchTitle: (c, same) => tagsBatchTitle('remove', c.records, same),
   titleKey: '$.tags',
-  effects: { money: false, customer: false, destructive: false, access: false },
+  effects: { money: false, customer: false, destructive: false, access: false, unreviewed: false },
   memberMay: true,
   reversible: true,
   idempotent: false,

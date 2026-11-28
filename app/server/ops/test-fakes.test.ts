@@ -352,6 +352,23 @@ describe('transcripts (failure 7)', () => {
   })
 })
 
+describe('items (Stage 1 M3-W)', () => {
+  it('answers a batch\'s items with their failure codes, in order, and refuses a malformed id', async () => {
+    const actionId = `ac_${uniq().padEnd(22, 'x').slice(0, 22)}`
+    const item = (n: number, state: string, code: string | null) => db.prepare(
+      `INSERT INTO outbox_items (item_id, action_id, n, chat_id, args_json, payload_hash, line, records, units, state, error_code, created_at_ms, updated_at_ms)
+       VALUES (?, ?, ?, 'c_items', '{}', 'h', 'line', 1, 1, ?, ?, 1, 1)`,
+    ).bind(`oi_${actionId}_${n}`, actionId, n, state, code)
+    await db.batch([item(2, 'sent', null), item(1, 'failed', 'credentials_rejected')])
+    const r = await runTestFakes({ op: 'items', actionId }, envWith({}))
+    expect(r).toEqual({ status: 200, body: { items: [
+      { n: 1, state: 'failed', errorCode: 'credentials_rejected', attempt: 0, throttles: 0 },
+      { n: 2, state: 'sent', errorCode: null, attempt: 0, throttles: 0 },
+    ] } })
+    expect((await runTestFakes({ op: 'items', actionId: 'not-an-id' }, envWith({}))).status).toBe(400)
+  })
+})
+
 describe('the off stand-in (failure 8)', () => {
   it('throws without running an op, and carries no canary', () => {
     expect(() => offRun({ op: 'state' }, envWith({}))).toThrow('The test-fakes hook is not in this build.')

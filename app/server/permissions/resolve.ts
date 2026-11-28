@@ -31,6 +31,9 @@ export const resolve: ResolveFn = async (f, p) => {
   const parsed = entry.args.safeParse(p.args)
   if (!parsed.success) return refuse('invalid_args')
   const args = parsed.data
+  // Stage 1 M4 (N46): an MCP write resolves from `f.connections` (M4-W2 builds it with its operation entry). No entry
+  // writes to a connection before then, so reaching here is a bug in the table: fail loud.
+  if (entry.connector === 'mcp') throw new Error(`resolve: ${entry.key} writes to a connection, which M4-W2 resolves`)
   const account = f.accounts[entry.connector]
   if (!account || !account.connected || account.paused || account.connectedAtMs === null) return refuse('account_unavailable')
   if (entry.connector === 'shopify' && !account.shop) return refuse('account_unavailable')

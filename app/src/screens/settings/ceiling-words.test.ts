@@ -11,7 +11,7 @@ import type { CeilingRow, CeilingValues } from '../../../shared/contract/ceiling
 import { BATCH_ITEMS_MAX } from '../../../shared/contract/actions'
 
 vi.stubGlobal('localStorage', { getItem: () => null, setItem: () => {}, removeItem: () => {} })
-const { CEILING_BOUNDS, approvalLine, changes, fieldsOf, limitLines, lowers, readValues } = await import('./ceiling-words')
+const { CEILING_BOUNDS, GUARDRAIL_WORDS, approvalLine, changes, fieldsOf, limitLines, lowers, readValues } = await import('./ceiling-words')
 const { menuFor } = await import('./menu')
 
 const row = (o: Partial<CeilingRow> = {}): CeilingRow => ({
@@ -53,6 +53,13 @@ describe('what applies (failure 2)', () => {
     expect(limitLines(row({ enabled: false }))).toEqual(["Off. Your Inhouse agent can't do this."])
     expect(limitLines(row())).toEqual(['Up to 200 orders a day for each Always allow', 'Up to 100 orders in one go', 'More than 5 at once needs an exact OK, and up to 500 in one batch'])
     expect(approvalLine(row())).toBe('The person who asked approves it first, or chooses Always allow.')
+  })
+  // Stage 1 M4 (M4-A, N46): every guardrail an operation's effects can apply has its words (the server's list is checked
+  // against `Effects` in server/contract-coverage.test.ts), so an unreviewed tool's write says why it's exact.
+  it('says every effect guardrail, unreviewed included', () => {
+    expect(Object.keys(GUARDRAIL_WORDS)).toEqual(['money', 'customer', 'destructive', 'access', 'unreviewed'])
+    const mcp = row({ applies: { perDay: false, batch: false }, guardrails: ['unreviewed'], approverKind: 'admins', tool: 'A connected tool' })
+    expect(approvalLine(mcp)).toBe("An admin approves it exactly, every time, because it isn't reviewed yet.")
   })
 })
 

@@ -1,0 +1,94 @@
+declare const tools: {
+  readonly helpdesk: {
+    /**
+     * Search helpdesk tickets by status, channel, tags, or query text.
+     */
+    readonly tickets_search: (args?: {
+      /** Optional search query across ticket subject and messages. */
+      query?: string;
+      /** Filter by ticket status. */
+      status?: "open" | "pending" | "closed";
+      channel?: "email" | "chat" | "sms" | "voice";
+      /** Require tickets to carry all listed tags. */
+      tags?: Array<string>;
+      /** ISO-8601 timestamp lower bound. */
+      createdAfter?: string;
+      /** Maximum results per page (1-50). */
+      limit?: number;
+      cursor?: string;
+    }) => Promise<{
+      tickets: Array<{
+        id: number;
+        subject: string;
+        status: "open" | "pending" | "closed";
+        priority?: "low" | "normal" | "high" | "urgent";
+        customer: {
+          id: number;
+          name?: string;
+          email: string;
+        };
+        tags: Array<string>;
+        updatedAt: string;
+      }>;
+      nextCursor: string | null;
+    }>;
+    /**
+     * Read a single helpdesk ticket with customer details and message thread.
+     */
+    readonly ticket_get: (args: {
+      /** Numeric ticket ID. */
+      ticketId: number;
+      /** Include private agent notes. */
+      includeInternalNotes?: boolean;
+    }) => Promise<{
+      id: number;
+      subject: string;
+      status: "open" | "pending" | "closed";
+      customer: {
+        id: number;
+        name?: string;
+        email: string;
+        orderIds?: Array<string>;
+      };
+      messages: Array<{
+        id: number;
+        sender: {
+          kind: "customer";
+          email: string;
+        } | {
+          kind: "agent";
+          agentId: number;
+          name?: string;
+        };
+        bodyText: string;
+        internal?: boolean;
+        createdAt: string;
+      }>;
+    }>;
+    /**
+     * Send a public reply or internal note on a helpdesk ticket.
+     * Write tool: records a proposal and returns { proposed: true } without running.
+     */
+    readonly ticket_reply: (args: {
+      /** Numeric ticket ID. */
+      ticketId: number;
+      /** Plain-text body of the reply. */
+      bodyText: string;
+      channel?: "email" | "chat";
+      /** When true, posts as an internal agent note. */
+      internalNote?: boolean;
+    }) => Promise<{ proposed: true }>;
+    /**
+     * Apply a helpdesk macro to a ticket with optional template variables.
+     * Write tool: records a proposal and returns { proposed: true } without running.
+     */
+    readonly ticket_macro_apply: (args: {
+      /** Numeric ticket ID. */
+      ticketId: number;
+      /** Identifier of the macro to apply. */
+      macroId: string;
+      /** Optional key-value variables substituted into the macro. */
+      variables?: Record<string, string>;
+    }) => Promise<{ proposed: true }>;
+  };
+};

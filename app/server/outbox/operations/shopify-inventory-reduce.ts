@@ -20,7 +20,7 @@ export const shopifyInventoryReduce: OperationEntry<ReduceArgs> & { key: 'shopif
   itemLine: (a, f) => stockItemLine('-', a, f),
   itemRow: a => stockItemRow('-', a),
   rowHeads: STOCK_ROW_HEADS,
-  effects: { money: false, customer: false, destructive: true, access: false },
+  effects: { money: false, customer: false, destructive: true, access: false, unreviewed: false },
   memberMay: true,
   reversible: false,
   idempotent: false,
