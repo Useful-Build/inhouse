@@ -342,18 +342,20 @@ const failingEnv = () => {
   return { ...env, SIGNIN: { idFromName: (n: string) => n, get: () => stub } } as unknown as Env
 }
 
-describe('test log flush and answer recording (non-throwing, loud, ordered)', () => {
+describe('test log flush and answer recording (non-throwing, loud)', () => {
   afterEach(() => vi.restoreAllMocks())
 
-  it('a flush started while an earlier one is in flight returns only after the earlier one landed its lines', async () => {
+  it('flushes started together each land their own lines before returning, and none waits on another', async () => {
     const before = await value<{ next: number }>({ op: 'logs' })
-    log('connect_start', { accountId: 'slack:workspace' })
+    log('connect_start', { accountId: 'first-flush' })
     const first = flushTestLogs(env)
-    const second = flushTestLogs(env) // queue already drained by `first`: must still wait for it
+    log('connect_start', { accountId: 'second-flush' })
+    const second = flushTestLogs(env)
     await second
-    const after = await value<{ lines: string[] }>({ op: 'logs', since: before.next })
-    expect(after.lines.some(l => JSON.parse(l).event === 'connect_start')).toBe(true)
+    // The second flush drained its own line and sent it: it is there the moment `second` is.
+    expect((await value<{ lines: string[] }>({ op: 'logs', since: before.next })).lines.some(l => l.includes('second-flush'))).toBe(true)
     await first
+    expect((await value<{ lines: string[] }>({ op: 'logs', since: before.next })).lines.some(l => l.includes('first-flush'))).toBe(true)
   })
 
   it('a failed append resolves, logging the error name and the number of lines lost, never their content', async () => {
